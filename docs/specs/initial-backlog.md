@@ -398,5 +398,3 @@ The initial ten tasks were created on 2026-10-11 after repository integration ac
 | SC-10 | [#10](https://github.com/stevdrey/fx-atspi-bridge/issues/10) |
 
 The issue bodies link actual prerequisite URLs. The matching numbers are coincidental; planning IDs do not generally equal GitHub issue numbers.
-
-For offline preview, run `python scripts/create-initial-issues.py`. Its `--apply` mode requires an authenticated GitHub CLI and reuses existing open/closed SC identifiers, rejects duplicates and creates only missing tasks. It stops on errors instead of retrying blindly. Do not rerun solely to recreate tasks already published.

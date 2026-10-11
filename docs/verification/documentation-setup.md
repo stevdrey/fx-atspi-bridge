@@ -8,7 +8,6 @@ Passed locally:
 - Workflow YAML parsing and limited permissions; checkout v7 resolved to SHA 3d3c42e5aac5ba805825da76410c181273ba90b1.
 - Disposable Wiki repo: initial sync, no-op without new commit, managed-page deletion, preservation of unmanaged pages and missing Home rejection.
 - Five skill frontmatter validations. Imported PR skill description normalized to supported notation; [Issue-N] contract preserved.
-- Issue publisher offline preview and mocked CLI: ten creates, dependency URLs, rerun reuse and duplicate-ID rejection.
 - Local Markdown links, prepared payload structure and whitespace checks.
 
 Not run: Gradle/native/graphical tests (JDK 17 active; production Java unchanged), actual GitHub Actions publication, desktop client QA or performance benchmarks.
