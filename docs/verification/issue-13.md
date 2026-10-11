@@ -1,4 +1,4 @@
-# Verification — Untitled Stage accessible name
+# Verification — Issue 13
 
 - Baseline: `525afca`; JDK: Zulu 27+35; Gradle wrapper.
 - Command: `./gradlew check` → BUILD SUCCESSFUL (includes `nullNamesFromUntitledStagesNormalizeToEmptyText`).

@@ -1,4 +1,4 @@
-# Spec Context — Untitled Stage accessible name (no issue number assigned)
+# Spec Context — Issue 13
 
 ## Context and source evidence
 
@@ -22,7 +22,7 @@ Other null sources reviewed: `collect` already maps null name to `""`; `text` is
 
 ## Acceptance and verification
 
-Unit test `nullNamesFromUntitledStagesNormalizeToEmptyText`; `./gradlew check` on JDK 27. Desktop reproduction (untitled Stage with bridge on Fedora/GNOME/Wayland) is NOT performed by unit tests; see `docs/verification/untitled-stage-name.md`.
+Unit test `nullNamesFromUntitledStagesNormalizeToEmptyText`; `./gradlew check` on JDK 27. Desktop reproduction (untitled Stage with bridge on Fedora/GNOME/Wayland) is NOT performed by unit tests; see `docs/verification/issue-13.md`.
 
 ## Rollout and documentation
 
