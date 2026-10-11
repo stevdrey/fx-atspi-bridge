@@ -7,7 +7,7 @@ description: Use when creating, drafting, publishing, or updating a GitHub pull 
 
 ## When to use
 
-Apply this skill whenever an agent creates a PR, prepares a PR description, or updates the title/body of an existing PR. Combine it with `agent-task-workflow` and any implementation skills relevant to the change. Follow `AGENTS.md` and `.agents/README.md`.
+Apply this skill whenever an agent creates a PR, prepares a PR description, or updates the title/body of an existing PR. Combine it with `implement-spec-context` and any implementation skills relevant to the change. Follow `AGENTS.md` and `.agents/README.md`.
 
 Use [PR #161](https://github.com/stevdrey/dokene/pull/161) as the writing-style reference, not as a source of facts for another PR.
 
