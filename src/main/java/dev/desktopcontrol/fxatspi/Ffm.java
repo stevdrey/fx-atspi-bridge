@@ -1,0 +1,79 @@
+/*
+ * Copyright 2026 Steven Rey Sequeira
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package dev.desktopcontrol.fxatspi;
+
+import java.lang.foreign.*;
+import java.lang.invoke.*;
+import java.util.concurrent.ConcurrentHashMap;
+import static java.lang.foreign.ValueLayout.*;
+
+/** Explicit Linux x86_64 GIO/GLib/GObject C ABI, without JNI/JNA. */
+final class Ffm implements AutoCloseable {
+    static final MemorySegment NIL = MemorySegment.NULL;
+    final Arena arena = Arena.ofShared();
+    private final SymbolLookup gio = SymbolLookup.libraryLookup("libgio-2.0.so.0", arena);
+    private final SymbolLookup glib = SymbolLookup.libraryLookup("libglib-2.0.so.0", arena);
+    private final SymbolLookup objects = SymbolLookup.libraryLookup("libgobject-2.0.so.0", arena);
+    private final ConcurrentHashMap<String, MethodHandle> handles = new ConcurrentHashMap<>();
+    Object call(String name, MemoryLayout result, MemoryLayout[] signature, Object... args) {
+        var handle = handles.computeIfAbsent(name, key -> Linker.nativeLinker().downcallHandle(
+                gio.find(key).or(() -> glib.find(key)).or(() -> objects.find(key)).orElseThrow(),
+                result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature)));
+        try { return handle.invokeWithArguments(args); }
+        catch (Throwable error) { throw new IllegalStateException(name, error); }
+    }
+    MemorySegment checked(String name, MemoryLayout[] signature, Object... args) {
+        try (Arena temporary = Arena.ofConfined()) {
+            var error = temporary.allocate(ADDRESS);
+            var fullSignature = java.util.Arrays.copyOf(signature, signature.length + 1); fullSignature[signature.length] = ADDRESS;
+            var fullArgs = java.util.Arrays.copyOf(args, args.length + 1); fullArgs[args.length] = error;
+            var result = (MemorySegment) call(name, ADDRESS, fullSignature, fullArgs);
+            check(error);
+            return result;
+        }
+    }
+    void check(MemorySegment error) {
+        var value = error.get(ADDRESS, 0);
+        if (value.address() == 0) return;
+        String message = string(value.reinterpret(16).get(ADDRESS, 8));
+        call("g_error_free", null, new MemoryLayout[]{ADDRESS}, value);
+        throw new IllegalStateException(message);
+    }
+    static String string(MemorySegment address) { return address.address() == 0 ? "" : address.reinterpret(1024 * 1024).getString(0); }
+    static String quote(String value) {
+        if (value.indexOf('\0') >= 0) throw new IllegalArgumentException("NUL in text");
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "'";
+    }
+    MemorySegment variant(String text) {
+        try (Arena temporary = Arena.ofConfined()) {
+            return checked("g_variant_parse", new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS}, NIL, temporary.allocateFrom(text), NIL, NIL);
+        }
+    }
+    void release(MemorySegment value) { if (value.address() != 0) call("g_variant_unref", null, new MemoryLayout[]{ADDRESS}, value); }
+    MemorySegment child(MemorySegment tuple, int index) { return (MemorySegment) call("g_variant_get_child_value", ADDRESS, new MemoryLayout[]{ADDRESS, JAVA_LONG}, tuple, (long) index); }
+    String text(MemorySegment tuple, int index) {
+        var value = child(tuple, index);
+        try { return string((MemorySegment) call("g_variant_get_string", ADDRESS, new MemoryLayout[]{ADDRESS, ADDRESS}, value, NIL)); }
+        finally { release(value); }
+    }
+    int integer(MemorySegment tuple, int index) {
+        var value = child(tuple, index);
+        try { return (int) call("g_variant_get_int32", JAVA_INT, new MemoryLayout[]{ADDRESS}, value); }
+        finally { release(value); }
+    }
+    void unref(MemorySegment object) { if (object.address() != 0) call("g_object_unref", null, new MemoryLayout[]{ADDRESS}, object); }
+    @Override public void close() { arena.close(); }
+}
