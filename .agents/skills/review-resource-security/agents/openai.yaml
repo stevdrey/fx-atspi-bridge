@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Resources and Security"
+  short_description: "Review latency, memory, native ownership and policy."
+  default_prompt: "Use $review-resource-security to complete the relevant fx-atspi-bridge task."

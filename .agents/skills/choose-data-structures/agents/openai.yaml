@@ -1,0 +1,4 @@
+interface:
+  display_name: "Choose Data Structures"
+  short_description: "Select bounded collections using workload evidence."
+  default_prompt: "Use $choose-data-structures to complete the relevant fx-atspi-bridge task."
