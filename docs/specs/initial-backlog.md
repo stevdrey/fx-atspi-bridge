@@ -18,7 +18,7 @@ None.
 
 ### Affected scope
 
-build.gradle, ci/github-actions-build.yml.example, src/test, examples/fx-lab, proposed .github/workflows/build.yml. Confirm paths and newly extracted ownership at implementation time.
+build.gradle, the former ci/github-actions-build.yml.example template, src/test, examples/fx-lab, proposed .github/workflows/build.yml. Confirm paths and newly extracted ownership at implementation time.
 
 ### Acceptance criteria
 

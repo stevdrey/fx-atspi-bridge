@@ -15,6 +15,9 @@
  */
 package dev.desktopcontrol.fxlab;
 import javafx.application.Application;
+import java.util.Arrays;
 public final class Launcher {
-    public static void main(String[] args) { Application.launch(FxLab.class, args); }
+    public static void main(String[] args) {
+        Application.launch(Arrays.asList(args).contains("--bench") ? BenchApp.class : FxLab.class, args);
+    }
 }

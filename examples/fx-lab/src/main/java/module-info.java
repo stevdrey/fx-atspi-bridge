@@ -15,6 +15,7 @@
  */
 module dev.desktopcontrol.fxlab {
     requires javafx.controls;
+    requires jdk.management;
     requires dev.desktopcontrol.fxatspi;
     exports dev.desktopcontrol.fxlab to javafx.graphics;
 }

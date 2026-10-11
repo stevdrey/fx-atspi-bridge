@@ -1,0 +1,30 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up JDK 27
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: zulu
+          java-version: '27'
+      - name: Install GLib for native unit tests
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-0t64
+      - name: Check JDK
+        run: java -version
+      - name: Build library and example; test native variants and Unicode offsets
+        run: ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
