@@ -54,6 +54,7 @@ final class Ffm implements AutoCloseable {
     }
     static String string(MemorySegment address) { return address.address() == 0 ? "" : address.reinterpret(1024 * 1024).getString(0); }
     static String quote(String value) {
+        if (value == null) return "''";
         if (value.indexOf('\0') >= 0) throw new IllegalArgumentException("NUL in text");
         return "'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "'";
     }

@@ -36,4 +36,10 @@ class AtSpiTextTest {
             assertThrows(IllegalStateException.class, () -> nativeApi.variant("not valid variant syntax!"));
         }
     }
+    @Test void nullNamesFromUntitledStagesNormalizeToEmptyText() {
+        assertEquals("", AtSpiProvider.displayName(null));
+        assertEquals("Title 🧪", AtSpiProvider.displayName("Title 🧪"));
+        assertEquals("''", Ffm.quote(null));
+        assertEquals("", AtSpiProvider.textRange(AtSpiProvider.displayName(null), 0, -1));
+    }
 }
