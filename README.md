@@ -1,32 +1,32 @@
-# Puente experimental JavaFX → AT-SPI2
+# Experimental JavaFX → AT-SPI2 bridge
 
-Biblioteca Gradle independiente del laboratorio. Publica las ventanas visibles del **proceso JavaFX que la integra** en el bus de accesibilidad de la sesión mediante Java 27 FFM y GIO/GLib/GObject. No requiere JNI/JNA, sudo, capturas ni RemoteDesktop.
+A standalone Gradle library that publishes the visible windows of **the JavaFX process that integrates it** on the session accessibility bus using Java 27 FFM and GIO/GLib/GObject. It requires no JNI/JNA, sudo, screenshots, or RemoteDesktop session.
 
-## Integración
+## Integration
 
-Construye la biblioteca con JDK 27:
+Build the library with JDK 27:
 
 ```bash
 ./gradlew build
 ```
 
-El JAR está en `build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar`. Es un JAR de la biblioteca; JavaFX y las bibliotecas del sistema se resuelven por separado.
+The library JAR is available at `build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar`. JavaFX and system libraries are resolved separately.
 
-Para probar la interfaz de ejemplo dentro de una sesión gráfica Linux:
+To run the example UI in a Linux graphical session:
 
 ```bash
 ./gradlew :examples:fx-lab:run
 ```
 
-Incluye campos de texto, botones, un campo dinámico, una segunda ventana y sustitución de escenas. `--args='--no-atspi'` permite ejecutar el ejemplo sin el puente. La biblioteca no incluye un servidor MCP: un cliente AT-SPI externo puede consultar su árbol y activar sus acciones.
+The example includes text fields, buttons, a dynamic field, a second window, and scene replacement. Use `--args='--no-atspi'` to run it without the bridge. The library does not include an MCP server; an external AT-SPI client can inspect its tree and invoke its actions.
 
-Para consumirla desde otro proyecto, como Monada Forge, primero publica en Maven local:
+To consume it from another project, such as Monada Forge, first publish it to your local Maven repository:
 
 ```bash
 ./gradlew publishToMavenLocal
 ```
 
-Y agrega a ese proyecto:
+Then add the following to the consuming project:
 
 ```groovy
 repositories {
@@ -38,15 +38,15 @@ dependencies {
 }
 ```
 
-Estas coordenadas son para la publicación local. Todavía no se ha publicado en Maven Central ni se ha creado una versión estable. La aplicación consumidora debe usar JDK 27 y una versión compatible de JavaFX; antes de integrar Monada Forge verifica sus versiones.
+These coordinates refer to the local publication. The library has not been published to Maven Central, and there is no stable release yet. The consuming application must use JDK 27 and a compatible JavaFX version. Check Monada Forge's versions before integrating it.
 
-Para aplicaciones modulares, agrega `requires dev.desktopcontrol.fxatspi;` a `module-info.java`. El lanzador debe incluir:
+For modular applications, add `requires dev.desktopcontrol.fxatspi;` to `module-info.java`. Include this JVM argument in the launcher:
 
 ```text
 --enable-native-access=dev.desktopcontrol.fxatspi,javafx.graphics
 ```
 
-En aplicaciones por classpath utiliza `--enable-native-access=ALL-UNNAMED`. El puente y sus dependencias JavaFX deben estar presentes en el module-path o classpath apropiado; evita duplicar versiones de JavaFX.
+For classpath applications, use `--enable-native-access=ALL-UNNAMED`. The bridge and its JavaFX dependencies must be available on the appropriate module path or classpath. Avoid including multiple JavaFX versions.
 
 ```java
 import dev.desktopcontrol.fxatspi.FxAtSpiBridge;
@@ -55,7 +55,7 @@ public class MyApp extends javafx.application.Application {
     private FxAtSpiBridge accessibility;
 
     @Override public void start(javafx.stage.Stage stage) {
-        // Construir la interfaz y asignar su Scene.
+        // Build the UI and assign its Scene.
         stage.show();
         accessibility = FxAtSpiBridge.install();
     }
@@ -66,37 +66,37 @@ public class MyApp extends javafx.application.Application {
 }
 ```
 
-Instalar y cerrar en el hilo JavaFX. Se permite un puente por proceso. `install(Consumer<String>)` permite recibir el estado desde el hilo del proveedor; para modificar una etiqueta desde ese callback usa `Platform.runLater`.
+Install and close the bridge on the JavaFX application thread. Only one bridge is allowed per process. `install(Consumer<String>)` delivers status messages from the provider thread; use `Platform.runLater` to update a UI label from that callback.
 
-No se registra ningún control manualmente. Usa `node.setAccessibleText("Nombre útil")` cuando la etiqueta del control no sea suficiente para que un agente lo identifique. El proveedor asigna referencias internas por identidad del objeto, distintas de los IDs temporales que entrega el MCP. Al desaparecer un objeto, su referencia se retira; si vuelve a aparecer tras una observación de su ausencia, recibe una nueva referencia.
+No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object disappears, its reference is removed. If it returns after its absence has been observed, it receives a new reference.
 
-## Descubrimiento y eventos
+## Discovery and events
 
-Cada 100 ms, en un pulso JavaFX, se recorre `Window.getWindows()`, las escenas y los hijos de contenedores. Los controles se tratan como hojas semánticas: sus nodos internos de skin no se publican. Se incluyen ventanas adicionales y cambios completos de escena. El hilo GDBus registra nuevos objetos y retira los antiguos, emitiendo `Cache.AddAccessible`, `Cache.RemoveAccessible` y `ChildrenChanged`; también notifica cambios de nombre, texto, cursor y estado observados.
+Every 100 ms, during a JavaFX pulse, the bridge traverses `Window.getWindows()`, scenes, and container children. Controls are treated as semantic leaves: their internal skin nodes are not published. Additional windows and complete scene replacements are detected. The GDBus thread registers new objects and removes old ones, emitting `Cache.AddAccessible`, `Cache.RemoveAccessible`, and `ChildrenChanged`. It also reports observed changes to names, text, caret positions, and states.
 
-La revisión periódica agrupa cambios entre observaciones: no es un registro exhaustivo de cada transición ni garantiza observar controles que aparecen y desaparecen dentro de 100 ms. Su coste crece con el tamaño del árbol. Un puente de producción debería suscribirse a propiedades y cambios estructurales para evitar recorrer todo el árbol periódicamente.
+Polling coalesces changes between observations. It is not an exhaustive record of every transition, and it cannot guarantee detection of controls that appear and disappear within 100 ms. Its cost increases with tree size. A production bridge should subscribe to properties and structural changes to avoid periodically traversing the entire tree.
 
-## Cobertura real
+## Current coverage
 
-- Ventanas y contenedores, etiquetas, botones, TextField y TextArea.
-- Acción de botones y lectura/escritura de texto, con offsets Unicode por puntos de código.
-- Textos de contraseña ocultos; PasswordField no expone Text ni EditableText en este experimento.
-- Interfaces parciales de AT-SPI: no implementa geometría, selección completa, tablas virtualizadas, menús ni equivalencias semánticas para todos los controles personalizados. Un control no soportado se publica como panel sin acciones específicas.
-- No se afirma compatibilidad completa con lectores de pantalla. Activar un botón accesible prueba su comportamiento, no un clic físico ni su apariencia.
-- ABI inicial Linux x86_64, JavaFX 27. La interfaz puede seguir usando XWayland: el canal AT-SPI se comunica por D-Bus y no depende de capturas X11.
+- Windows, containers, labels, buttons, TextField, and TextArea.
+- Button actions and text reading/writing, with Unicode offsets measured in code points.
+- Password contents are hidden; PasswordField exposes neither Text nor EditableText in this experiment.
+- Partial AT-SPI interfaces: geometry, full selection support, virtualized tables, menus, and semantic mappings for all custom controls are not implemented. An unsupported control is published as a panel without specific actions.
+- Full screen reader compatibility has not been established. Invoking an accessible button action tests its behavior, not a physical click or its appearance.
+- Initial ABI support targets Linux x86_64 and JavaFX 27. The UI may still use XWayland: AT-SPI communicates over D-Bus and does not depend on X11 screenshots.
 
-No inyecta accesibilidad en otra JVM ya abierta: cada aplicación debe integrar la biblioteca. El cliente genérico sí puede usar libatspi para consultar aplicaciones que tengan su propio proveedor AT-SPI.
+The bridge does not inject accessibility into another running JVM. Each application must integrate the library. A generic client can use libatspi to inspect applications that provide their own AT-SPI implementation.
 
-## Requisitos y pruebas
+## Requirements and testing
 
-Linux x86_64 con sesión D-Bus y proveedor del bus de accesibilidad `org.a11y.Bus`. Se cargan `libgio-2.0.so.0`, `libglib-2.0.so.0` y `libgobject-2.0.so.0` desde el sistema. Los tests de variantes y offsets Unicode usan GLib, pero no requieren una sesión gráfica. `./gradlew test` ejecuta esas pruebas; el ejemplo es la comprobación interactiva de integración.
+Linux x86_64 with a D-Bus session and the `org.a11y.Bus` accessibility bus provider. The bridge loads `libgio-2.0.so.0`, `libglib-2.0.so.0`, and `libgobject-2.0.so.0` from the system. The variant and Unicode offset tests use GLib but do not require a graphical session. Run them with `./gradlew test`; the example provides an interactive integration check.
 
-El prototipo original fue verificado en Fedora/GNOME mediante un cliente MCP/libatspi externo: edición Unicode, botones, creación/eliminación de controles, segunda ventana, sustitución/restauración de escena y eventos de texto/estado/hijos. Esas pruebas de escritorio no forman parte del CI de este repositorio.
+The original prototype was verified on Fedora/GNOME through an external MCP/libatspi client: Unicode editing, buttons, control creation/removal, a second window, scene replacement/restoration, and text/state/children events. These desktop tests are not part of this repository's CI.
 
-## Licencia
+## License
 
-El código propio y el ejemplo se distribuyen bajo [Apache License 2.0](LICENSE), con copyright de Steven Rey Sequeira. Se permite uso comercial, modificación y redistribución conforme a sus condiciones; incluye una concesión de patentes de los contribuidores. Al redistribuir, conserva los avisos y la licencia e identifica los archivos modificados. Las dependencias mantienen sus licencias: consulta [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The project's own code and example are distributed under the [Apache License 2.0](LICENSE), copyright Steven Rey Sequeira. Commercial use, modification, and redistribution are permitted under its terms, including an express patent grant from contributors. When redistributing, preserve the notices and license and identify modified files. Dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## CI opcional
+## Optional CI
 
-`ci/github-actions-build.yml.example` contiene una plantilla que construye biblioteca y ejemplo y ejecuta los tests nativos en Linux con JDK 27. Para activarla, cópiala a `.github/workflows/build.yml` usando una sesión de GitHub con permisos para modificar workflows. La plantilla está incluida, pero GitHub Actions todavía no está activado en este repositorio.
+`ci/github-actions-build.yml.example` contains a template that builds the library and example and runs native tests on Linux with JDK 27. To enable it, copy it to `.github/workflows/build.yml` using a GitHub session with permission to modify workflows. The template is included, but GitHub Actions has not yet been enabled in this repository.
