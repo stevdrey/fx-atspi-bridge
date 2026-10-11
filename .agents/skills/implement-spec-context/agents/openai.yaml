@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Spec Context"
+  short_description: "Turn issues into scoped contracts and verified changes."
+  default_prompt: "Use $implement-spec-context to complete the relevant fx-atspi-bridge task."

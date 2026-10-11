@@ -1,0 +1,127 @@
+[
+  {
+    "planning_id": "SC-01",
+    "title": "[SC-01] Establish Java 27 CI and resource/interoperability baselines",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [],
+    "body": "## Context\n\nBuild and native tests lack active CI; performance and desktop claims lack repeatable evidence.\n\n## Goal\n\nActivate the existing Linux/JDK 27 CI template with pinned actions and read-only permissions; document workload and baseline measurements.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nbuild.gradle, ci/github-actions-build.yml.example, src/test, examples/fx-lab, proposed .github/workflows/build.yml.\n\n## Acceptance criteria\n\n- [ ] Build library/example, run native Unicode/variant tests on JDK 27; record heap/native/FX latency and idle CPU methodology\n- [ ] Record actual Fedora/GNOME/Wayland and AT-SPI consumer results or explicitly missing evidence\n- [ ] Adopt initial measured budgets and exact compatibility matrix\n- [ ] Do not infer desktop compatibility from Xvfb.\n\n## Dependency contracts\n\nNone. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo production refactor or Maven Central release.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-02",
+    "title": "[SC-02] Extract model, adapters and transport ownership boundaries",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      1
+    ],
+    "body": "## Context\n\nAtSpiProvider mixes scene traversal, identity, protocol, callbacks and actions.\n\n## Goal\n\nExtract logical components and immutable model records without changing existing supported AT-SPI behavior or install API.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nAtSpiProvider.java, FxAtSpiBridge.java, proposed internal model/adapter/transport packages.\n\n## Acceptance criteria\n\n- [ ] Characterize existing roles/interfaces/text offsets/password exclusion; test model without D-Bus\n- [ ] Published snapshots contain no JavaFX Node targets; live target registry remains FX-owned\n- [ ] Document ownership interfaces needed by issues 3–7.\n\n## Dependency contracts\n\n1 baseline contracts. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo multi-module split, new control coverage or behavior redesign.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-03",
+    "title": "[SC-03] Make lifecycle, shutdown and native resource ownership deterministic",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2
+    ],
+    "body": "## Context\n\nclose permits immediate reinstall; exported XML accumulates in a provider-lifetime arena; native callbacks and replies cross lifecycle.\n\n## Goal\n\nAdd explicit lifecycle with nonblocking FX close and completion; inventory native refs/arenas and typed binding signatures.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nFxAtSpiBridge.java, AtSpiProvider.java, Ffm.java.\n\n## Acceptance criteria\n\n- [ ] Reject reinstall until termination\n- [ ] Close twice safely; test start failure/bus loss/close races\n- [ ] Free temporary XML after parsing and preserve node-info/callback lifetime according to native contracts\n- [ ] Verify exactly-once unref for pending and export resources; gate wakeups against context destruction\n- [ ] Sanitize callback failures.\n\n## Dependency contracts\n\n2 ownership contracts. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo unsafe interruption, automatic reconnect or support for unverified ABIs.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-04",
+    "title": "[SC-04] Execute actions outside locks with bounded admission and expiry",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2,
+      3
+    ],
+    "body": "## Context\n\nmutate holds a global lock during application handlers and native replies; pending requests have no capacity or expiry.\n\n## Goal\n\nIntroduce bounded command coordinator and provider-owned completion with pre-execution revalidation.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nAtSpiProvider.java mutate/method, proposed command coordinator, FX dispatcher.\n\n## Acceptance criteria\n\n- [ ] Set configurable validated bounds and monotonic deadlines\n- [ ] Reject saturation; expired queued actions never execute\n- [ ] Do not hold locks during button.fire or showAndWait\n- [ ] Real modal test confirms transport reads remain responsive; reject conflicting mutations\n- [ ] Exactly one reply/release under close/expiry/completion races; reserve completion capacity\n- [ ] Running timeouts do not claim rollback.\n\n## Dependency contracts\n\n2 and 3 owner/lifecycle contracts. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo force-cancel of running FX callbacks or business workflow completion guarantees.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-05",
+    "title": "[SC-05] Replace full-tree polling with disposable JavaFX observations",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2
+    ],
+    "body": "## Context\n\nAnimationTimer traverses all windows/scenes every 100 ms and cleanup is quadratic.\n\n## Goal\n\nObserve structure and relevant properties; dirty-set batching and identity-based linear cleanup.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nFxAtSpiBridge.java observer, AtSpiProvider.java refresh/collect, proposed observation registry.\n\n## Acceptance criteria\n\n- [ ] Initial traversal then no recurring full-tree scan at idle\n- [ ] Names/text/caret/focus/visibility/disabled and ancestor inheritance update coherently\n- [ ] Handle window/root/scene replacement, removals and reparenting; detach listeners\n- [ ] Coalesce batches once, preserve ordered children, test churn/short-lived controls\n- [ ] No O(n²) identity or child-index cleanup\n- [ ] Record before/after latency/allocations against issue 1.\n\n## Dependency contracts\n\n2 registry and adapter contracts. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo exhaustive event history or virtualized controls in this issue.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-06",
+    "title": "[SC-06] Replace GLib 5 ms polling with blocking event dispatch",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      3,
+      5
+    ],
+    "body": "## Context\n\nserve repeatedly runs nonblocking iteration and sleeps 5 ms.\n\n## Goal\n\nBlock in GLib context and wake on publication, completion and shutdown using a race-safe mailbox protocol.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nAtSpiProvider.java serve/reconcile, Ffm.java typed context bindings.\n\n## Acceptance criteria\n\n- [ ] Remove sleep polling\n- [ ] Drain/recheck/block handles work arriving before/after wait with no lost wakeups\n- [ ] Stop unblocks idle context\n- [ ] Prevent wakeups after unref; all native exports/replies remain on provider thread\n- [ ] Test burst work, repeated start/close and bus disconnection\n- [ ] Measure idle wakeup change and event latency.\n\n## Dependency contracts\n\n3 safe context lifetime and 5 snapshot publication contract. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo generic scheduler, per-node timers or cross-thread direct native replies.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-07",
+    "title": "[SC-07] Add configuration, redaction and deterministic action policy",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "body": "## Context\n\nApplication name is hardcoded; controls have no configurable exclusions or comprehensive action policy.\n\n## Goal\n\nAdd additive options API for app name, included windows, exclusions/redaction, limits and capability policy; retain legacy install methods.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nFxAtSpiBridge.java install, adapter/policy boundary, security docs.\n\n## Acceptance criteria\n\n- [ ] Passwords and configured secrets never leak via names/text/attributes/events/cache/errors/logs\n- [ ] Enforce hidden/disabled/editable/modal and stale-generation checks at admission and execution\n- [ ] Document same-session trust and default access; optional sender filtering does not claim authentication\n- [ ] Deterministic invalid/busy/denied/stopped errors\n- [ ] Exclusion cleans up previously exported nodes.\n\n## Dependency contracts\n\n2, 3, 4 and 5 contracts; policy spec can start independently. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo MCP, network listener, OS sandbox bypass or strong isolation guarantee against the same user.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-08",
+    "title": "[SC-08] Expose stable automation IDs and core control semantics",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2,
+      5,
+      7
+    ],
+    "body": "## Context\n\nInternal object paths are unstable across runs and unsupported controls become panels.\n\n## Goal\n\nAdd application-defined stable IDs separate from paths; adapter extension contract; checkboxes, radio buttons, combo/list, tabs and menus.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nJavaFX adapter registry, AT-SPI interfaces/attributes, examples/fx-lab.\n\n## Acceptance criteria\n\n- [ ] Detect duplicate stable IDs deterministically; preserve internal lifetime identity\n- [ ] Implement appropriate selection/checked/value/action interfaces and events per control\n- [ ] Custom adapter example works without library modification and disposes listeners\n- [ ] AccessibleRole/query/action APIs used only where semantics verified\n- [ ] Policy/password protections apply to every adapter.\n\n## Dependency contracts\n\n2 adapter API, 5 observation, 7 policy. DEPENDENCY_LINKS\n\n## Non-goals\n\nVirtualized tables/trees and full screen-reader certification remain later milestones.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-09",
+    "title": "[SC-09] Implement AT-SPI Component geometry and coordinate contracts",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      2,
+      5,
+      7
+    ],
+    "body": "## Context\n\nGeometry and Component support are absent, limiting third-party location queries.\n\n## Goal\n\nExpose bounds and coordinate types through AT-SPI Component using supported JavaFX screen/window coordinate APIs.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nAT-SPI Component dispatch/XML, geometry projection, examples/fx-lab.\n\n## Acceptance criteria\n\n- [ ] Document SCREEN/WINDOW/PARENT support and unsupported responses\n- [ ] Compare external client GetExtents/Contains results under move, resize, transforms, clipping, hidden nodes and display scaling\n- [ ] Record logical/physical unit convention and multi-monitor/Wayland versus XWayland limitations; never fabricate positions when unavailable\n- [ ] All FX geometry reads are FX-owned.\n\n## Dependency contracts\n\n2 adapter/transport, 5 observation and 7 exposure policy. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo synthetic clicks, screenshot inference or assertion that bounds prove visual hit-testability.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  },
+  {
+    "planning_id": "SC-10",
+    "title": "[SC-10] Qualify a reusable accessibility library with external-client QA",
+    "labels": [
+      "enhancement"
+    ],
+    "dependencies": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "body": "## Context\n\nThe example is interactive and there is no repeatable consumer/release qualification.\n\n## Goal\n\nAdd independent AT-SPI client acceptance harness and consumer integration guide, packaging/diagnostics and compatibility evidence.\n\n## Spec Context\n\nExpand the corresponding SC entry in docs/specs/initial-backlog.md into docs/specs/issue-N.md. Read ADR 0001, system design, security invariants and AGENTS.md.\n\n## Affected scope\n\nexamples/fx-lab, src/test, proposed integration harness, README.md, build.gradle, docs/verification.\n\n## Acceptance criteria\n\n- [ ] Run window/scene/Unicode/control/geometry/events/redaction/modal/stale/overload/bus-loss cases with third-party libatspi client\n- [ ] Verify consumer module/classpath, native-access flags, no duplicated JavaFX and notices in artifacts\n- [ ] Record Fedora/GNOME/Wayland results, budgets, disposal counters and known gaps; release only when documented gates pass\n- [ ] Third-party client is test infrastructure, not a shipped MCP component.\n\n## Dependency contracts\n\n1–9 implementation complete; docs/harness work can begin earlier. DEPENDENCY_LINKS\n\n## Non-goals\n\nNo Maven Central credential automation, MCP server/tools/client or unverified platform claims.\n\n## Verification\n\nRun focused tests and applicable ./gradlew check with JDK 27 and native libraries. Desktop claims require a supported Fedora/GNOME/Wayland session and independent AT-SPI client. Record commands/environment/outcomes in docs/verification/issue-N.md; measure against SC-01. No invented gains.\n\n## Design constraints\n\nAccessibility bridge only; no MCP server/tools/client. Preserve install API, code-point offsets and privacy. Follow owner-thread confinement, bounded resources, deterministic native cleanup, appropriate collections, readable var locals, imports and meaningful Java 27 features."
+  }
+]

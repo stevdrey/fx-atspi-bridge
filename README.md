@@ -50,11 +50,13 @@ For classpath applications, use `--enable-native-access=ALL-UNNAMED`. The bridge
 
 ```java
 import dev.desktopcontrol.fxatspi.FxAtSpiBridge;
+import javafx.application.Application;
+import javafx.stage.Stage;
 
-public class MyApp extends javafx.application.Application {
+public class MyApp extends Application {
     private FxAtSpiBridge accessibility;
 
-    @Override public void start(javafx.stage.Stage stage) {
+    @Override public void start(Stage stage) {
         // Build the UI and assign its Scene.
         stage.show();
         accessibility = FxAtSpiBridge.install();
@@ -100,3 +102,7 @@ The project's own code and example are distributed under the [Apache License 2.0
 ## Optional CI
 
 `ci/github-actions-build.yml.example` contains a template that builds the library and example and runs native tests on Linux with JDK 27. To enable it, copy it to `.github/workflows/build.yml` using a GitHub session with permission to modify workflows. The template is included, but GitHub Actions has not yet been enabled in this repository.
+
+## Product development
+
+See [docs](docs/README.md), the [roadmap](docs/wiki/Roadmap.md), and [agent guidance](AGENTS.md). The product is an accessibility bridge only: no MCP server, tools or client are planned in this repository. Geometry and richer control support remain roadmap items.

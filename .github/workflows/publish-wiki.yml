@@ -1,0 +1,51 @@
+name: Publish Wiki
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/wiki/**'
+      - 'scripts/publish-wiki.sh'
+      - '.github/workflows/publish-wiki.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-wiki
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout canonical source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Synchronize owned Wiki pages
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_dir="$(mktemp -d)"
+          trap 'rm -rf "$task_dir"' EXIT
+          cat > "$task_dir/askpass" <<'ASKPASS'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "$WIKI_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$task_dir/askpass"
+          export GIT_ASKPASS="$task_dir/askpass" GIT_TERMINAL_PROMPT=0
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=''
+          if ! git clone "${SERVER_URL}/${REPOSITORY}.wiki.git" "$task_dir/wiki"; then
+            echo 'Wiki clone failed. Check Wiki initialization, token permissions and service availability.' >&2
+            exit 1
+          fi
+          bash scripts/publish-wiki.sh docs/wiki "$task_dir/wiki"

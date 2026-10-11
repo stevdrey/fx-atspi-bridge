@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Java 27"
+  short_description: "Implement and review Java 27 JavaFX code safely."
+  default_prompt: "Use $implement-java27 to complete the relevant fx-atspi-bridge task."
