@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -55,14 +56,27 @@ public final class BenchApp extends Application {
     private static final long CLK_TCK = 100;
     private static final int BRIDGE_READY_SECONDS = 15;
     private static final int STRUCTURAL_CONTROLS = 10;
+    /** FxAtSpiBridge scans every 100 ms; holding each state 250 ms spans at least two scans plus provider reconcile. */
+    private static final long HOLD_MS = 250;
 
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private Stage stage;
     private Scene originalScene;
     private FlowPane pane;
-    private final CountDownLatch bridgeReady = new CountDownLatch(1);
-    private final AtomicInteger bridgeErrors = new AtomicInteger();
+    /** Readiness and errors of one installed provider; each install gets its own, so replacements are awaited. */
+    private static final class Generation {
+        final CountDownLatch ready = new CountDownLatch(1);
+        final AtomicInteger errors = new AtomicInteger();
+
+        void onStatus(String message) {
+            if (message.startsWith("Error")) errors.incrementAndGet();
+            else if (message.startsWith("AT-SPI2 listo")) ready.countDown();
+        }
+    }
+
+    private final CopyOnWriteArrayList<Generation> generations = new CopyOnWriteArrayList<>();
+    private volatile Generation current;
     private FxAtSpiBridge bridge;
 
     @Override public void start(Stage primary) {
@@ -72,18 +86,18 @@ public final class BenchApp extends Application {
         var bridgeOn = "on".equals(options.getOrDefault("bridge", "off"));
         pane = new FlowPane();
         for (var i = 0; i < nodes; i++) pane.getChildren().add(new Button("n" + i));
-        // An untitled Stage currently makes AtSpiProvider.reconcile throw an NPE (see docs/verification/issue-1.md).
+        // Titled like a real window; the untitled-Stage NPE was fixed in the library by Issue 13 (PR #14).
         stage.setTitle("SC-01 benchmark");
         originalScene = new Scene(pane, 1200, 800);
         stage.setScene(originalScene);
         stage.show();
-        if (bridgeOn) bridge = FxAtSpiBridge.install(this::onBridgeStatus);
+        if (bridgeOn) bridge = installBridge();
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
         CompletableFuture.runAsync(() -> {
             try {
                 var json = run(nodes, bridgeOn);
-                if (bridgeOn && bridgeErrors.get() > 0) {
-                    System.err.println("bench invalid: provider reported " + bridgeErrors.get() + " error status message(s)");
+                if (bridgeOn && totalErrors() > 0) {
+                    System.err.println("bench invalid: provider reported " + totalErrors() + " error status message(s)");
                     Runtime.getRuntime().halt(3);
                 }
                 Files.writeString(Path.of(options.getOrDefault("out", "bench.json")), json);
@@ -103,10 +117,7 @@ public final class BenchApp extends Application {
         var idleSeconds = bounded("idle-seconds", 10, 0, 600);
         var installChurn = bounded("install-churn", 100, 0, MAX_CHURN);
         var structural = bounded("structural", 100, 0, MAX_CHURN);
-        if (bridgeOn && !bridgeReady.await(BRIDGE_READY_SECONDS, TimeUnit.SECONDS)) {
-            System.err.println("bench invalid: provider not ready within " + BRIDGE_READY_SECONDS + " s");
-            Runtime.getRuntime().halt(3);
-        }
+        if (bridgeOn) requireReady(current, "initial provider");
         var json = new StringBuilder("{");
         field(json, "bridge", bridgeOn ? "\"on\"" : "\"off\"");
         if (bridgeOn) field(json, "bridgeReady", true);
@@ -155,10 +166,24 @@ public final class BenchApp extends Application {
         field(json, "rssAfterIdleKb", status("VmRSS"));
     }
 
-    /** Provider status: "AT-SPI2 listo" marks registration; "Error…" messages invalidate a bridge-on run. */
-    private void onBridgeStatus(String message) {
-        if (message.startsWith("Error")) bridgeErrors.incrementAndGet();
-        else if (message.startsWith("AT-SPI2 listo")) bridgeReady.countDown();
+    /** Installs a bridge on the FX thread and tracks its readiness in a fresh generation. */
+    private FxAtSpiBridge installBridge() {
+        var generation = new Generation();
+        generations.add(generation);
+        current = generation;
+        return FxAtSpiBridge.install(generation::onStatus);
+    }
+
+    private int totalErrors() {
+        return generations.stream().mapToInt(g -> g.errors.get()).sum();
+    }
+
+    /** "AT-SPI2 listo" marks registration; no ready signal in time or any error invalidates the run (exit 3). */
+    private static void requireReady(Generation generation, String what) throws InterruptedException {
+        if (!generation.ready.await(BRIDGE_READY_SECONDS, TimeUnit.SECONDS) || generation.errors.get() > 0) {
+            System.err.println("bench invalid: " + what + " not ready within " + BRIDGE_READY_SECONDS + " s or reported an error");
+            Runtime.getRuntime().halt(3);
+        }
     }
 
     /** Mutates {@code dirty} nodes and returns nanoseconds until the end of the next pulse. */
@@ -199,8 +224,10 @@ public final class BenchApp extends Application {
         var threadsBefore = Thread.getAllStackTraces().size();
         var original = originalScene;
         var added = new ArrayDeque<List<TextField>>();
+        var started = System.nanoTime();
         for (var i = 0; i < cycles; i++) {
             var round = i;
+            // Each state is held across the bridge scan interval so it is actually observed (bridge off is paired).
             awaitPulse(() -> {
                 var fresh = new ArrayList<TextField>();
                 for (var c = 0; c < STRUCTURAL_CONTROLS; c++) {
@@ -211,12 +238,17 @@ public final class BenchApp extends Application {
                 pane.getChildren().addAll(fresh);
                 added.addLast(fresh);
                 if (added.size() > 1) pane.getChildren().removeAll(added.removeFirst());
-                var alternate = new Scene(new VBox(new TextField("alt"), new Button("alt")), 400, 200);
-                stage.setScene(alternate);
             });
+            Thread.sleep(HOLD_MS);
+            awaitPulse(() -> stage.setScene(new Scene(new VBox(new TextField("alt"), new Button("alt")), 400, 200)));
+            Thread.sleep(HOLD_MS);
             awaitPulse(() -> stage.setScene(original));
+            Thread.sleep(HOLD_MS);
         }
         awaitPulse(() -> { while (!added.isEmpty()) pane.getChildren().removeAll(added.removeFirst()); });
+        Thread.sleep(HOLD_MS);
+        field(json, "structuralHoldMs", HOLD_MS);
+        field(json, "structuralElapsedSeconds", (System.nanoTime() - started) / 1e9);
         Thread.sleep(2_000);
         field(json, "structuralCycles", cycles);
         field(json, "structuralRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
@@ -237,19 +269,22 @@ public final class BenchApp extends Application {
             var cycle = new CompletableFuture<Void>();
             Platform.runLater(() -> {
                 bridge.close();
-                bridge = FxAtSpiBridge.install(this::onBridgeStatus);
+                bridge = installBridge();
                 cycle.complete(null);
             });
             cycle.join();
         }
         var loopEnd = System.nanoTime();
-        Thread.sleep(2_000);
+        requireReady(current, "final provider after churn");
+        var remainingMs = 2_000 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loopEnd);
+        if (remainingMs > 0) Thread.sleep(remainingMs);
+        field(json, "installChurnFinalGenerationReady", true);
         field(json, "installChurnCycles", cycles);
         field(json, "installChurnCheckpointSeconds", (System.nanoTime() - loopEnd) / 1e9);
         field(json, "installChurnRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
         field(json, "installChurnThreadDeltaCheckpoint", Thread.getAllStackTraces().size() - threadsBefore);
         field(json, "installChurnProviderThreadsCheckpoint", providerThreads());
-        field(json, "installChurnProviderErrors", bridgeErrors.get());
+        field(json, "installChurnProviderErrors", totalErrors());
         gc();
         field(json, "installChurnHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
         // Distinguish slow shutdown from a leak: wait up to 30 s for stopped providers to exit.

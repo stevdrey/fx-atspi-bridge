@@ -26,7 +26,7 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
   - Update latency: mutate K ∈ {1, 10, 100} nodes on the FX thread, then measure time to the end of the next pulse (`AnimationTimer` + `runLater`). Reports p50/p95/p99 over S samples after W warmup samples.
   - Idle: no UI change for T seconds; process CPU from `/proc/self/stat`, voluntary context switches summed over `/proc/self/task/*/status` as a wakeup proxy.
   - Memory: heap after `System.gc()` (observation only), `VmRSS`, thread count, allocated bytes over the sample phase (`com.sun.management.ThreadMXBean`).
-  - Structural churn: 100 cycles of adding/removing 10 controls and swapping the `Scene` to a fresh one and back, for bridge off and on; report heap (after GC), RSS and thread deltas.
+  - Structural churn: 100 cycles of adding/removing 10 controls, then swapping the `Scene` to a fresh one, then restoring it, for bridge off and on; each state is held 250 ms (≥ 2 bridge scan intervals of 100 ms) so it can be observed — observation itself is not confirmed because the library exposes no hook; report heap (after GC), RSS and thread deltas.
   - Install churn: 100 bridge close/install cycles (bridge on) on the FX thread; thread/RSS checkpoint read 2 s after the loop and before GC, heap after GC, then a ≤30 s drain wait for stopped provider threads.
   - Retained listener/invocation counters are not observable without library changes and are **not** measured here.
 - Independent client: `examples/fx-lab/scripts/atspi_probe.py` uses libatspi (via PyGObject) to walk the tree and read text.
@@ -35,6 +35,7 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
 ## Limits and failure modes
 
 - Bench inputs are bounded (nodes ≤ 10,000, samples/churn bounded by CLI validation). The run ends with `Platform.exit()` and a hard timeout in the script.
+- Readiness is tracked per installed provider (generation): the initial provider and the final provider after install churn must report `AT-SPI2 listo` within 15 s, and no generation may report an `Error…` status.
 - If the AT-SPI bus is unavailable, the provider is not ready within 15 s, or it reports any `Error…` status, the bridge-on run is **invalid**: the process exits with code 3, writes no JSON and `run-baseline.sh` aborts. Unavailability is therefore not recorded as a result; it blocks the baseline instead.
 - RSS alone does not prove a leak; trends over repeated runs are reported with variance.
 - Latency measures mutation-to-pulse-end on the FX thread, not end-to-end screen-reader latency.
