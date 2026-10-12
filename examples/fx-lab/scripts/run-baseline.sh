@@ -21,9 +21,26 @@ root="$(cd "$(dirname "$0")/../../.." && pwd)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd)"
-if [ -n "$(git -C "$root" status --porcelain --untracked-files=all -- . ":(exclude)${out_abs#"$root"/}")" ]; then
+
+# Runtime must be JDK 27: the generated launcher uses JAVA_HOME or PATH, not the Gradle toolchain.
+java_bin="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+spec="$("$java_bin" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java.specification.version = //p')"
+if [ "$spec" != "27" ]; then
+  echo "Refusing to run: $java_bin reports java.specification.version='${spec:-unknown}', JDK 27 is required." >&2
+  exit 1
+fi
+
+# Clean-tree check. An output directory outside the repository needs no pathspec exclusion, and a failing
+# git command must never be read as "clean".
+pathspec=(.)
+case "$out_abs/" in
+  "$root"/*) pathspec+=(":(exclude)${out_abs#"$root"/}") ;;
+esac
+dirty="$(git -C "$root" status --porcelain --untracked-files=all -- "${pathspec[@]}")" \
+  || { echo "Refusing to run: git status failed" >&2; exit 1; }
+if [ -n "$dirty" ]; then
   echo "Refusing to run: working tree has uncommitted changes outside $out" >&2
-  git -C "$root" status --short >&2
+  printf '%s\n' "$dirty" >&2
   exit 1
 fi
 if [ -n "$(find "$out_abs" -mindepth 1 -print -quit)" ]; then
@@ -40,7 +57,9 @@ fi
   echo "command=$0 $*"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
-  java -version 2>&1 | head -2
+  echo "java_bin=$java_bin"
+  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
+  "$java_bin" -version 2>&1 | head -2
   echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
   uname -srm
   echo "cpus=$(nproc)"

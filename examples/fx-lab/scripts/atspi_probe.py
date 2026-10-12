@@ -5,6 +5,9 @@ Usage: atspi_probe.py [application-name]   (default: "JavaFX AT-SPI Lab")
 Prints roles/names/child counts only; text-field contents are never printed.
 Exit code 0 only when the application and ALL expected roles and button names are found, 1 otherwise.
 """
+import platform
+import shutil
+import subprocess
 import sys
 
 import gi
@@ -18,6 +21,25 @@ MAX_NODES = 5000
 EXPECTED_ROLES = {Atspi.Role.FRAME, Atspi.Role.ENTRY, Atspi.Role.TEXT, Atspi.Role.PUSH_BUTTON}
 MAX_DESKTOP_APPS = 256
 EXPECTED_BUTTONS = {"Agregar", "Limpiar", "Añadir campo", "Quitar campo"}
+
+
+def libatspi_version():
+    """Installed libatspi package version (the GI namespace 'Atspi 2.0' is only the API version)."""
+    for cmd in (["rpm", "-q", "at-spi2-core"], ["dpkg-query", "-W", "-f=${Version}", "libatspi2.0-0t64"],
+                ["pkg-config", "--modversion", "atspi-2"]):
+        if shutil.which(cmd[0]):
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if out.returncode == 0 and out.stdout.strip():
+                    return out.stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return "unknown"
+
+
+def print_client_versions():
+    print(f"client: PyGObject {gi.__version__}, Python {platform.python_version()}, "
+          f"libatspi package {libatspi_version()}, GI namespace Atspi 2.0")
 
 
 def walk(node, depth, out):
@@ -35,6 +57,7 @@ def walk(node, depth, out):
 
 
 def main():
+    print_client_versions()
     desktop = Atspi.get_desktop(0)
     found = None
     for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
