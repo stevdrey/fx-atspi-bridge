@@ -1,0 +1,1 @@
+{"bridge":"on","bridgeReady":true,"nodes":10000,"warmup":50,"samples":200,"dirty":1,"idleSeconds":0,"heapAfterWarmupGcBytes":184024368,"rssAfterWarmupKb":1142424,"latencyP50Ms":211.467717,"latencyP95Ms":219.565422,"latencyP99Ms":224.871087,"allocatedBytesPerSample":6978355,"threadCount":16}

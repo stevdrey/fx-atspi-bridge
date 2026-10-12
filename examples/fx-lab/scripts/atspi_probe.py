@@ -3,7 +3,7 @@
 
 Usage: atspi_probe.py [application-name]   (default: "JavaFX AT-SPI Lab")
 Prints roles/names/child counts only; text-field contents are never printed.
-Exit code 0 when the application and an expected control set are found, 1 otherwise.
+Exit code 0 only when the application and ALL expected roles and button names are found, 1 otherwise.
 """
 import sys
 
@@ -14,6 +14,8 @@ from gi.repository import Atspi  # noqa: E402
 
 APP = sys.argv[1] if len(sys.argv) > 1 else "JavaFX AT-SPI Lab"
 MAX_NODES = 5000
+EXPECTED_ROLES = {"frame", "entry", "text", "button"}
+EXPECTED_BUTTONS = {"Agregar", "Limpiar", "Añadir campo", "Quitar campo"}
 
 
 def walk(node, depth, out):
@@ -41,8 +43,15 @@ def main():
     for depth, role, name, children in nodes:
         print("  " * depth + f"{role} {name!r} children={children}")
     roles = {role for _, role, _, _ in nodes}
+    buttons = {name for _, role, name, _ in nodes if role == "button"}
     print(f"nodes={len(nodes)} roles={sorted(roles)}")
-    return 0 if {"push button", "text"} & roles or len(nodes) > 3 else 1
+    missing_roles = sorted(EXPECTED_ROLES - roles)
+    missing_buttons = sorted(EXPECTED_BUTTONS - buttons)
+    if missing_roles or missing_buttons:
+        print(f"MISSING: roles={missing_roles} buttons={missing_buttons}")
+        return 1
+    print("OK: expected roles and buttons present")
+    return 0
 
 
 if __name__ == "__main__":

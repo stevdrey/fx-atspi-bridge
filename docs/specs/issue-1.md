@@ -23,12 +23,12 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
 - CI: `.github/workflows/build.yml`; triggers `pull_request` and `push` to `main`; `contents: read`; Zulu 27 (Azul publishes 27 GA); runs `./gradlew check generatePomFileForMavenJavaPublication --no-daemon`.
 - Harness: `BenchApp` in `examples/fx-lab` (no library change). One JVM per cell (`--bridge=on|off`, `--nodes`), so runs are isolated and paired. Output is one JSON object per run; values contain no UI text.
   - Tree: N buttons (default 100, 1,000, 10,000) in a `FlowPane`.
-  - Update latency: mutate K=10 nodes on the FX thread, then measure time to the end of the next pulse (`AnimationTimer` + `runLater`). Reports p50/p95/p99 over S samples after W warmup samples.
+  - Update latency: mutate K ∈ {1, 10, 100} nodes on the FX thread, then measure time to the end of the next pulse (`AnimationTimer` + `runLater`). Reports p50/p95/p99 over S samples after W warmup samples.
   - Idle: no UI change for T seconds; process CPU from `/proc/self/stat`, voluntary context switches summed over `/proc/self/task/*/status` as a wakeup proxy.
   - Memory: heap after `System.gc()` (observation only), `VmRSS`, thread count, allocated bytes over the sample phase (`com.sun.management.ThreadMXBean`).
   - Churn: C=100 install/close cycles (bridge on) on the FX thread; report retained `fx-atspi-provider` threads, heap, RSS and thread deltas.
 - Independent client: `examples/fx-lab/scripts/atspi_probe.py` uses libatspi (via PyGObject) to walk the tree and read text.
-- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` runs R repetitions of each cell.
+- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` runs R repetitions of each cell; idle and churn only for K=10. Bridge-on runs are invalid (exit 3, no JSON) unless the provider reports readiness and no error.
 
 ## Limits and failure modes
 

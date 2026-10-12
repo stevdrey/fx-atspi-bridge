@@ -33,9 +33,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Headless-of-input benchmark for SC-01 baselines. One JVM run measures one cell:
@@ -47,10 +49,13 @@ public final class BenchApp extends Application {
     private static final int MAX_SAMPLES = 10_000;
     private static final int MAX_CHURN = 1_000;
     private static final long CLK_TCK = 100;
+    private static final int BRIDGE_READY_SECONDS = 15;
 
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private FlowPane pane;
+    private final CountDownLatch bridgeReady = new CountDownLatch(1);
+    private final AtomicInteger bridgeErrors = new AtomicInteger();
     private FxAtSpiBridge bridge;
 
     @Override public void start(Stage stage) {
@@ -63,11 +68,15 @@ public final class BenchApp extends Application {
         stage.setTitle("SC-01 benchmark");
         stage.setScene(new Scene(pane, 1200, 800));
         stage.show();
-        if (bridgeOn) bridge = FxAtSpiBridge.install(message -> { });
+        if (bridgeOn) bridge = FxAtSpiBridge.install(this::onBridgeStatus);
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
         CompletableFuture.runAsync(() -> {
             try {
                 var json = run(nodes, bridgeOn);
+                if (bridgeOn && bridgeErrors.get() > 0) {
+                    System.err.println("bench invalid: provider reported " + bridgeErrors.get() + " error status message(s)");
+                    Runtime.getRuntime().halt(3);
+                }
                 Files.writeString(Path.of(options.getOrDefault("out", "bench.json")), json);
             } catch (IOException | InterruptedException | RuntimeException e) {
                 System.err.println("bench failed: " + e);
@@ -82,10 +91,15 @@ public final class BenchApp extends Application {
         var warmup = bounded("warmup", 50, 0, MAX_SAMPLES);
         var samples = bounded("samples", 200, 1, MAX_SAMPLES);
         var dirty = bounded("dirty", 10, 1, nodes);
-        var idleSeconds = bounded("idle-seconds", 10, 1, 600);
+        var idleSeconds = bounded("idle-seconds", 10, 0, 600);
         var churn = bounded("churn", 100, 0, MAX_CHURN);
+        if (bridgeOn && !bridgeReady.await(BRIDGE_READY_SECONDS, TimeUnit.SECONDS)) {
+            System.err.println("bench invalid: provider not ready within " + BRIDGE_READY_SECONDS + " s");
+            Runtime.getRuntime().halt(3);
+        }
         var json = new StringBuilder("{");
         field(json, "bridge", bridgeOn ? "\"on\"" : "\"off\"");
+        if (bridgeOn) field(json, "bridgeReady", true);
         field(json, "nodes", nodes);
         field(json, "warmup", warmup);
         field(json, "samples", samples);
@@ -108,6 +122,15 @@ public final class BenchApp extends Application {
         field(json, "latencyP99Ms", percentile(latenciesMs, 0.99));
         field(json, "allocatedBytesPerSample", allocated / samples);
 
+        if (idleSeconds > 0) idle(json, idleSeconds);
+        field(json, "threadCount", Thread.getAllStackTraces().size());
+
+        if (bridgeOn && churn > 0) churn(json, churn);
+        json.setLength(json.length() - 1);
+        return json.append("}\n").toString();
+    }
+
+    private void idle(StringBuilder json, int idleSeconds) throws InterruptedException {
         Thread.sleep(1_000);
         var cpuBefore = cpuTicks();
         var switchesBefore = voluntarySwitches();
@@ -119,11 +142,12 @@ public final class BenchApp extends Application {
         gc();
         field(json, "heapAfterIdleGcBytes", usedHeap());
         field(json, "rssAfterIdleKb", status("VmRSS"));
-        field(json, "threadCount", Thread.getAllStackTraces().size());
+    }
 
-        if (bridgeOn && churn > 0) churn(json, churn);
-        json.setLength(json.length() - 1);
-        return json.append("}\n").toString();
+    /** Provider status: "AT-SPI2 listo" marks registration; "Error…" messages invalidate a bridge-on run. */
+    private void onBridgeStatus(String message) {
+        if (message.startsWith("Error")) bridgeErrors.incrementAndGet();
+        else if (message.startsWith("AT-SPI2 listo")) bridgeReady.countDown();
     }
 
     /** Mutates {@code dirty} nodes and returns nanoseconds until the end of the next pulse. */
@@ -157,7 +181,7 @@ public final class BenchApp extends Application {
             var cycle = new CompletableFuture<Void>();
             Platform.runLater(() -> {
                 bridge.close();
-                bridge = FxAtSpiBridge.install(message -> { });
+                bridge = FxAtSpiBridge.install(this::onBridgeStatus);
                 cycle.complete(null);
             });
             cycle.join();
@@ -167,9 +191,19 @@ public final class BenchApp extends Application {
         field(json, "churnCycles", cycles);
         field(json, "churnHeapDeltaBytes", usedHeap() - heapBefore);
         field(json, "churnRssDeltaKb", status("VmRSS") - rssBefore);
+        field(json, "churnProviderErrors", bridgeErrors.get());
         field(json, "churnThreadDelta", Thread.getAllStackTraces().size() - threadsBefore);
-        field(json, "churnProviderThreadsAlive", Thread.getAllStackTraces().keySet().stream()
-                .filter(t -> t.getName().equals("fx-atspi-provider")).count());
+        field(json, "churnProviderThreadsAlive", providerThreads());
+        // Distinguish slow shutdown from a leak: wait up to 30 s for stopped providers to exit.
+        var drainStart = System.nanoTime();
+        while (providerThreads() > 1 && System.nanoTime() - drainStart < TimeUnit.SECONDS.toNanos(30)) Thread.sleep(250);
+        field(json, "churnProviderThreadsAliveAfterDrain", providerThreads());
+        field(json, "churnDrainSeconds", (System.nanoTime() - drainStart) / 1e9);
+    }
+
+    private static long providerThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(t -> t.getName().equals("fx-atspi-provider")).count();
     }
 
     private void parse(List<String> raw) {
