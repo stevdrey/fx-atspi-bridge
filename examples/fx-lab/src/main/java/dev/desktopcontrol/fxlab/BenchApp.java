@@ -59,6 +59,7 @@ public final class BenchApp extends Application {
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private Stage stage;
+    private Scene originalScene;
     private FlowPane pane;
     private final CountDownLatch bridgeReady = new CountDownLatch(1);
     private final AtomicInteger bridgeErrors = new AtomicInteger();
@@ -73,7 +74,8 @@ public final class BenchApp extends Application {
         for (var i = 0; i < nodes; i++) pane.getChildren().add(new Button("n" + i));
         // An untitled Stage currently makes AtSpiProvider.reconcile throw an NPE (see docs/verification/issue-1.md).
         stage.setTitle("SC-01 benchmark");
-        stage.setScene(new Scene(pane, 1200, 800));
+        originalScene = new Scene(pane, 1200, 800);
+        stage.setScene(originalScene);
         stage.show();
         if (bridgeOn) bridge = FxAtSpiBridge.install(this::onBridgeStatus);
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
@@ -195,7 +197,7 @@ public final class BenchApp extends Application {
         var heapBefore = usedHeap();
         var rssBefore = status("VmRSS");
         var threadsBefore = Thread.getAllStackTraces().size();
-        var original = stage.getScene();
+        var original = originalScene;
         var added = new ArrayDeque<List<TextField>>();
         for (var i = 0; i < cycles; i++) {
             var round = i;

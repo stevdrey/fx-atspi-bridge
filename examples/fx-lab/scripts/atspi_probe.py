@@ -14,24 +14,30 @@ from gi.repository import Atspi  # noqa: E402
 
 APP = sys.argv[1] if len(sys.argv) > 1 else "JavaFX AT-SPI Lab"
 MAX_NODES = 5000
-EXPECTED_ROLES = {"frame", "entry", "text", "button"}
+# Compare libatspi role enums, not role-name strings (names are localised/mapped by the client library).
+EXPECTED_ROLES = {Atspi.Role.FRAME, Atspi.Role.ENTRY, Atspi.Role.TEXT, Atspi.Role.PUSH_BUTTON}
+MAX_DESKTOP_APPS = 256
 EXPECTED_BUTTONS = {"Agregar", "Limpiar", "Añadir campo", "Quitar campo"}
 
 
 def walk(node, depth, out):
+    """Depth-first walk; returns False once MAX_NODES is reached so no further D-Bus requests are made."""
     if len(out) >= MAX_NODES:
-        return
-    out.append((depth, node.get_role_name(), node.get_name() or "", node.get_child_count()))
+        return False
+    out.append((depth, node.get_role(), node.get_role_name(), node.get_name() or "", node.get_child_count()))
     for i in range(node.get_child_count()):
+        if len(out) >= MAX_NODES:
+            return False
         child = node.get_child_at_index(i)
-        if child is not None:
-            walk(child, depth + 1, out)
+        if child is not None and not walk(child, depth + 1, out):
+            return False
+    return True
 
 
 def main():
     desktop = Atspi.get_desktop(0)
     found = None
-    for i in range(desktop.get_child_count()):
+    for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
         app = desktop.get_child_at_index(i)
         if app is not None and app.get_name() == APP:
             found = app
@@ -39,13 +45,16 @@ def main():
         print(f"MISSING: application {APP!r} not on the AT-SPI desktop")
         return 1
     nodes = []
-    walk(found, 0, nodes)
-    for depth, role, name, children in nodes:
-        print("  " * depth + f"{role} {name!r} children={children}")
-    roles = {role for _, role, _, _ in nodes}
-    buttons = {name for _, role, name, _ in nodes if role == "button"}
-    print(f"nodes={len(nodes)} roles={sorted(roles)}")
-    missing_roles = sorted(EXPECTED_ROLES - roles)
+    complete = walk(found, 0, nodes)
+    for depth, _, role_name, name, children in nodes:
+        print("  " * depth + f"{role_name} {name!r} children={children}")
+    roles = {role for _, role, _, _, _ in nodes}
+    buttons = {name for _, role, _, name, _ in nodes if role == Atspi.Role.PUSH_BUTTON}
+    print(f"nodes={len(nodes)} roles={sorted({rn for _, _, rn, _, _ in nodes})}")
+    if not complete:
+        print(f"TRUNCATED: stopped at {MAX_NODES} nodes")
+        return 1
+    missing_roles = sorted(r.value_nick for r in EXPECTED_ROLES - roles)
     missing_buttons = sorted(EXPECTED_BUTTONS - buttons)
     if missing_roles or missing_buttons:
         print(f"MISSING: roles={missing_roles} buttons={missing_buttons}")

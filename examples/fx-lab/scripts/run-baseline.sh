@@ -17,11 +17,16 @@ if [ -n "$(git -C "$root" status --porcelain --untracked-files=all -- . ":(exclu
   git -C "$root" status --short >&2
   exit 1
 fi
+if [ -n "$(find "$out_abs" -mindepth 1 -print -quit)" ]; then
+  echo "Refusing to run: $out is not empty; stale results would mix into the evidence. Remove it or choose a new directory." >&2
+  exit 1
+fi
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
 {
   echo "date=$(date -u +%FT%TZ)"
   echo "git=$(git -C "$root" rev-parse HEAD)"
   echo "tree=clean"
+  echo "reps=$reps"
   echo "command=$0 $*"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)

@@ -15,8 +15,24 @@ SIZES = (100, 1000, 10000)
 DIRTY = (1, 10, 100)
 
 
+def expected_reps():
+    for line in open(f"{DATA}/environment.txt"):
+        if line.startswith("reps="):
+            return int(line.split("=", 1)[1])
+    sys.exit("environment.txt has no reps= line; refusing to summarise an unknown collection")
+
+
+REPS = expected_reps()
+TOTAL = len(SIZES) * len(DIRTY) * 2 * REPS
+if len(glob.glob(f"{DATA}/n*-d*-*-r*.json")) != TOTAL:
+    sys.exit(f"expected {TOTAL} run files for reps={REPS}, found {len(glob.glob(f'{DATA}/n*-d*-*-r*.json'))}: mixed collection?")
+
+
 def load(n, d, bridge):
-    return [json.load(open(f)) for f in sorted(glob.glob(f"{DATA}/n{n}-d{d}-{bridge}-r*.json"))]
+    rs = [json.load(open(f)) for f in sorted(glob.glob(f"{DATA}/n{n}-d{d}-{bridge}-r*.json"))]
+    if len(rs) != REPS:
+        sys.exit(f"cell n={n} d={d} {bridge}: {len(rs)} runs, expected {REPS}")
+    return rs
 
 
 def med(rs, k):
@@ -66,7 +82,7 @@ def main():
         "RSS after idle (MB)": lambda n: str(budget(load(n, 10, "on"), "rssAfterIdleKb", 1024)),
         "Install churn heap delta after GC (MB)": lambda n: str(max(1, budget(load(n, 10, "on"), "installChurnHeapDeltaBytesAfterGc", 2**20))),
         "Provider threads at install-churn checkpoint": lambda n: str(budget(load(n, 10, "on"), "installChurnProviderThreadsCheckpoint")),
-        "Provider threads after drain": lambda n: str(max(load(n, 10, "on")[i]["installChurnProviderThreadsAfterDrain"] for i in range(len(load(n, 10, "on"))))),
+        "Provider threads after drain": lambda n: str(budget(load(n, 10, "on"), "installChurnProviderThreadsAfterDrain")),
         "Structural heap delta after GC (MB)": lambda n: str(max(1, budget(load(n, 10, "on"), "structuralHeapDeltaBytesAfterGc", 2**20))),
     }
     for name, fn in rows.items():
