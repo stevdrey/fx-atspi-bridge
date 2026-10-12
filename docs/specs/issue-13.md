@@ -10,11 +10,11 @@ Goal: untitled windows publish an empty accessible name and the provider loop su
 
 ## Contracts and design
 
-`Item` (private record) normalizes `name` and `text` via `AtSpiProvider.displayName` in its compact constructor, covering every construction site (window, root, node). `Ffm.quote(null)` returns `''` as defence in depth; NUL rejection and escaping are unchanged. Offsets remain code-point based (`textRange` unchanged); password text remains `""`. Cost O(1) per item; no new state, threads or locks.
+`Item` (package-private record) sanitizes `name` and `text` via `AtSpiProvider.publishable` in its compact constructor, covering every construction site: null becomes `""` and NUL becomes U+FFFD. The replacement is one-for-one so code-point offsets and caret positions stay aligned with the JavaFX text. `Ffm.quote` is unchanged and still rejects null/NUL, so a bypass fails fast. Password text remains `""`. Cost O(1) per item; no new state, threads or locks.
 
 ## Limits and failure modes
 
-Other null sources reviewed: `collect` already maps null name to `""`; `text` is guarded by `TextInputControl.getText()` and now normalized; root name is a literal.
+Other null sources reviewed: `collect` already maps null name to `""`; `text` can contain NUL and is now sanitized; NUL in titles/labels previously also ended the provider thread through `Ffm.quote`; root name is a literal.
 
 ## Dependencies and affected files
 

@@ -44,12 +44,12 @@ final class AtSpiProvider {
     private String busName = "", busAddress = "", parent = "('', objectpath '/org/a11y/atspi/null')";
     private int applicationId;
     private final Map<Long, MemorySegment> pending = new HashMap<>();
-    private record Item(String id, String name, int role, String text, boolean editable, boolean enabled,
+    record Item(String id, String name, int role, String text, boolean editable, boolean enabled,
                         boolean showing, boolean focused, int caret, String ancestor, List<String> children, Object target) {
         Item {
-            // JavaFX returns null for untitled stages and unset text; the diff and D-Bus encoding require non-null values.
-            name = displayName(name);
-            text = displayName(text);
+            // JavaFX returns null for untitled stages and may carry NUL in titles or text; reconcile and Ffm.quote reject both.
+            name = publishable(name);
+            text = publishable(text);
         }
     }
     private record Export(List<Integer> registrations, MemorySegment info) {}
@@ -59,7 +59,8 @@ final class AtSpiProvider {
     AtSpiProvider(Consumer<String> status) { this.status = status; refresh(); snapshot.set(desired.get()); }
     private static String path(String id) { return id.equals("cache") ? "/org/a11y/atspi/cache" : "/org/a11y/atspi/accessible/" + id; }
     private String identity(Object target) { return identities.computeIfAbsent(target, ignored -> "object" + (++sequence)); }
-    static String displayName(String value) { return value == null ? "" : value; }
+    // NUL becomes U+FFFD one-for-one so code-point offsets still match the JavaFX text.
+    static String publishable(String value) { return Objects.requireNonNullElse(value, "").replace('\0', '\uFFFD'); }
     // Called only on the FX application thread. Controls are semantic leaves: their skin is not exported.
     void refresh() {
         var tree = new LinkedHashMap<String,Item>();

@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi;
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 class AtSpiTextTest {
     @Test void atspiOffsetsCountUnicodeCodePointsInsteadOfUtf16Units() {
@@ -36,10 +37,22 @@ class AtSpiTextTest {
             assertThrows(IllegalStateException.class, () -> nativeApi.variant("not valid variant syntax!"));
         }
     }
-    @Test void nullNamesFromUntitledStagesNormalizeToEmptyText() {
-        assertEquals("", AtSpiProvider.displayName(null));
-        assertEquals("Title 🧪", AtSpiProvider.displayName("Title 🧪"));
-        assertEquals("''", Ffm.quote(null));
-        assertEquals("", AtSpiProvider.textRange(AtSpiProvider.displayName(null), 0, -1));
+    private static AtSpiProvider.Item item(String name, String text) {
+        return new AtSpiProvider.Item("id", name, 23, text, false, true, true, false, 0, "root", List.of(), null);
+    }
+    @Test void untitledStageNamesNormalizeToEmptyAndCompareWithoutFailing() {
+        var untitled = item(null, null);
+        assertEquals("", untitled.name());
+        assertEquals("", untitled.text());
+        assertTrue(untitled.name().equals(item(null, null).name()));
+        assertFalse(untitled.name().equals(item("Title", "").name()));
+    }
+    @Test void nulCharactersAreReplacedOneForOneSoOffsetsAndQuotingStillWork() {
+        var published = item("a\0b", "x🧪\0y");
+        assertEquals("a\uFFFDb", published.name());
+        assertEquals("'a\uFFFDb'", Ffm.quote(published.name()));
+        assertEquals("x🧪\uFFFDy".codePointCount(0, 4), published.text().codePointCount(0, 4));
+        assertEquals(4, published.text().codePointCount(0, published.text().length()));
+        assertEquals("\uFFFD", AtSpiProvider.textRange(published.text(), 2, 3));
     }
 }
