@@ -6,7 +6,7 @@ Spec: [`docs/specs/issue-1.md`](../specs/issue-1.md). Raw data: `docs/verificati
 
 | Item | Value |
 | --- | --- |
-| Baseline commit | 525afca (library code unchanged by this issue) |
+| Baseline commit | 525afca (library code unchanged by this issue; the later Issue 13 fix was merged after data collection) |
 | Harness commit that produced the data | 7a35631 (`environment.txt` in the data directory records it, the clean-tree check and SHA-256 of every installed jar; the data was committed afterwards) |
 | OS / kernel | Fedora 44, Linux 7.2.9-200.fc44.x86_64 |
 | Desktop | GNOME Shell 50.5, `XDG_SESSION_TYPE=wayland`, `WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0` (XWayland present) |
@@ -146,7 +146,7 @@ Thread rows: the rule gives 2 where exactly one provider thread was observed (on
 
 ## Defects and limitations found
 
-1. **Untitled `Stage` crashes the provider thread.** With `stage.getTitle() == null`, `AtSpiProvider.reconcile` throws `NullPointerException` at `!old.name().equals(item.name())` (AtSpiProvider.java:186), and the provider loop stops. Reproduced with the benchmark window before a title was added. Not fixed here (non-goal); tracked in a separate task.
+1. **Untitled `Stage` crashes the provider thread.** With `stage.getTitle() == null`, `AtSpiProvider.reconcile` throws `NullPointerException` at `!old.name().equals(item.name())` (AtSpiProvider.java:186), and the provider loop stops. Reproduced with the benchmark window before a title was added. Not fixed by this issue (non-goal); fixed separately on `main` in PR #14 (Issue 13), merged into this branch after the data was collected. The measurements therefore come from the unfixed library at 525afca, and the benchmark title workaround remains harmless.
 2. Rapid install/close cycles can leave about a hundred stopped providers alive concurrently at 1,000 nodes (unbounded shutdown backlog); they exit within about a second.
 3. After structural churn at 10,000 nodes the bridge run retains more heap (27 MB vs 1.3 MB) and RSS (1.37 GB vs 0.43 GB) than the bridge-off run; cause not investigated.
 4. Single machine, 5 repetitions, one scene shape (flat buttons plus synthetic churn controls); latency is FX-pulse based. Native Wayland vs XWayland for the benchmark window was not checked.
