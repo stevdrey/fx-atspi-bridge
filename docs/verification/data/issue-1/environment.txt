@@ -1,9 +1,0 @@
-date=2026-10-12T01:08:06Z
-git=d91f0361218185990b8097cb5779c07093418d89
-openjdk version "27" 2026-09-15
-OpenJDK Runtime Environment Zulu27.28+101-CA (build 27+35)
-session=wayland wayland=wayland-0 display=:0
-Linux 7.2.9-200.fc44.x86_64 x86_64
-cpus=16
-model name	: AMD Ryzen 7 7730U with Radeon Graphics
-MemTotal:       15690536 kB

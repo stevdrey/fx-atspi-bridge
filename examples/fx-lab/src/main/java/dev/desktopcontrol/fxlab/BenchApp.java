@@ -22,12 +22,16 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.scene.layout.FlowPane;
 import javafx.stage.Stage;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -42,7 +46,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Headless-of-input benchmark for SC-01 baselines. One JVM run measures one cell:
  * {@code --bridge=on|off --nodes=N}. Emits a single JSON object without any UI text.
- * Options: --warmup, --samples, --dirty, --churn, --idle-seconds, --out.
+ * Options: --warmup, --samples, --dirty, --install-churn, --structural, --idle-seconds, --out.
  */
 public final class BenchApp extends Application {
     private static final int MAX_NODES = 10_000;
@@ -50,15 +54,18 @@ public final class BenchApp extends Application {
     private static final int MAX_CHURN = 1_000;
     private static final long CLK_TCK = 100;
     private static final int BRIDGE_READY_SECONDS = 15;
+    private static final int STRUCTURAL_CONTROLS = 10;
 
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+    private Stage stage;
     private FlowPane pane;
     private final CountDownLatch bridgeReady = new CountDownLatch(1);
     private final AtomicInteger bridgeErrors = new AtomicInteger();
     private FxAtSpiBridge bridge;
 
-    @Override public void start(Stage stage) {
+    @Override public void start(Stage primary) {
+        stage = primary;
         parse(getParameters().getRaw());
         var nodes = bounded("nodes", 100, 1, MAX_NODES);
         var bridgeOn = "on".equals(options.getOrDefault("bridge", "off"));
@@ -92,7 +99,8 @@ public final class BenchApp extends Application {
         var samples = bounded("samples", 200, 1, MAX_SAMPLES);
         var dirty = bounded("dirty", 10, 1, nodes);
         var idleSeconds = bounded("idle-seconds", 10, 0, 600);
-        var churn = bounded("churn", 100, 0, MAX_CHURN);
+        var installChurn = bounded("install-churn", 100, 0, MAX_CHURN);
+        var structural = bounded("structural", 100, 0, MAX_CHURN);
         if (bridgeOn && !bridgeReady.await(BRIDGE_READY_SECONDS, TimeUnit.SECONDS)) {
             System.err.println("bench invalid: provider not ready within " + BRIDGE_READY_SECONDS + " s");
             Runtime.getRuntime().halt(3);
@@ -125,7 +133,8 @@ public final class BenchApp extends Application {
         if (idleSeconds > 0) idle(json, idleSeconds);
         field(json, "threadCount", Thread.getAllStackTraces().size());
 
-        if (bridgeOn && churn > 0) churn(json, churn);
+        if (structural > 0) structuralChurn(json, structural);
+        if (bridgeOn && installChurn > 0) installChurn(json, installChurn);
         json.setLength(json.length() - 1);
         return json.append("}\n").toString();
     }
@@ -152,11 +161,18 @@ public final class BenchApp extends Application {
 
     /** Mutates {@code dirty} nodes and returns nanoseconds until the end of the next pulse. */
     private long mutateAndWait(int dirty, int round) throws InterruptedException {
+        return awaitPulse(() -> {
+            var children = pane.getChildren();
+            for (var i = 0; i < dirty; i++) ((Button) children.get(i * children.size() / dirty)).setText("r" + round);
+        });
+    }
+
+    /** Runs {@code action} on the FX thread and returns nanoseconds until the end of the next pulse. */
+    private long awaitPulse(Runnable action) {
         var done = new CompletableFuture<Long>();
         var start = new long[1];
         Platform.runLater(() -> {
-            var children = pane.getChildren();
-            for (var i = 0; i < dirty; i++) ((Button) children.get(i * children.size() / dirty)).setText("r" + round);
+            action.run();
             start[0] = System.nanoTime();
             new AnimationTimer() {
                 @Override public void handle(long now) {
@@ -167,12 +183,50 @@ public final class BenchApp extends Application {
         });
         try {
             return done.get(30, TimeUnit.SECONDS);
-        } catch (ExecutionException | TimeoutException e) {
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new IllegalStateException("pulse did not complete", e);
         }
     }
 
-    private void churn(StringBuilder json, int cycles) throws InterruptedException {
+    /** Create/remove controls and swap scenes, paired for bridge off/on. Checkpoint values are read before GC. */
+    private void structuralChurn(StringBuilder json, int cycles) throws InterruptedException {
+        gc();
+        var heapBefore = usedHeap();
+        var rssBefore = status("VmRSS");
+        var threadsBefore = Thread.getAllStackTraces().size();
+        var original = stage.getScene();
+        var added = new ArrayDeque<List<TextField>>();
+        for (var i = 0; i < cycles; i++) {
+            var round = i;
+            awaitPulse(() -> {
+                var fresh = new ArrayList<TextField>();
+                for (var c = 0; c < STRUCTURAL_CONTROLS; c++) {
+                    var field = new TextField("c" + round);
+                    field.setAccessibleText("churn " + c);
+                    fresh.add(field);
+                }
+                pane.getChildren().addAll(fresh);
+                added.addLast(fresh);
+                if (added.size() > 1) pane.getChildren().removeAll(added.removeFirst());
+                var alternate = new Scene(new VBox(new TextField("alt"), new Button("alt")), 400, 200);
+                stage.setScene(alternate);
+            });
+            awaitPulse(() -> stage.setScene(original));
+        }
+        awaitPulse(() -> { while (!added.isEmpty()) pane.getChildren().removeAll(added.removeFirst()); });
+        Thread.sleep(2_000);
+        field(json, "structuralCycles", cycles);
+        field(json, "structuralRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
+        field(json, "structuralThreadDeltaCheckpoint", Thread.getAllStackTraces().size() - threadsBefore);
+        field(json, "structuralProviderThreadsCheckpoint", providerThreads());
+        gc();
+        field(json, "structuralHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
+        field(json, "structuralRssDeltaKbAfterGc", status("VmRSS") - rssBefore);
+    }
+
+    /** Close+install cycles of the bridge itself. Thread/RSS checkpoint is read before GC; heap after GC. */
+    private void installChurn(StringBuilder json, int cycles) throws InterruptedException {
         gc();
         var heapBefore = usedHeap();
         var rssBefore = status("VmRSS");
@@ -186,19 +240,21 @@ public final class BenchApp extends Application {
             });
             cycle.join();
         }
+        var loopEnd = System.nanoTime();
         Thread.sleep(2_000);
+        field(json, "installChurnCycles", cycles);
+        field(json, "installChurnCheckpointSeconds", (System.nanoTime() - loopEnd) / 1e9);
+        field(json, "installChurnRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
+        field(json, "installChurnThreadDeltaCheckpoint", Thread.getAllStackTraces().size() - threadsBefore);
+        field(json, "installChurnProviderThreadsCheckpoint", providerThreads());
+        field(json, "installChurnProviderErrors", bridgeErrors.get());
         gc();
-        field(json, "churnCycles", cycles);
-        field(json, "churnHeapDeltaBytes", usedHeap() - heapBefore);
-        field(json, "churnRssDeltaKb", status("VmRSS") - rssBefore);
-        field(json, "churnProviderErrors", bridgeErrors.get());
-        field(json, "churnThreadDelta", Thread.getAllStackTraces().size() - threadsBefore);
-        field(json, "churnProviderThreadsAlive", providerThreads());
+        field(json, "installChurnHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
         // Distinguish slow shutdown from a leak: wait up to 30 s for stopped providers to exit.
         var drainStart = System.nanoTime();
         while (providerThreads() > 1 && System.nanoTime() - drainStart < TimeUnit.SECONDS.toNanos(30)) Thread.sleep(250);
-        field(json, "churnProviderThreadsAliveAfterDrain", providerThreads());
-        field(json, "churnDrainSeconds", (System.nanoTime() - drainStart) / 1e9);
+        field(json, "installChurnProviderThreadsAfterDrain", providerThreads());
+        field(json, "installChurnDrainSeconds", (System.nanoTime() - drainStart) / 1e9);
     }
 
     private static long providerThreads() {

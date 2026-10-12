@@ -26,14 +26,16 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
   - Update latency: mutate K ∈ {1, 10, 100} nodes on the FX thread, then measure time to the end of the next pulse (`AnimationTimer` + `runLater`). Reports p50/p95/p99 over S samples after W warmup samples.
   - Idle: no UI change for T seconds; process CPU from `/proc/self/stat`, voluntary context switches summed over `/proc/self/task/*/status` as a wakeup proxy.
   - Memory: heap after `System.gc()` (observation only), `VmRSS`, thread count, allocated bytes over the sample phase (`com.sun.management.ThreadMXBean`).
-  - Churn: C=100 install/close cycles (bridge on) on the FX thread; report retained `fx-atspi-provider` threads, heap, RSS and thread deltas.
+  - Structural churn: 100 cycles of adding/removing 10 controls and swapping the `Scene` to a fresh one and back, for bridge off and on; report heap (after GC), RSS and thread deltas.
+  - Install churn: 100 bridge close/install cycles (bridge on) on the FX thread; thread/RSS checkpoint read 2 s after the loop and before GC, heap after GC, then a ≤30 s drain wait for stopped provider threads.
+  - Retained listener/invocation counters are not observable without library changes and are **not** measured here.
 - Independent client: `examples/fx-lab/scripts/atspi_probe.py` uses libatspi (via PyGObject) to walk the tree and read text.
-- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` runs R repetitions of each cell; idle and churn only for K=10. Bridge-on runs are invalid (exit 3, no JSON) unless the provider reports readiness and no error.
+- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` builds the harness, refuses to run on a dirty tree, records commit/jar hashes in `environment.txt`, and runs R repetitions of each cell; idle and both churn phases only for K=10. `budgets.py` produces the tables and budgets from the JSON. Bridge-on runs are invalid (exit 3, no JSON) unless the provider reports readiness and no error.
 
 ## Limits and failure modes
 
 - Bench inputs are bounded (nodes ≤ 10,000, samples/churn bounded by CLI validation). The run ends with `Platform.exit()` and a hard timeout in the script.
-- If the AT-SPI bus is unavailable the bridge reports status and the bench still completes; this is recorded, not hidden.
+- If the AT-SPI bus is unavailable, the provider is not ready within 15 s, or it reports any `Error…` status, the bridge-on run is **invalid**: the process exits with code 3, writes no JSON and `run-baseline.sh` aborts. Unavailability is therefore not recorded as a result; it blocks the baseline instead.
 - RSS alone does not prove a leak; trends over repeated runs are reported with variance.
 - Latency measures mutation-to-pulse-end on the FX thread, not end-to-end screen-reader latency.
 
