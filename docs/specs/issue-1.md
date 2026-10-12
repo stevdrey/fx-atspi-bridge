@@ -3,9 +3,9 @@
 ## Context and source evidence
 
 - Issue: https://github.com/stevdrey/fx-atspi-bridge/issues/1
-- Baseline: `main` at 525afca (PR #11).
+- Baseline: `main` at 525afca (PR #11); the recorded data was produced after merging Issue 13 (PR #14), see the evidence file for the exact artifact.
 - Before this issue, only a CI template (`ci/github-actions-build.yml.example`) existed. No workflow built the project, and no repeatable measurement existed.
-- Source under measurement (not modified here): `FxAtSpiBridge` (100 ms `AnimationTimer` scan), `AtSpiProvider` (5 ms GLib poll on `fx-atspi-provider`, instance-wide monitor). ADR 0001 lists these as costs to *measure*, not fix, in SC-01.
+- Source under measurement (not modified by this issue; the measured artifact also contains the Issue 13 fix merged from `main`, see `docs/verification/issue-1.md`): `FxAtSpiBridge` (100 ms `AnimationTimer` scan), `AtSpiProvider` (5 ms GLib poll on `fx-atspi-provider`, instance-wide monitor). ADR 0001 lists these as costs to *measure*, not fix, in SC-01.
 - Constraints: ADR 0001, `docs/security/security-invariants.md` (invariant 10: minimal CI permissions, pinned actions), `docs/verification/README.md` (paired runs, no invented thresholds, Xvfb is not desktop QA).
 
 ## Goal and non-goals
