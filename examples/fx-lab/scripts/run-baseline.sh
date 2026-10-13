@@ -27,23 +27,31 @@ case "$profile" in
 esac
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
-# Evidence under docs/verification/ may be committed publicly. Inherited JVM options can carry secrets (proxy/keystore
-# passwords, agent arguments), so only an allowlist of benign flags is recorded and the JVM's "Picked up ..." echo of
-# JAVA_TOOL_OPTIONS/JDK_JAVA_OPTIONS is redacted everywhere it could reach a retained file.
-safe_opts() {
-  local tok kept="" redacted=0
+# Evidence under docs/verification/ may be committed publicly, and inherited JVM options can both carry secrets
+# (proxy/keystore passwords, agent arguments) and change what is measured (e.g. -XX:-TieredCompilation). Therefore the
+# options of every variable the benchmark JVM consumes must be inside an allowlist of benign flags, otherwise the run is
+# refused (values are never printed); the complete effective option set is then recorded in environment.txt.
+# The JVM's "[NOTE: ]Picked up <VAR>: ..." echo is redacted everywhere it could reach a retained file.
+require_allowed_opts() {
+  local name="$1" value="$2" tok bad=0
   set -f
-  for tok in $1; do
+  for tok in $value; do
     case "$tok" in
-      -Xmx[0-9]*|-Xms[0-9]*|-Xss[0-9]*|-XX:[+-]DisableExplicitGC|-XX:+ExitOnOutOfMemoryError|-XX:+Use*GC|-XX:ActiveProcessorCount=[0-9]*|-XX:NativeMemoryTracking=*|--enable-native-access=*)
-        kept+="$tok " ;;
-      *) redacted=$((redacted + 1)) ;;
+      -Xmx[0-9]*|-Xms[0-9]*|-Xss[0-9]*|-XX:[+-]DisableExplicitGC|-XX:+ExitOnOutOfMemoryError|-XX:+Use*GC|-XX:ActiveProcessorCount=[0-9]*|-XX:NativeMemoryTracking=*|--enable-native-access=*) ;;
+      *) bad=$((bad + 1)) ;;
     esac
   done
   set +f
-  printf '%s(redacted_tokens=%d)' "$kept" "$redacted"
+  if [ "$bad" -ne 0 ]; then
+    echo "Refusing to run: $name contains $bad option(s) outside the recorded allowlist (values not printed). Unset it, or review the options and extend the allowlist in run-baseline.sh." >&2
+    exit 1
+  fi
 }
-redact_picked_up() { sed -E 's/^(Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
+redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
+
+for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
+  require_allowed_opts "$opts_var" "${!opts_var:-}"
+done
 
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd)"
@@ -85,9 +93,9 @@ fi
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
   echo "java_bin=$java_bin"
-  echo "JAVA_TOOL_OPTIONS_safe=$(safe_opts "${JAVA_TOOL_OPTIONS:-}")"
-  echo "JDK_JAVA_OPTIONS_safe=$(safe_opts "${JDK_JAVA_OPTIONS:-}")"
-  echo "JAVA_OPTS_safe=$(safe_opts "${JAVA_OPTS:-}")"
+  for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
+    echo "${opts_var}_effective=${!opts_var:-}"
+  done
   "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
   "$java_bin" -version 2>&1 | redact_picked_up | head -3
   echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
