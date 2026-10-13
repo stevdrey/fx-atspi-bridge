@@ -114,7 +114,7 @@ public final class BenchApp extends Application {
                     var installed = new CompletableFuture<Void>();
                     Platform.runLater(() -> {
                         try {
-                            bridge = installBridge();
+                            bridge = installBridge(true);
                             installed.complete(null);
                         } catch (RuntimeException | Error e) {
                             installed.completeExceptionally(e);
@@ -196,9 +196,11 @@ public final class BenchApp extends Application {
         field(json, "allocatedBytesPerSample", allocated / samples);
 
         if (idleSeconds > 0) idle(json, idleSeconds);
+        if (bridgeOn) requireProviderAlive("after the idle phase");
         field(json, "threadCount", Thread.getAllStackTraces().size());
 
         if (structural > 0) structuralChurn(json, structural);
+        if (bridgeOn) requireProviderAlive("after the structural churn phase");
         if (bridgeOn && installChurn > 0) installChurn(json, installChurn);
         if (bridgeOn) {
             requireProviderAlive("at the end of the run");
@@ -223,16 +225,23 @@ public final class BenchApp extends Application {
     }
 
     /** Installs a bridge on the FX thread and tracks its readiness in a fresh generation. */
-    private FxAtSpiBridge installBridge() {
+    /**
+     * Installs a bridge and tracks it as the current generation. The provider thread is identified (thread set before
+     * and after) only when {@code identifyThread} is set: for the initial install and the last churn cycle, so the
+     * churn loop itself is not burdened with a stack snapshot per cycle.
+     */
+    private FxAtSpiBridge installBridge(boolean identifyThread) {
         var generation = new Generation();
         generations.add(generation);
         current = generation;
-        var before = providerThreadSet();
+        var before = identifyThread ? providerThreadSet() : null;
         var installed = FxAtSpiBridge.install(generation::onStatus);
-        var started = providerThreadSet();
-        started.removeAll(before);
-        if (started.size() != 1) throw new IllegalStateException("expected exactly one new provider thread, found " + started.size());
-        generation.providerThread = started.iterator().next();
+        if (identifyThread) {
+            var started = providerThreadSet();
+            started.removeAll(before);
+            if (started.size() != 1) throw new IllegalStateException("expected exactly one new provider thread, found " + started.size());
+            generation.providerThread = started.iterator().next();
+        }
         return installed;
     }
 
@@ -342,10 +351,11 @@ public final class BenchApp extends Application {
         var threadsBefore = Thread.getAllStackTraces().size();
         for (var i = 0; i < cycles; i++) {
             var cycle = new CompletableFuture<Void>();
+            var last = i == cycles - 1;
             Platform.runLater(() -> {
                 try {
                     bridge.close();
-                    bridge = installBridge();
+                    bridge = installBridge(last);
                     cycle.complete(null);
                 } catch (RuntimeException | Error e) {
                     cycle.completeExceptionally(e);
@@ -418,7 +428,14 @@ public final class BenchApp extends Application {
     }
 
     private static void gc() throws InterruptedException {
+        var before = collections();
         for (var i = 0; i < 3; i++) { System.gc(); Thread.sleep(200); }
+        // -XX:+DisableExplicitGC (e.g. via JAVA_TOOL_OPTIONS) would silently turn every "after GC" value into a lie.
+        if (collections() <= before) invalid("System.gc() did not trigger a collection (explicit GC disabled?)");
+    }
+
+    private static long collections() {
+        return ManagementFactory.getGarbageCollectorMXBeans().stream().mapToLong(b -> Math.max(0, b.getCollectionCount())).sum();
     }
 
     private static long usedHeap() {

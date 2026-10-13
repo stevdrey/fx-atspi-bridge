@@ -67,6 +67,9 @@ fi
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
   echo "java_bin=$java_bin"
+  echo "JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:-}"
+  echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"
+  echo "JAVA_OPTS=${JAVA_OPTS:-}"
   "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
   "$java_bin" -version 2>&1 | head -2
   echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"

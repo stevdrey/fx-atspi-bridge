@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Independent AT-SPI client for SC-01: walks the fx-lab tree through libatspi.
 
-Usage: atspi_probe.py [application-name]   (default: "JavaFX AT-SPI Lab")
+Usage: atspi_probe.py [application-name] [--pid=<pid>]   (default name: "JavaFX AT-SPI Lab")
+More than one matching application is rejected as ambiguous unless --pid selects exactly one.
 Prints roles/names/child counts only; text-field contents are never printed.
 Exit code 0 only when the application and ALL expected roles and button names are found, 1 otherwise.
 """
@@ -15,7 +16,9 @@ import gi
 gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi  # noqa: E402
 
-APP = sys.argv[1] if len(sys.argv) > 1 else "JavaFX AT-SPI Lab"
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--pid=")]
+APP = ARGS[0] if ARGS else "JavaFX AT-SPI Lab"
+PID = next((int(a.split("=", 1)[1]) for a in sys.argv[1:] if a.startswith("--pid=")), None)
 MAX_NODES = 5000
 # Compare libatspi role enums, not role-name strings (names are localised/mapped by the client library).
 EXPECTED_ROLES = {Atspi.Role.FRAME, Atspi.Role.ENTRY, Atspi.Role.TEXT, Atspi.Role.PUSH_BUTTON}
@@ -59,14 +62,21 @@ def walk(node, depth, out):
 def main():
     print_client_versions()
     desktop = Atspi.get_desktop(0)
-    found = None
+    matches = []
     for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
         app = desktop.get_child_at_index(i)
         if app is not None and app.get_name() == APP:
-            found = app
-    if found is None:
-        print(f"MISSING: application {APP!r} not on the AT-SPI desktop")
+            matches.append(app)
+    if PID is not None:
+        matches = [app for app in matches if app.get_process_id() == PID]
+    if not matches:
+        print(f"MISSING: application {APP!r}" + (f" with pid {PID}" if PID is not None else "") + " not on the AT-SPI desktop")
         return 1
+    if len(matches) > 1:
+        pids = sorted(app.get_process_id() for app in matches)
+        print(f"AMBIGUOUS: {len(matches)} applications named {APP!r} (pids {pids}); stop the others or pass --pid=<pid>")
+        return 1
+    found = matches[0]
     nodes = []
     complete = walk(found, 0, nodes)
     for depth, _, role_name, name, children in nodes:
