@@ -174,7 +174,7 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 | `7586ca3` | Data and documentation | No |
 | `f3e1ae7` | `BenchApp`: reject `--bridge` values other than `on`/`off`; complete the install future exceptionally when `installBridge()` throws (startup failures end the run instead of hanging). `run-baseline.sh`: `smoke` profile, warmup/samples/idle/churn parameters moved into variables whose `quick`/`full` values are unchanged (50, 200, 10 s, 100). `budgets.py`: floor documented. Python tooling tests, CI step, docs. | No: option validation, error path and parameter plumbing with identical values. Verified with the unit tests, `smoke` (54 s) and a rejected `--bridge=onn`. |
 
-| `this commit` | `BenchApp`: reject runs with a measured pulse ≥ 900 ms and record `latencyMaxMs`; per-cycle and `awaitPulse` futures complete exceptionally when FX work throws. `budgets.py`: validates all runs (p99 < 900 ms, cadence ≤ 50 ms) before summarising, with unit tests. | No: validation after sampling and error paths. The existing 44 files pass the new validation (max p99 504 ms, max idle cadence 16.0 ms); `latencyMaxMs` is absent from them because they predate the field. |
+| `8fb522e` | `BenchApp`: reject runs with a measured pulse ≥ 900 ms and record `latencyMaxMs`; per-cycle and `awaitPulse` futures complete exceptionally when FX work throws. `budgets.py`: validates all runs (p99 < 900 ms, cadence ≤ 50 ms) before summarising, with unit tests. | No: validation after sampling and error paths. The existing 44 files pass the new validation (max p99 504 ms, max idle cadence 16.0 ms); `latencyMaxMs` is absent from them because they predate the field. |
 
 ## Deferred to dedicated QA sessions
 
