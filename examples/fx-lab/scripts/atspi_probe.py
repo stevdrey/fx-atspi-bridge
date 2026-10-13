@@ -7,6 +7,7 @@ Prints roles/names/child counts only; text-field contents are never printed.
 Exit code 0 only when the application and ALL expected roles and button names are found, 1 otherwise.
 """
 import platform
+import time
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,8 @@ MAX_NODES = 5000
 # Compare libatspi role enums, not role-name strings (names are localised/mapped by the client library).
 EXPECTED_ROLES = {Atspi.Role.FRAME, Atspi.Role.ENTRY, Atspi.Role.TEXT, Atspi.Role.PUSH_BUTTON}
 MAX_DESKTOP_APPS = 256
+PROBE_DEADLINE_S = 60  # overall time bound; per-call D-Bus timeout is set separately in main()
+CALL_TIMEOUT_MS = 2000
 EXPECTED_BUTTONS = {"Agregar", "Limpiar", "Añadir campo", "Quitar campo"}
 
 
@@ -45,11 +48,12 @@ def print_client_versions():
           f"libatspi package {libatspi_version()}, GI namespace Atspi 2.0")
 
 
-def walk(node, depth, out, lookups=None):
+def walk(node, depth, out, lookups=None, deadline=None):
     """Depth-first walk; returns False once MAX_NODES nodes were discovered or MAX_NODES child lookups were attempted.
 
     Lookups count every get_child_at_index call, including the ones that return None, so an object that reports a
-    huge child count cannot make the probe issue unbounded blocking D-Bus requests.
+    huge child count cannot make the probe issue unbounded blocking D-Bus requests. A monotonic ``deadline`` bounds
+    the elapsed time as well (each blocking call is additionally limited by Atspi.set_timeout in main()).
     """
     if lookups is None:
         lookups = [0]
@@ -57,17 +61,18 @@ def walk(node, depth, out, lookups=None):
         return False
     out.append((depth, node.get_role(), node.get_role_name(), node.get_name() or "", node.get_child_count()))
     for i in range(node.get_child_count()):
-        if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES:
+        if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES or (deadline is not None and time.monotonic() >= deadline):
             return False
         lookups[0] += 1
         child = node.get_child_at_index(i)
-        if child is not None and not walk(child, depth + 1, out, lookups):
+        if child is not None and not walk(child, depth + 1, out, lookups, deadline):
             return False
     return True
 
 
 def main():
     print_client_versions()
+    Atspi.set_timeout(CALL_TIMEOUT_MS, 15000)  # per-call and app-startup D-Bus timeouts (ms)
     desktop = Atspi.get_desktop(0)
     matches = []
     for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
@@ -85,14 +90,14 @@ def main():
         return 1
     found = matches[0]
     nodes = []
-    complete = walk(found, 0, nodes)
+    complete = walk(found, 0, nodes, deadline=time.monotonic() + PROBE_DEADLINE_S)
     for depth, _, role_name, name, children in nodes:
         print("  " * depth + f"{role_name} {name!r} children={children}")
     roles = {role for _, role, _, _, _ in nodes}
     buttons = {name for _, role, _, name, _ in nodes if role == Atspi.Role.PUSH_BUTTON}
     print(f"nodes={len(nodes)} roles={sorted({rn for _, _, rn, _, _ in nodes})}")
     if not complete:
-        print(f"TRUNCATED: stopped at {MAX_NODES} nodes")
+        print(f"TRUNCATED: stopped after {len(nodes)} nodes (cap {MAX_NODES} nodes/lookups or {PROBE_DEADLINE_S} s deadline)")
         return 1
     missing_roles = sorted(r.value_nick for r in EXPECTED_ROLES - roles)
     missing_buttons = sorted(EXPECTED_BUTTONS - buttons)

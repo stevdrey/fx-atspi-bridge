@@ -19,7 +19,7 @@ def run_json(bridge, p99, heap_delta_bytes, with_max=True):
         "latencyP50Ms": 16.0, "latencyP99Ms": p99, "allocatedBytesPerSample": 2048.0,
         "idleCpuPercent": 2.0, "idleVoluntarySwitchesPerSecond": 100.0,
         "heapAfterIdleGcBytes": 2 ** 20, "rssAfterIdleKb": 200_000,
-        "structuralCycles": 10,
+        "structuralCycles": 10, "structuralElapsedSeconds": 8.0,
         **({"installChurnCycles": 100} if bridge == "on" else {}), "structuralRssDeltaKbCheckpoint": 1024, "structuralRssDeltaKbAfterGc": 1024,
         "structuralHeapDeltaBytesAfterGc": heap_delta_bytes, "structuralThreadDeltaCheckpoint": 0,
         "installChurnCheckpointSeconds": 2.0, "installChurnProviderThreadsCheckpoint": 1,
@@ -116,6 +116,20 @@ class BudgetsTest(unittest.TestCase):
         out = self.collect(self.runs([20.0, 20.0], 0), plan="profile=adhoc\nplan=100:2:10:10\n")
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("unknown profile", out.stderr + out.stdout)
+
+    def test_slow_structural_phase_after_idle_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], structuralElapsedSeconds=40.0)
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
+
+    def test_idle_edge_pulse_at_limit_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["off"][1] = dict(runs["off"][1], idleEdgePulseMaxMs=1000.0)
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
 
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))

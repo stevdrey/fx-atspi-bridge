@@ -17,6 +17,7 @@ DATA = sys.argv[1] if len(sys.argv) > 1 else "docs/verification/data/issue-1"
 DIRTY = (1, 10, 100)
 MAX_VALID_PULSE_MS = 900  # keep in sync with BenchApp
 MAX_CADENCE_MS = 50
+MAX_STRUCTURAL_S_PER_CYCLE = 3.0
 
 
 def read_plan():
@@ -60,6 +61,12 @@ def validate_runs():
         elif r["pulseCadenceP50Ms"] > MAX_CADENCE_MS:
             bad.append(f)
         if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS:
+            bad.append(f)
+        if r.get("idleEdgePulseMaxMs", 0) >= MAX_VALID_PULSE_MS:
+            bad.append(f)
+        # The structural phase directly follows the idle phase and is ~5 pulse waits per cycle: a 1 Hz display needs
+        # >= 3.75 s per cycle, the slowest legitimate cell (10,000 nodes with the bridge) ~2.4 s.
+        if r.get("structuralCycles") and r.get("structuralElapsedSeconds", 0) / r["structuralCycles"] >= MAX_STRUCTURAL_S_PER_CYCLE:
             bad.append(f)
     if missing_cadence:
         sys.exit("runs without pulseCadenceP50Ms (no startup display-cadence evidence): " + ", ".join(missing_cadence))

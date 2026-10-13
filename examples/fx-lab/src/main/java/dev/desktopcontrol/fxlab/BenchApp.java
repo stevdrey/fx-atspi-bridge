@@ -141,6 +141,14 @@ public final class BenchApp extends Application {
         });
     }
 
+    /** Five no-op pulses; any pulse of {@code MAX_VALID_PULSE_MS} or more means a throttled display. Returns the slowest in ms. */
+    private double requirePulsesNotThrottled(String when) {
+        var worst = 0.0;
+        for (var i = 0; i < 5; i++) worst = Math.max(worst, awaitPulse(() -> { }) / 1e6);
+        if (worst >= MAX_VALID_PULSE_MS) invalid("a pulse took " + worst + " ms " + when + "; display throttled (screen blanked, locked or hidden)");
+        return worst;
+    }
+
     /** "After GC" values are meaningless when explicit GC is disabled (any source: JAVA_TOOL_OPTIONS, JAVA_OPTS, ...). */
     private static void requireExplicitGcEnabled() {
         var diagnostics = ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);
@@ -220,7 +228,12 @@ public final class BenchApp extends Application {
         return json.append("}\n").toString();
     }
 
+    /**
+     * The display is checked on both sides of the idle window, never inside it: a running AnimationTimer would make
+     * JavaFX pulse at 60 Hz even without the bridge and corrupt the idle CPU/wakeup numbers being measured.
+     */
     private void idle(StringBuilder json, int idleSeconds) throws InterruptedException {
+        var edgeBefore = requirePulsesNotThrottled("before the idle window");
         Thread.sleep(1_000);
         var cpuBefore = cpuTicks();
         var switchesBefore = voluntarySwitches();
@@ -229,6 +242,8 @@ public final class BenchApp extends Application {
         var seconds = (System.nanoTime() - started) / 1e9;
         field(json, "idleCpuPercent", (cpuTicks() - cpuBefore) * 100.0 / CLK_TCK / seconds);
         field(json, "idleVoluntarySwitchesPerSecond", switchDelta(switchesBefore, voluntarySwitches()) / seconds);
+        var edgeAfter = requirePulsesNotThrottled("after the idle window");
+        field(json, "idleEdgePulseMaxMs", Math.max(edgeBefore, edgeAfter));
         gc();
         field(json, "heapAfterIdleGcBytes", usedHeap());
         field(json, "rssAfterIdleKb", status("VmRSS"));
