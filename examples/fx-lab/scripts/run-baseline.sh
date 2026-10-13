@@ -25,7 +25,7 @@ case "$profile" in
   full)  plan=("100:5:1,10,100:100" "1000:5:1,10,100:100" "10000:5:1,10,100:100") ;;
   *) echo "Unknown profile '$profile' (quick|full|smoke)" >&2; exit 1 ;;
 esac
-root="$(cd "$(dirname "$0")/../../.." && pwd)"
+root="$(cd "$(dirname "$0")/../../.." && pwd -P)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 # Evidence under docs/verification/ may be committed publicly, and inherited JVM options can both carry secrets
 # (proxy/keystore passwords, agent arguments) and change what is measured (e.g. -XX:-TieredCompilation). Therefore the
@@ -54,7 +54,7 @@ for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LA
 done
 
 mkdir -p "$out"
-out_abs="$(cd "$out" && pwd)"
+out_abs="$(cd "$out" && pwd -P)"  # physical path: a symlinked output directory must not hide stale results
 
 # Runtime must be JDK 27: the generated launcher uses JAVA_HOME or PATH, not the Gradle toolchain.
 java_bin="${JAVA_HOME:+$JAVA_HOME/bin/}java"
@@ -112,7 +112,7 @@ for entry in "${plan[@]}"; do
         name="n${nodes}-d${dirty}-${bridge}-r${rep}"
         extra=(--idle-seconds=0 --install-churn=0 --structural=0)
         if [ "$dirty" = 10 ]; then extra=(--idle-seconds="$idle_seconds" --install-churn="$install_churn" --structural="$structural"); fi
-        timeout 900 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty="$dirty" \
+        timeout -k 30 900 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty="$dirty" \
           --warmup="$warmup" --samples="$samples" "${extra[@]}" \
           --out="$out/$name.json" 2>&1 | redact_picked_up > "$out/$name.log" \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }

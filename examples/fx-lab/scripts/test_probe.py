@@ -22,9 +22,11 @@ class FakeNode:
         self.children, self.none_children, self.delay = children, none_children, delay
         self.lookups = lookups if lookups is not None else [0]
 
+    name = "fake"
+
     def get_role(self): return 0
     def get_role_name(self): return "fake"
-    def get_name(self): return "fake"
+    def get_name(self): return self.name
     def get_child_count(self): return self.children
 
     def get_child_at_index(self, index):
@@ -61,6 +63,41 @@ class WalkTest(unittest.TestCase):
         self.assertFalse(probe.walk(node, 0, [], deadline=started + 0.3))
         self.assertLess(time.monotonic() - started, 1.5)
         self.assertLess(node.lookups[0], 20)
+
+    def test_oversized_names_are_clipped(self):
+        probe = self.load()
+        node = FakeNode(children=0)
+        node.name = "x" * 100_000
+        out = []
+        probe.walk(node, 0, out)
+        self.assertLessEqual(len(out[0][3]), probe.MAX_NAME_CHARS + 1)
+
+    def test_total_text_is_bounded(self):
+        probe = self.load()
+
+        class Wide(FakeNode):
+            def get_child_at_index(self, index):
+                child = FakeNode(0, self.lookups)
+                child.name = "y" * 1000
+                return child
+
+        out = []
+        self.assertFalse(probe.walk(Wide(children=4_000), 0, out))
+        self.assertLess(sum(len(n[3]) for n in out), probe.MAX_TEXT_BYTES + probe.MAX_NAME_CHARS + 2)
+        self.assertLess(len(out), probe.MAX_NODES)
+
+    def test_slow_desktop_discovery_stops_at_the_deadline(self):
+        probe = self.load()
+
+        class SlowDesktop:
+            def get_child_count(self): return 10_000
+            def get_child_at_index(self, index):
+                time.sleep(0.05)
+                return None
+
+        started = time.monotonic()
+        self.assertIsNone(probe.find_applications(SlowDesktop(), "x", started + 0.3))
+        self.assertLess(time.monotonic() - started, 1.5)
 
     def test_small_tree_is_fully_walked(self):
         probe = self.load()

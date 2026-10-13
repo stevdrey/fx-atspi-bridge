@@ -26,6 +26,8 @@ EXPECTED_ROLES = {Atspi.Role.FRAME, Atspi.Role.ENTRY, Atspi.Role.TEXT, Atspi.Rol
 MAX_DESKTOP_APPS = 256
 PROBE_DEADLINE_S = 60  # overall time bound; per-call D-Bus timeout is set separately in main()
 CALL_TIMEOUT_MS = 2000
+MAX_NAME_CHARS = 256          # remote strings are clipped to this before they are retained or printed
+MAX_TEXT_BYTES = 1024 * 1024  # total retained/printed text; the walk stops (truncated) beyond it
 EXPECTED_BUTTONS = {"Agregar", "Limpiar", "Añadir campo", "Quitar campo"}
 
 
@@ -48,37 +50,63 @@ def print_client_versions():
           f"libatspi package {libatspi_version()}, GI namespace Atspi 2.0")
 
 
-def walk(node, depth, out, lookups=None, deadline=None):
-    """Depth-first walk; returns False once MAX_NODES nodes were discovered or MAX_NODES child lookups were attempted.
+def clip(text):
+    """Bound a remote string. A single oversized string is still received once from D-Bus before it can be clipped,
+    but it is never retained beyond the clip."""
+    return text if len(text) <= MAX_NAME_CHARS else text[:MAX_NAME_CHARS] + "…"
+
+
+def walk(node, depth, out, lookups=None, deadline=None, text=None):
+    """Depth-first walk; returns False once a bound is hit: MAX_NODES nodes, MAX_NODES child lookups, the monotonic
+    ``deadline``, or MAX_TEXT_BYTES of retained text.
 
     Lookups count every get_child_at_index call, including the ones that return None, so an object that reports a
-    huge child count cannot make the probe issue unbounded blocking D-Bus requests. A monotonic ``deadline`` bounds
-    the elapsed time as well (each blocking call is additionally limited by Atspi.set_timeout in main()).
+    huge child count cannot make the probe issue unbounded blocking D-Bus requests (each call is additionally limited
+    by Atspi.set_timeout in main()). Names are clipped, and their total size is capped.
     """
     if lookups is None:
         lookups = [0]
-    if len(out) >= MAX_NODES:
+    if text is None:
+        text = [0]
+    if len(out) >= MAX_NODES or text[0] >= MAX_TEXT_BYTES:
         return False
-    out.append((depth, node.get_role(), node.get_role_name(), node.get_name() or "", node.get_child_count()))
+    role_name, name = clip(node.get_role_name() or ""), clip(node.get_name() or "")
+    text[0] += len(role_name.encode()) + len(name.encode())
+    out.append((depth, node.get_role(), role_name, name, node.get_child_count()))
     for i in range(node.get_child_count()):
-        if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES or (deadline is not None and time.monotonic() >= deadline):
+        if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES or text[0] >= MAX_TEXT_BYTES \
+                or (deadline is not None and time.monotonic() >= deadline):
             return False
         lookups[0] += 1
         child = node.get_child_at_index(i)
-        if child is not None and not walk(child, depth + 1, out, lookups, deadline):
+        if child is not None and not walk(child, depth + 1, out, lookups, deadline, text):
             return False
     return True
 
 
+def find_applications(desktop, name, deadline):
+    """Applications on the desktop with the given name; None when the deadline expires during discovery."""
+    matches = []
+    for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
+        if time.monotonic() >= deadline:
+            return None
+        app = desktop.get_child_at_index(i)
+        if time.monotonic() >= deadline:
+            return None
+        if app is not None and app.get_name() == name:
+            matches.append(app)
+    return matches
+
+
 def main():
+    deadline = time.monotonic() + PROBE_DEADLINE_S  # one deadline for discovery and traversal
     print_client_versions()
     Atspi.set_timeout(CALL_TIMEOUT_MS, 15000)  # per-call and app-startup D-Bus timeouts (ms)
     desktop = Atspi.get_desktop(0)
-    matches = []
-    for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
-        app = desktop.get_child_at_index(i)
-        if app is not None and app.get_name() == APP:
-            matches.append(app)
+    matches = find_applications(desktop, APP, deadline)
+    if matches is None:
+        print(f"TRUNCATED: {PROBE_DEADLINE_S} s deadline reached during application discovery")
+        return 1
     if PID is not None:
         matches = [app for app in matches if app.get_process_id() == PID]
     if not matches:
@@ -90,14 +118,14 @@ def main():
         return 1
     found = matches[0]
     nodes = []
-    complete = walk(found, 0, nodes, deadline=time.monotonic() + PROBE_DEADLINE_S)
+    complete = walk(found, 0, nodes, deadline=deadline)
     for depth, _, role_name, name, children in nodes:
         print("  " * depth + f"{role_name} {name!r} children={children}")
     roles = {role for _, role, _, _, _ in nodes}
     buttons = {name for _, role, _, name, _ in nodes if role == Atspi.Role.PUSH_BUTTON}
     print(f"nodes={len(nodes)} roles={sorted({rn for _, _, rn, _, _ in nodes})}")
     if not complete:
-        print(f"TRUNCATED: stopped after {len(nodes)} nodes (cap {MAX_NODES} nodes/lookups or {PROBE_DEADLINE_S} s deadline)")
+        print(f"TRUNCATED: stopped after {len(nodes)} nodes (cap {MAX_NODES} nodes/lookups, {MAX_TEXT_BYTES} text bytes or {PROBE_DEADLINE_S} s deadline)")
         return 1
     missing_roles = sorted(r.value_nick for r in EXPECTED_ROLES - roles)
     missing_buttons = sorted(EXPECTED_BUTTONS - buttons)
