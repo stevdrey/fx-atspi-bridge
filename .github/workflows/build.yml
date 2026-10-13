@@ -22,11 +22,13 @@ jobs:
         with:
           distribution: zulu
           java-version: '27'
-      - name: Install GLib for native unit tests
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-0t64
+      - name: Install GLib for native unit tests and AT-SPI Python bindings for the probe tests
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-0t64 python3-gi gir1.2-atspi-2.0
       - name: Check JDK
         run: java -version
       - name: Build library and example; test native variants and Unicode offsets
         run: ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
       - name: Test baseline tooling
+        env:
+          REQUIRE_ATSPI_TESTS: '1'  # fail instead of skipping the probe suite when the bindings are missing
         run: python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'

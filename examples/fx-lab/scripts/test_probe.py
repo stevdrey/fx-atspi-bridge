@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline checks for atspi_probe.walk with fake accessibles (no desktop). Skipped when PyGObject/Atspi is unavailable."""
 import importlib.util
+import os
 import pathlib
 import sys
 import time
@@ -15,6 +16,13 @@ except (ImportError, ValueError):
     HAVE_ATSPI = False
 
 SCRIPT = pathlib.Path(__file__).with_name("atspi_probe.py")
+
+
+class BindingsTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("REQUIRE_ATSPI_TESTS"), "bindings are optional outside CI")
+    def test_bindings_are_present_when_required(self):
+        """CI sets REQUIRE_ATSPI_TESTS so a missing PyGObject/Atspi typelib fails the build instead of skipping the suite."""
+        self.assertTrue(HAVE_ATSPI, "PyGObject with Atspi 2.0 is required in CI (python3-gi gir1.2-atspi-2.0)")
 
 
 class FakeNode:
