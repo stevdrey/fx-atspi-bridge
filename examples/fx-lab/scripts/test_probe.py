@@ -110,8 +110,10 @@ class WalkTest(unittest.TestCase):
 
         out = []
         self.assertFalse(probe.walk(Chain(1), 0, out))
-        self.assertEqual(len(out), probe.MAX_NODES)
-        self.assertEqual(out[-1][0], probe.MAX_NODES - 1)
+        # Indentation is charged to the text budget, so the chain stops before the node cap, but already deeper than
+        # the interpreter's recursion limit would have allowed.
+        self.assertGreater(len(out), sys.getrecursionlimit())
+        self.assertEqual(out[-1][0], len(out) - 1)
 
     def test_cycle_is_bounded_by_the_lookup_cap(self):
         probe = self.load()
@@ -138,6 +140,46 @@ class WalkTest(unittest.TestCase):
         self.assertIsNone(probe.process_ids([SlowApp() for _ in range(200)], started + 0.3))
         self.assertLess(time.monotonic() - started, 1.5)
         self.assertEqual(probe.process_ids([SlowApp()], started + 5), [1])
+
+    def test_indentation_counts_toward_the_text_budget(self):
+        probe = self.load()
+
+        class Chain(FakeNode):
+            name = ""
+            def get_role_name(self): return ""
+            def get_child_count(self): return 1
+            def get_child_at_index(self, index):
+                self.lookups[0] += 1
+                return Chain(1, self.lookups)
+
+        out, text = [], [0]
+        self.assertFalse(probe.walk(Chain(1), 0, out, text=text))
+        rendered = sum(len(probe.render_line(d, r, n, c).encode()) + 1 for d, _, r, n, c in out)
+        self.assertEqual(rendered, text[0])
+        self.assertLessEqual(rendered, probe.MAX_TEXT_BYTES + 2 * len(out) + 64)
+        self.assertLess(len(out), probe.MAX_NODES)
+
+    def test_stalled_metadata_call_stops_at_the_deadline(self):
+        probe = self.load()
+
+        class Stalled(FakeNode):
+            def get_name(self):
+                time.sleep(0.3)
+                return "slow"
+
+        out = []
+        self.assertFalse(probe.walk(Stalled(0), 0, out, deadline=time.monotonic() + 0.1))
+        self.assertEqual(out, [])
+
+    def test_leaf_finishing_after_the_deadline_is_not_complete(self):
+        probe = self.load()
+
+        class SlowCount(FakeNode):
+            def get_child_count(self):
+                time.sleep(0.3)
+                return 0
+
+        self.assertFalse(probe.walk(SlowCount(0), 0, [], deadline=time.monotonic() + 0.1))
 
     def test_small_tree_is_fully_walked(self):
         probe = self.load()

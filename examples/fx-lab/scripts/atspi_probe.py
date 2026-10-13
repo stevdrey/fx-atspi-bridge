@@ -56,6 +56,11 @@ def clip(text):
     return text if len(text) <= MAX_NAME_CHARS else text[:MAX_NAME_CHARS] + "…"
 
 
+def render_line(depth, role_name, name, children):
+    """The exact text printed for a node; it is also what is charged to MAX_TEXT_BYTES (indentation included)."""
+    return "  " * depth + f"{role_name} {name!r} children={children}"
+
+
 def walk(root, depth, out, lookups=None, deadline=None, text=None):
     """Iterative depth-first walk (no recursion, so a hostile deep chain cannot raise RecursionError).
 
@@ -70,16 +75,35 @@ def walk(root, depth, out, lookups=None, deadline=None, text=None):
     if text is None:
         text = [0]
 
+    def expired():
+        return deadline is not None and time.monotonic() >= deadline
+
     def visit(node, node_depth):
-        role_name, name = clip(node.get_role_name() or ""), clip(node.get_name() or "")
-        text[0] += len(role_name.encode()) + len(name.encode())
+        """Reads the node's metadata; None when the deadline expires before, between or after the remote calls."""
+        if expired():
+            return None
+        role_name = clip(node.get_role_name() or "")
+        if expired():
+            return None
+        name = clip(node.get_name() or "")
+        if expired():
+            return None
+        role = node.get_role()
+        if expired():
+            return None
         count = node.get_child_count()
-        out.append((node_depth, node.get_role(), role_name, name, count))
+        if expired():
+            return None
+        text[0] += len(render_line(node_depth, role_name, name, count).encode()) + 1  # + newline
+        out.append((node_depth, role, role_name, name, count))
         return [node, node_depth, count, 0]  # frame: node, depth, child count, next index
 
     if len(out) >= MAX_NODES or text[0] >= MAX_TEXT_BYTES:
         return False
-    stack = [visit(root, depth)]
+    first = visit(root, depth)
+    if first is None:
+        return False
+    stack = [first]
     while stack:
         frame = stack[-1]
         node, node_depth, count, index = frame
@@ -93,8 +117,11 @@ def walk(root, depth, out, lookups=None, deadline=None, text=None):
         lookups[0] += 1
         child = node.get_child_at_index(index)
         if child is not None:
-            stack.append(visit(child, node_depth + 1))
-    return True
+            frame_for_child = visit(child, node_depth + 1)
+            if frame_for_child is None:
+                return False
+            stack.append(frame_for_child)
+    return not expired()
 
 
 def process_ids(apps, deadline):
@@ -151,7 +178,7 @@ def main():
     nodes = []
     complete = walk(found, 0, nodes, deadline=deadline)
     for depth, _, role_name, name, children in nodes:
-        print("  " * depth + f"{role_name} {name!r} children={children}")
+        print(render_line(depth, role_name, name, children))
     roles = {role for _, role, _, _, _ in nodes}
     buttons = {name for _, role, _, name, _ in nodes if role == Atspi.Role.PUSH_BUTTON}
     print(f"nodes={len(nodes)} roles={sorted({rn for _, _, rn, _, _ in nodes})}")
