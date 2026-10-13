@@ -45,7 +45,7 @@ One JVM per cell, bridge `{off, on}` paired, all produced by one invocation of `
 
 The recorded plan is in `environment.txt` and `budgets.py` refuses to summarise a directory that does not match it (44 run files here). The `full` profile (5 repetitions, all dirty sizes, 100 structural cycles at every size) exists in the script; its last complete collection (commit 04ad3e7, before the later script hardening) is in the history of this branch at 9b3a5b8 and is not part of the current evidence. The script builds the harness itself, requires JDK 27 and a clean tree (output directory excluded, inside or outside the repository), and records the commit, Gradle/JDK versions and jar hashes. Each run: 50 warmup mutations, then 200 sampled mutations. Idle (10 s), structural churn and bridge-install churn run only for `dirty=10`, because they do not depend on the dirty count. A bridge-on run is accepted only if the provider reports readiness (`AT-SPI2 listo`) within 15 s and no `Error…` status, and any run is rejected when idle pulses without the bridge exceed 50 ms (blanked, locked or hidden display); otherwise the process exits with code 3, writes no JSON and the script aborts. Every accepted bridge-on JSON has `"bridgeReady":true`; per-run logs are kept. Tables and budgets below are produced by `examples/fx-lab/scripts/budgets.py`.
 
-Review-iteration policy: this data is the *initial provisional baseline*. Harness or script changes made after collection are limited to input validation, error handling, documentation and tests, none of which touch the measured code paths (the commits after `031f25c` are listed below); they are checked with the unit tests and the `smoke` profile, and the baseline is **not** re-collected for them. A full collection (`full` profile and the extra interactions below) is deferred to dedicated QA sessions.
+Review-iteration policy: this data is the *initial provisional baseline*. Harness or script changes made after collection are limited to input validation, error handling, documentation and tests, none of which touch the measured code paths (the commits after `031f25c` are listed in "Post-collection changes"); they are checked with the unit tests and the `smoke` profile, and the baseline is **not** re-collected for them. A full collection (`full` profile and the extra interactions below) is deferred to dedicated QA sessions.
 
 Reduced coverage compared with `docs/verification/README.md` (**limitation**): 2–3 repetitions per cell, no 100-dirty-node run at 10,000 nodes, and 30 instead of 100 structural cycles at 10,000 nodes.
 
@@ -164,6 +164,15 @@ Delta rows (install-churn and structural heap delta) use a floor of 1 MB, `max(1
 3. After structural churn at 10,000 nodes the bridge run retains more heap (14 MB vs 1.3 MB after 30 cycles) and RSS (790 MB vs 430 MB) than the bridge-off run; cause not investigated.
 4. Single machine, 2–3 repetitions per cell (`quick` profile), one scene shape (flat buttons plus synthetic churn controls); latency is FX-pulse based. Native Wayland vs XWayland for the benchmark window was not checked.
 5. The probe verified discovery of the expected roles and button names only; actions, text editing, events and a second window were not exercised through an independent client.
+
+## Post-collection changes
+
+Commits after the harness commit `031f25c` that produced the data, and why the data stays valid:
+
+| Commit | Change | Touches measured path? |
+| --- | --- | --- |
+| `7586ca3` | Data and documentation | No |
+| `f3e1ae7` | `BenchApp`: reject `--bridge` values other than `on`/`off`; complete the install future exceptionally when `installBridge()` throws (startup failures end the run instead of hanging). `run-baseline.sh`: `smoke` profile, warmup/samples/idle/churn parameters moved into variables whose `quick`/`full` values are unchanged (50, 200, 10 s, 100). `budgets.py`: floor documented. Python tooling tests, CI step, docs. | No: option validation, error path and parameter plumbing with identical values. Verified with the unit tests, `smoke` (54 s) and a rejected `--bridge=onn`. |
 
 ## Deferred to dedicated QA sessions
 
