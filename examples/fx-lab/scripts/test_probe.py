@@ -99,6 +99,46 @@ class WalkTest(unittest.TestCase):
         self.assertIsNone(probe.find_applications(SlowDesktop(), "x", started + 0.3))
         self.assertLess(time.monotonic() - started, 1.5)
 
+    def test_deep_chain_is_truncated_without_recursion_error(self):
+        probe = self.load()
+
+        class Chain(FakeNode):
+            def get_child_count(self): return 1
+            def get_child_at_index(self, index):
+                self.lookups[0] += 1
+                return Chain(1, self.lookups)
+
+        out = []
+        self.assertFalse(probe.walk(Chain(1), 0, out))
+        self.assertEqual(len(out), probe.MAX_NODES)
+        self.assertEqual(out[-1][0], probe.MAX_NODES - 1)
+
+    def test_cycle_is_bounded_by_the_lookup_cap(self):
+        probe = self.load()
+
+        class Loop(FakeNode):
+            def get_child_count(self): return 1
+            def get_child_at_index(self, index):
+                self.lookups[0] += 1
+                return self
+
+        node = Loop(1)
+        self.assertFalse(probe.walk(node, 0, []))
+        self.assertLessEqual(node.lookups[0], probe.MAX_NODES)
+
+    def test_pid_resolution_stops_at_the_deadline(self):
+        probe = self.load()
+
+        class SlowApp:
+            def get_process_id(self):
+                time.sleep(0.05)
+                return 1
+
+        started = time.monotonic()
+        self.assertIsNone(probe.process_ids([SlowApp() for _ in range(200)], started + 0.3))
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(probe.process_ids([SlowApp()], started + 5), [1])
+
     def test_small_tree_is_fully_walked(self):
         probe = self.load()
         node = FakeNode(children=3)

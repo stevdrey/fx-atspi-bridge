@@ -32,14 +32,30 @@ bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 # options of every variable the benchmark JVM consumes must be inside an allowlist of benign flags, otherwise the run is
 # refused (values are never printed); the complete effective option set is then recorded in environment.txt.
 # The JVM's "[NOTE: ]Picked up <VAR>: ..." echo is redacted everywhere it could reach a retained file.
+ALLOWED_OPTION_PATTERNS=(
+  '^-Xm[sx][0-9]+[kKmMgG]?$'
+  '^-Xss[0-9]+[kKmM]?$'
+  '^-XX:[+-]DisableExplicitGC$'
+  '^-XX:[+]ExitOnOutOfMemoryError$'
+  '^-XX:[+]Use(G1|Serial|Parallel|Z|Shenandoah)GC$'
+  '^-XX:ActiveProcessorCount=[0-9]+$'
+  '^-XX:NativeMemoryTracking=(off|summary|detail)$'
+  '^--enable-native-access=(ALL-UNNAMED|(dev[.]desktopcontrol[.]fxatspi|javafx[.]graphics)(,(dev[.]desktopcontrol[.]fxatspi|javafx[.]graphics))*)$'
+)
+# Every pattern is fully anchored and closed (enums, digits, fixed module names), so an accepted token can only be
+# exactly one of these shapes and no free text can ride along into environment.txt.
+option_allowed() {
+  local tok="$1" pattern
+  for pattern in "${ALLOWED_OPTION_PATTERNS[@]}"; do
+    [[ "$tok" =~ $pattern ]] && return 0
+  done
+  return 1
+}
 require_allowed_opts() {
   local name="$1" value="$2" tok bad=0
   set -f
   for tok in $value; do
-    case "$tok" in
-      -Xmx[0-9]*|-Xms[0-9]*|-Xss[0-9]*|-XX:[+-]DisableExplicitGC|-XX:+ExitOnOutOfMemoryError|-XX:+Use*GC|-XX:ActiveProcessorCount=[0-9]*|-XX:NativeMemoryTracking=*|--enable-native-access=*) ;;
-      *) bad=$((bad + 1)) ;;
-    esac
+    option_allowed "$tok" || bad=$((bad + 1))
   done
   set +f
   if [ "$bad" -ne 0 ]; then
@@ -68,7 +84,7 @@ fi
 # git command must never be read as "clean".
 pathspec=(.)
 case "$out_abs/" in
-  "$root"/*) pathspec+=(":(exclude)${out_abs#"$root"/}") ;;
+  "$root"/*) pathspec+=(":(exclude,literal)${out_abs#"$root"/}") ;;
 esac
 dirty="$(git -C "$root" status --porcelain --untracked-files=all -- "${pathspec[@]}")" \
   || { echo "Refusing to run: git status failed" >&2; exit 1; }

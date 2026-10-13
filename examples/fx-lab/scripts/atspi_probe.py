@@ -56,32 +56,55 @@ def clip(text):
     return text if len(text) <= MAX_NAME_CHARS else text[:MAX_NAME_CHARS] + "…"
 
 
-def walk(node, depth, out, lookups=None, deadline=None, text=None):
-    """Depth-first walk; returns False once a bound is hit: MAX_NODES nodes, MAX_NODES child lookups, the monotonic
-    ``deadline``, or MAX_TEXT_BYTES of retained text.
+def walk(root, depth, out, lookups=None, deadline=None, text=None):
+    """Iterative depth-first walk (no recursion, so a hostile deep chain cannot raise RecursionError).
 
-    Lookups count every get_child_at_index call, including the ones that return None, so an object that reports a
-    huge child count cannot make the probe issue unbounded blocking D-Bus requests (each call is additionally limited
-    by Atspi.set_timeout in main()). Names are clipped, and their total size is capped.
+    Returns False once a bound is hit: MAX_NODES nodes, MAX_NODES child lookups, the monotonic ``deadline`` or
+    MAX_TEXT_BYTES of retained text. Lookups count every get_child_at_index call, including the ones that return
+    None or point back to an ancestor, so a huge child count or a cycle cannot make the probe issue unbounded blocking
+    D-Bus requests (each call is additionally limited by Atspi.set_timeout in main()). Names are clipped.
+    Output order is the pre-order of the tree.
     """
     if lookups is None:
         lookups = [0]
     if text is None:
         text = [0]
+
+    def visit(node, node_depth):
+        role_name, name = clip(node.get_role_name() or ""), clip(node.get_name() or "")
+        text[0] += len(role_name.encode()) + len(name.encode())
+        count = node.get_child_count()
+        out.append((node_depth, node.get_role(), role_name, name, count))
+        return [node, node_depth, count, 0]  # frame: node, depth, child count, next index
+
     if len(out) >= MAX_NODES or text[0] >= MAX_TEXT_BYTES:
         return False
-    role_name, name = clip(node.get_role_name() or ""), clip(node.get_name() or "")
-    text[0] += len(role_name.encode()) + len(name.encode())
-    out.append((depth, node.get_role(), role_name, name, node.get_child_count()))
-    for i in range(node.get_child_count()):
+    stack = [visit(root, depth)]
+    while stack:
+        frame = stack[-1]
+        node, node_depth, count, index = frame
+        if index >= count:
+            stack.pop()
+            continue
         if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES or text[0] >= MAX_TEXT_BYTES \
                 or (deadline is not None and time.monotonic() >= deadline):
             return False
+        frame[3] = index + 1
         lookups[0] += 1
-        child = node.get_child_at_index(i)
-        if child is not None and not walk(child, depth + 1, out, lookups, deadline, text):
-            return False
+        child = node.get_child_at_index(index)
+        if child is not None:
+            stack.append(visit(child, node_depth + 1))
     return True
+
+
+def process_ids(apps, deadline):
+    """get_process_id() of every app, or None when the deadline expires between or around the remote calls."""
+    pids = []
+    for app in apps:
+        if time.monotonic() >= deadline:
+            return None
+        pids.append(app.get_process_id())
+    return None if time.monotonic() >= deadline else pids
 
 
 def find_applications(desktop, name, deadline):
@@ -108,12 +131,20 @@ def main():
         print(f"TRUNCATED: {PROBE_DEADLINE_S} s deadline reached during application discovery")
         return 1
     if PID is not None:
-        matches = [app for app in matches if app.get_process_id() == PID]
+        pids = process_ids(matches, deadline)
+        if pids is None:
+            print(f"TRUNCATED: {PROBE_DEADLINE_S} s deadline reached while resolving process ids")
+            return 1
+        matches = [app for app, pid in zip(matches, pids) if pid == PID]
     if not matches:
         print(f"MISSING: application {APP!r}" + (f" with pid {PID}" if PID is not None else "") + " not on the AT-SPI desktop")
         return 1
     if len(matches) > 1:
-        pids = sorted(app.get_process_id() for app in matches)
+        pids = process_ids(matches, deadline)
+        if pids is None:
+            print(f"AMBIGUOUS: {len(matches)} applications named {APP!r}; deadline reached before their pids could be listed")
+            return 1
+        pids = sorted(pids)
         print(f"AMBIGUOUS: {len(matches)} applications named {APP!r} (pids {pids}); stop the others or pass --pid=<pid>")
         return 1
     found = matches[0]

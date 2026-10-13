@@ -174,7 +174,7 @@ def main():
         rs = load(n, 10, "on")
         print(f"| {n:,} | {rng(rs, 'installChurnCheckpointSeconds', 1, 2)} | {rng(rs, 'installChurnProviderThreadsCheckpoint', 1, 0)} | {max(r['installChurnProviderThreadsAfterDrain'] for r in rs)} | {rng(rs, 'installChurnDrainSeconds', 1, 3)} | {rng(rs, 'installChurnRssDeltaKbCheckpoint', 1024, 0)} | {rng(rs, 'installChurnHeapDeltaBytesAfterGc', 2**20, 2)} |")
     print("\n### Budgets: ceil(worst observed bridge-on value x 1.25)\n")
-    print("| Metric | 100 nodes | 1,000 nodes | 10,000 nodes |\n| --- | --- | --- | --- |")
+    print("| Metric | " + " | ".join(f"{n:,} nodes" for n in SIZES) + " |\n| --- | " + " | ".join("---" for _ in SIZES) + " |")
     rows = {
         "Latency p99, 1 / 10 / 100 dirty (ms)": lambda n: " / ".join(str(budget(load(n, d, "on"), "latencyP99Ms")) if d in dirties(n) else "n/a" for d in DIRTY),
         "Idle CPU (% of one core)": lambda n: str(budget(load(n, 10, "on"), "idleCpuPercent")),

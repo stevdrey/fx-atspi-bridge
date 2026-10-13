@@ -54,6 +54,11 @@ class BudgetsTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("| Latency p99, 1 / 10 / 100 dirty (ms) | n/a / 50 / n/a |", out.stdout)
 
+    def test_budget_header_follows_the_recorded_sizes(self):
+        out = self.collect(self.runs([20.0, 20.0], 0))
+        self.assertIn("| Metric | 100 nodes |\n| --- | --- |", out.stdout)
+        self.assertNotIn("1,000 nodes", out.stdout)
+
     def test_heap_delta_budget_has_one_megabyte_floor(self):
         out = self.collect(self.runs([20.0, 20.0], -5 * 2 ** 20))
         self.assertEqual(out.returncode, 0, out.stderr)
