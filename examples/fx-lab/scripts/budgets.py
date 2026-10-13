@@ -9,6 +9,7 @@ deltas) use a floor of 1 MB: max(1, ceil(worst * 1.25)), so GC noise is not repo
 import glob
 import json
 import math
+import pathlib
 import statistics as st
 import sys
 
@@ -38,16 +39,30 @@ if FOUND != EXPECTED:
     sys.exit(f"expected {EXPECTED} run files from the recorded plan, found {FOUND}: mixed collection?")
 
 
+WAIVER = pathlib.Path(DATA) / "VALIDATION-NOTE.txt"
+
+
 def validate_runs():
-    """Reject evidence from throttled displays: a ~1 Hz pulse shows up as ~1000 ms samples or a slow idle cadence."""
-    bad = []
+    """Reject evidence from throttled displays: a ~1 Hz pulse shows up as ~1000 ms samples or a slow idle cadence.
+
+    latencyMaxMs is mandatory (with 200 samples p99 cannot see the two largest pulses). A collection that predates the
+    field is accepted only when a human-written VALIDATION-NOTE.txt waiver sits next to the data; a warning is printed.
+    """
+    bad, legacy = [], []
     for f in sorted(glob.glob(f"{DATA}/n*-d*-*-r*.json")):
         r = json.load(open(f))
-        if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS or r.get("latencyMaxMs", 0) >= MAX_VALID_PULSE_MS \
-                or r.get("pulseCadenceP50Ms", 0) > MAX_CADENCE_MS:
+        if "latencyMaxMs" not in r:
+            legacy.append(f)
+        elif r["latencyMaxMs"] >= MAX_VALID_PULSE_MS:
+            bad.append(f)
+        if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS or r.get("pulseCadenceP50Ms", 0) > MAX_CADENCE_MS:
             bad.append(f)
     if bad:
-        sys.exit("invalid runs (throttled display or stalls), refusing to summarise: " + ", ".join(bad))
+        sys.exit("invalid runs (throttled display or stalls), refusing to summarise: " + ", ".join(sorted(set(bad))))
+    if legacy:
+        if not WAIVER.exists():
+            sys.exit(f"{len(legacy)} runs lack latencyMaxMs and there is no {WAIVER.name} waiver; re-collect the baseline")
+        print(f"WARNING: legacy validation (p99/cadence only) for {len(legacy)} runs without latencyMaxMs; see {WAIVER.name}\n")
 
 
 validate_runs()

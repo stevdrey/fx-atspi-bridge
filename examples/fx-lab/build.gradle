@@ -5,5 +5,5 @@ dependencies { implementation project(':') }
 application {
     mainModule = 'dev.desktopcontrol.fxlab'
     mainClass = 'dev.desktopcontrol.fxlab.Launcher'
-    applicationDefaultJvmArgs = ['--enable-native-access=dev.desktopcontrol.fxatspi,javafx.graphics']
+    applicationDefaultJvmArgs = ['--enable-native-access=dev.desktopcontrol.fxatspi,javafx.graphics', '-XX:+ExitOnOutOfMemoryError']
 }

@@ -1,0 +1,12 @@
+Validation waiver for the 44 run files of this collection (harness commit 031f25c, `quick` profile).
+
+These files predate the `latencyMaxMs` field. They were validated only by:
+  - the startup idle-pulse cadence gate (pulseCadenceP50Ms between 14.9 and 16.0 ms in every file), and
+  - latencyP99Ms below 900 ms (maximum 504 ms, 10,000 nodes with the bridge).
+A display throttled to ~1 Hz would have shown ~1000 ms in the p50/p99 of every affected cell; none does.
+
+NOT excluded: one or two isolated pulses of 900 ms or more per run (with 200 samples the nearest-rank p99 is the
+198th value). The budgets use p99, which already ignores the two largest samples, so such stalls would not change them.
+
+This waiver applies only to this collection. Any new collection (quick or full) records latencyMaxMs and must not use
+a waiver; the dedicated QA sessions listed in docs/verification/issue-1.md will replace this data.

@@ -124,7 +124,9 @@ public final class BenchApp extends Application {
                     Runtime.getRuntime().halt(3);
                 }
                 Files.writeString(Path.of(options.getOrDefault("out", "bench.json")), json);
-            } catch (IOException | InterruptedException | RuntimeException e) {
+            } catch (Throwable e) {
+                // Includes Error (e.g. OutOfMemoryError): the future of runAsync is discarded, so nothing may escape silently.
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                 System.err.println("bench failed: " + e);
                 Runtime.getRuntime().halt(2);
             } finally {

@@ -13,8 +13,8 @@ import unittest
 SCRIPT = pathlib.Path(__file__).with_name("budgets.py")
 
 
-def run_json(bridge, p99, heap_delta_bytes):
-    return {
+def run_json(bridge, p99, heap_delta_bytes, with_max=True):
+    run = {
         "latencyP50Ms": 16.0, "latencyP99Ms": p99, "allocatedBytesPerSample": 2048.0,
         "idleCpuPercent": 2.0, "idleVoluntarySwitchesPerSecond": 100.0,
         "heapAfterIdleGcBytes": 2 ** 20, "rssAfterIdleKb": 200_000,
@@ -23,15 +23,21 @@ def run_json(bridge, p99, heap_delta_bytes):
         "installChurnCheckpointSeconds": 2.0, "installChurnProviderThreadsCheckpoint": 1,
         "installChurnProviderThreadsAfterDrain": 1, "installChurnDrainSeconds": 0.001,
         "installChurnRssDeltaKbCheckpoint": 1024, "installChurnHeapDeltaBytesAfterGc": heap_delta_bytes,
+        "pulseCadenceP50Ms": 16.0,
     }
+    if with_max:
+        run["latencyMaxMs"] = p99 + 1.0
+    return run
 
 
 class BudgetsTest(unittest.TestCase):
-    def collect(self, runs, plan="plan=100:2:10:10\n", drop=None):
+    def collect(self, runs, plan="plan=100:2:10:10\n", drop=None, waiver=False):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = pathlib.Path(tmp.name)
         (d / "environment.txt").write_text(plan)
+        if waiver:
+            (d / "VALIDATION-NOTE.txt").write_text("legacy collection, see evidence")
         for bridge in ("off", "on"):
             for rep, run in enumerate(runs[bridge], start=1):
                 if (bridge, rep) != drop:
@@ -59,6 +65,26 @@ class BudgetsTest(unittest.TestCase):
     def test_slow_idle_cadence_is_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
         runs["on"][1] = dict(runs["on"][1], pulseCadenceP50Ms=185.0)
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
+
+    def legacy(self):
+        return {"off": [run_json("off", 10.0, 0, with_max=False)] * 2, "on": [run_json("on", 20.0, 0, with_max=False)] * 2}
+
+    def test_run_without_latency_max_is_rejected_without_waiver(self):
+        out = self.collect(self.legacy())
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("latencyMaxMs", out.stderr + out.stdout)
+
+    def test_run_without_latency_max_needs_explicit_waiver_and_warns(self):
+        out = self.collect(self.legacy(), waiver=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("WARNING: legacy validation", out.stdout)
+
+    def test_latency_max_at_limit_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], latencyMaxMs=950.0)
         out = self.collect(runs)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("invalid runs", out.stderr + out.stdout)
