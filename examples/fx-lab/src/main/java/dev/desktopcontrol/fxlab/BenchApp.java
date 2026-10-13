@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxlab;
 
+import com.sun.management.HotSpotDiagnosticMXBean;
 import com.sun.management.ThreadMXBean;
 import dev.desktopcontrol.fxatspi.FxAtSpiBridge;
 import javafx.animation.AnimationTimer;
@@ -109,6 +110,7 @@ public final class BenchApp extends Application {
         CompletableFuture.runAsync(() -> {
             try {
                 // Cadence is checked before the bridge exists, so its own scan cost can never look like a throttled display.
+                requireExplicitGcEnabled();
                 cadenceP50 = measureCadence();
                 if (bridgeOn) {
                     var installed = new CompletableFuture<Void>();
@@ -137,6 +139,14 @@ public final class BenchApp extends Application {
                 Platform.runLater(() -> { if (bridge != null) bridge.close(); Platform.exit(); });
             }
         });
+    }
+
+    /** "After GC" values are meaningless when explicit GC is disabled (any source: JAVA_TOOL_OPTIONS, JAVA_OPTS, ...). */
+    private static void requireExplicitGcEnabled() {
+        var diagnostics = ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);
+        if (Boolean.parseBoolean(diagnostics.getVMOption("DisableExplicitGC").getValue())) {
+            invalid("-XX:+DisableExplicitGC is set; heap values labelled 'after GC' would be wrong");
+        }
     }
 
     /** Median idle-pulse time without the bridge; aborts the run (exit 3) when the display is throttled. */
@@ -430,8 +440,9 @@ public final class BenchApp extends Application {
     private static void gc() throws InterruptedException {
         var before = collections();
         for (var i = 0; i < 3; i++) { System.gc(); Thread.sleep(200); }
-        // -XX:+DisableExplicitGC (e.g. via JAVA_TOOL_OPTIONS) would silently turn every "after GC" value into a lie.
-        if (collections() <= before) invalid("System.gc() did not trigger a collection (explicit GC disabled?)");
+        // Secondary guard only: it shows that some collection happened, not that the explicit calls caused it.
+        // The disabling option itself is rejected up front by requireExplicitGcEnabled().
+        if (collections() <= before) invalid("no garbage collection happened around System.gc()");
     }
 
     private static long collections() {

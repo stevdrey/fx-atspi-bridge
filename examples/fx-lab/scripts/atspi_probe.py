@@ -45,16 +45,23 @@ def print_client_versions():
           f"libatspi package {libatspi_version()}, GI namespace Atspi 2.0")
 
 
-def walk(node, depth, out):
-    """Depth-first walk; returns False once MAX_NODES is reached so no further D-Bus requests are made."""
+def walk(node, depth, out, lookups=None):
+    """Depth-first walk; returns False once MAX_NODES nodes were discovered or MAX_NODES child lookups were attempted.
+
+    Lookups count every get_child_at_index call, including the ones that return None, so an object that reports a
+    huge child count cannot make the probe issue unbounded blocking D-Bus requests.
+    """
+    if lookups is None:
+        lookups = [0]
     if len(out) >= MAX_NODES:
         return False
     out.append((depth, node.get_role(), node.get_role_name(), node.get_name() or "", node.get_child_count()))
     for i in range(node.get_child_count()):
-        if len(out) >= MAX_NODES:
+        if len(out) >= MAX_NODES or lookups[0] >= MAX_NODES:
             return False
+        lookups[0] += 1
         child = node.get_child_at_index(i)
-        if child is not None and not walk(child, depth + 1, out):
+        if child is not None and not walk(child, depth + 1, out, lookups):
             return False
     return True
 
