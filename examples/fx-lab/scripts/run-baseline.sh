@@ -10,6 +10,11 @@
 # Dirty-node sizes 1/10/100 are all measured; idle, structural and install churn run only for dirty=10.
 # A run that exits non-zero (e.g. bridge not ready) aborts the script; its log is kept next to the JSON.
 set -euo pipefail
+# GNOME blanks the screen after its idle delay and Wayland then throttles JavaFX pulses to ~1 Hz, which silently ruins
+# latency numbers (and stretches the collection from minutes to hours). Re-run ourselves under an idle inhibitor.
+if [ -z "${BASELINE_INHIBITED:-}" ] && command -v gnome-session-inhibit >/dev/null 2>&1; then
+  exec env BASELINE_INHIBITED=1 gnome-session-inhibit --inhibit idle:suspend --reason "SC-01 baseline" "$0" "$@"
+fi
 out="${1:?output directory}"
 profile="${2:-quick}"
 case "$profile" in
@@ -53,6 +58,7 @@ fi
   echo "git=$(git -C "$root" rev-parse HEAD)"
   echo "tree=clean"
   echo "profile=$profile"
+  echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
   for entry in "${plan[@]}"; do echo "plan=$entry"; done
   echo "command=$0 $*"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)

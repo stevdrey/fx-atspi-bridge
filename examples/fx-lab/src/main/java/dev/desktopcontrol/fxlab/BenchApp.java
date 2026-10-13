@@ -58,6 +58,9 @@ public final class BenchApp extends Application {
     private static final int STRUCTURAL_CONTROLS = 10;
     /** FxAtSpiBridge scans every 100 ms; holding each state 250 ms spans at least two scans plus provider reconcile. */
     private static final long HOLD_MS = 250;
+    /** Idle pulses well above one frame mean a blanked/locked/occluded display; the run is not valid evidence. */
+    private static final int CADENCE_SAMPLES = 30;
+    private static final double MAX_CADENCE_MS = 50;
 
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
@@ -118,9 +121,18 @@ public final class BenchApp extends Application {
         var installChurn = bounded("install-churn", 100, 0, MAX_CHURN);
         var structural = bounded("structural", 100, 0, MAX_CHURN);
         if (bridgeOn) requireReady(current, "initial provider");
+        var cadence = new double[CADENCE_SAMPLES];
+        for (var i = 0; i < CADENCE_SAMPLES; i++) cadence[i] = awaitPulse(() -> { }) / 1e6;
+        Arrays.sort(cadence);
+        var cadenceP50 = percentile(cadence, 0.50);
+        if (cadenceP50 > MAX_CADENCE_MS) {
+            System.err.println("bench invalid: idle pulse p50 " + cadenceP50 + " ms; display is throttled (screen blanked, locked or window hidden)");
+            Runtime.getRuntime().halt(3);
+        }
         var json = new StringBuilder("{");
         field(json, "bridge", bridgeOn ? "\"on\"" : "\"off\"");
         if (bridgeOn) field(json, "bridgeReady", true);
+        field(json, "pulseCadenceP50Ms", cadenceP50);
         field(json, "nodes", nodes);
         field(json, "warmup", warmup);
         field(json, "samples", samples);
