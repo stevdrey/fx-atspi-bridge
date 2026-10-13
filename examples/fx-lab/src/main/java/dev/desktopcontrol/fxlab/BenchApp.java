@@ -34,8 +34,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -73,6 +75,8 @@ public final class BenchApp extends Application {
     private static final class Generation {
         final CountDownLatch ready = new CountDownLatch(1);
         final AtomicInteger errors = new AtomicInteger();
+        /** The provider thread started by this generation's install; liveness is tracked per generation, not by name. */
+        volatile Thread providerThread;
 
         void onStatus(String message) {
             if (message.startsWith("Error")) errors.incrementAndGet();
@@ -223,7 +227,21 @@ public final class BenchApp extends Application {
         var generation = new Generation();
         generations.add(generation);
         current = generation;
-        return FxAtSpiBridge.install(generation::onStatus);
+        var before = providerThreadSet();
+        var installed = FxAtSpiBridge.install(generation::onStatus);
+        var started = providerThreadSet();
+        started.removeAll(before);
+        if (started.size() != 1) throw new IllegalStateException("expected exactly one new provider thread, found " + started.size());
+        generation.providerThread = started.iterator().next();
+        return installed;
+    }
+
+    private static Set<Thread> providerThreadSet() {
+        var set = new HashSet<Thread>();
+        for (var thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.getName().equals("fx-atspi-provider")) set.add(thread);
+        }
+        return set;
     }
 
     private int totalErrors() {
@@ -384,8 +402,9 @@ public final class BenchApp extends Application {
     }
 
     /** A provider that died after reporting ready (e.g. an uncaught Error in its thread) must not yield bridge-on evidence. */
-    private static void requireProviderAlive(String when) {
-        if (providerThreads() < 1) invalid("no fx-atspi-provider thread is alive " + when);
+    private void requireProviderAlive(String when) {
+        var provider = current.providerThread;
+        if (provider == null || !provider.isAlive()) invalid("the current provider generation's thread is not alive " + when);
     }
 
     private void requireAllocationTracking() {

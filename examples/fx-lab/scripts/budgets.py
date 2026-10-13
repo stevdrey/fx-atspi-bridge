@@ -74,6 +74,43 @@ def validate_runs():
 validate_runs()
 
 
+# Workload of each profile; keep in sync with run-baseline.sh. Structural cycles come from the recorded plan lines.
+PROFILES = {
+    "quick": {"warmup": 50, "samples": 200, "idle": 10, "installChurn": 100},
+    "full": {"warmup": 50, "samples": 200, "idle": 10, "installChurn": 100},
+    "smoke": {"warmup": 10, "samples": 30, "idle": 3, "installChurn": 10},
+}
+
+
+def read_profile():
+    for line in open(f"{DATA}/environment.txt"):
+        if line.startswith("profile="):
+            name = line.strip().split("=", 1)[1]
+            if name in PROFILES:
+                return PROFILES[name]
+            sys.exit(f"unknown profile {name!r} in environment.txt")
+    sys.exit("environment.txt has no profile= line; refusing to summarise an unknown workload")
+
+
+WORKLOAD = read_profile()
+
+
+def expect_workload(f, r, n, d, bridge):
+    """Every recorded workload field must match the selected profile and plan, not only the cell identity."""
+    structural = PLAN[n][2]
+    want = {"warmup": WORKLOAD["warmup"], "samples": WORKLOAD["samples"],
+            "idleSeconds": WORKLOAD["idle"] if d == 10 else 0}
+    if d == 10:
+        want["structuralCycles"] = structural
+    if d == 10 and bridge == "on":
+        want["installChurnCycles"] = WORKLOAD["installChurn"]
+    got = {k: r.get(k) for k in want}
+    extra = [k for k in ("structuralCycles",) if k in r and k not in want]
+    extra += [k for k in ("installChurnCycles",) if k in r and k not in want]
+    if got != want or extra:
+        sys.exit(f"{f}: workload {got} (unexpected fields: {extra}) differs from the recorded profile/plan {want}")
+
+
 def dirties(n):
     return PLAN[n][1]
 
@@ -85,6 +122,7 @@ def load(n, d, bridge):
         if (r.get("nodes"), r.get("dirty"), r.get("bridge")) != (n, d, bridge):
             sys.exit(f"{f}: embedded cell (nodes={r.get('nodes')}, dirty={r.get('dirty')}, bridge={r.get('bridge')}) "
                      f"does not match its name (nodes={n}, dirty={d}, bridge={bridge}); renamed or swapped file?")
+        expect_workload(f, r, n, d, bridge)
     if len(rs) != PLAN[n][0]:
         sys.exit(f"cell n={n} d={d} {bridge}: {len(rs)} runs, expected {PLAN[n][0]}")
     return rs

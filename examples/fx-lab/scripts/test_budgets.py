@@ -15,11 +15,12 @@ SCRIPT = pathlib.Path(__file__).with_name("budgets.py")
 
 def run_json(bridge, p99, heap_delta_bytes, with_max=True):
     run = {
-        "bridge": bridge, "nodes": 100, "dirty": 10,
+        "bridge": bridge, "nodes": 100, "dirty": 10, "warmup": 50, "samples": 200, "idleSeconds": 10,
         "latencyP50Ms": 16.0, "latencyP99Ms": p99, "allocatedBytesPerSample": 2048.0,
         "idleCpuPercent": 2.0, "idleVoluntarySwitchesPerSecond": 100.0,
         "heapAfterIdleGcBytes": 2 ** 20, "rssAfterIdleKb": 200_000,
-        "structuralCycles": 10, "structuralRssDeltaKbCheckpoint": 1024, "structuralRssDeltaKbAfterGc": 1024,
+        "structuralCycles": 10,
+        **({"installChurnCycles": 100} if bridge == "on" else {}), "structuralRssDeltaKbCheckpoint": 1024, "structuralRssDeltaKbAfterGc": 1024,
         "structuralHeapDeltaBytesAfterGc": heap_delta_bytes, "structuralThreadDeltaCheckpoint": 0,
         "installChurnCheckpointSeconds": 2.0, "installChurnProviderThreadsCheckpoint": 1,
         "installChurnProviderThreadsAfterDrain": 1, "installChurnDrainSeconds": 0.001,
@@ -32,7 +33,7 @@ def run_json(bridge, p99, heap_delta_bytes, with_max=True):
 
 
 class BudgetsTest(unittest.TestCase):
-    def collect(self, runs, plan="plan=100:2:10:10\n", drop=None, waiver=False):
+    def collect(self, runs, plan="profile=quick\nplan=100:2:10:10\n", drop=None, waiver=False):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = pathlib.Path(tmp.name)
@@ -104,13 +105,25 @@ class BudgetsTest(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("does not match its name", out.stderr + out.stdout)
 
+    def test_workload_differing_from_profile_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], samples=30)
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("differs from the recorded profile", out.stderr + out.stdout)
+
+    def test_unknown_profile_is_rejected(self):
+        out = self.collect(self.runs([20.0, 20.0], 0), plan="profile=adhoc\nplan=100:2:10:10\n")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("unknown profile", out.stderr + out.stdout)
+
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("mixed collection", out.stderr + out.stdout)
 
     def test_directory_without_plan_is_rejected(self):
-        out = self.collect(self.runs([20.0, 20.0], 0), plan="reps=2\n")
+        out = self.collect(self.runs([20.0, 20.0], 0), plan="profile=quick\nreps=2\n")
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("plan=", out.stderr + out.stdout)
 
