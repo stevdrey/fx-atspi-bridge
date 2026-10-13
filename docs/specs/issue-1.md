@@ -30,7 +30,7 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
   - Install churn: 100 bridge close/install cycles (bridge on) on the FX thread; thread/RSS checkpoint read 2 s after the loop and before GC, heap after GC, then a ≤30 s drain wait for stopped provider threads.
   - Retained listener/invocation counters are not observable without library changes and are **not** measured here.
 - Independent client: `examples/fx-lab/scripts/atspi_probe.py` uses libatspi (via PyGObject) to walk the tree and read text.
-- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` builds the harness, refuses to run on a dirty tree, records commit/jar hashes in `environment.txt`, and runs R repetitions of each cell; idle and both churn phases only for K=10. `budgets.py` produces the tables and budgets from the JSON. Bridge-on runs are invalid (exit 3, no JSON) unless the provider reports readiness and no error.
+- Orchestration: `examples/fx-lab/scripts/run-baseline.sh` builds the harness, refuses to run on a dirty tree, records commit/jar hashes in `environment.txt`, and runs a `quick` (default, ≈45 min) or `full` profile (see the evidence file for the exact plan), requires JDK 27, re-runs itself under an idle inhibitor and aborts invalid runs (including throttled displays); idle and both churn phases only for K=10. `budgets.py` produces the tables and budgets from the JSON. Bridge-on runs are invalid (exit 3, no JSON) unless the provider reports readiness and no error.
 
 ## Limits and failure modes
 
@@ -48,7 +48,7 @@ No prerequisites. New: `.github/workflows/build.yml`, `docs/verification/issue-1
 
 - [ ] CI workflow green on the PR branch.
 - [ ] `./gradlew check` passes on JDK 27 locally.
-- [ ] Harness runs for 100/1,000/10,000 nodes, bridge on/off, with repeated runs and variance.
+- [ ] Harness runs for 100/1,000/10,000 nodes, bridge on/off, with repeated runs and variance (`quick` profile by default: reduced coverage at 10,000 nodes is recorded as a limitation; `full` profile available).
 - [ ] Independent AT-SPI client result recorded on Fedora/GNOME/Wayland, or marked missing.
 - [ ] Budgets and compatibility matrix in `docs/verification/issue-1.md`, from measured data only.
 - [ ] No Xvfb inference.

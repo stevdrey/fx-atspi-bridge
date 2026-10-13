@@ -1,0 +1,26 @@
+date=2026-10-13T01:24:02Z
+git=031f25cee9ac0b58897b54c4243d646699b84b9f
+tree=clean
+profile=quick
+idle_inhibit=1
+plan=100:3:1,10,100:100
+plan=1000:3:1,10,100:100
+plan=10000:2:1,10:30
+command=examples/fx-lab/scripts/run-baseline.sh docs/verification/data/issue-1 quick
+Gradle 9.8.1
+Launcher JVM:  27 (Azul Systems, Inc. 27+35)
+856b180dee01cffdddec83c2a42f788047380823d6706965defeff0522b151bc  fx-atspi-bridge-0.1.0-SNAPSHOT.jar
+a6a105d51dace8900ede7bdde2bfde6bcb773bc35bfddc24a7d24f0a58148e09  fx-lab.jar
+47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d  javafx-base-27-linux.jar
+6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8  javafx-controls-27-linux.jar
+93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0  javafx-graphics-27-linux.jar
+java_bin=/home/stevdrey/.sdkman/candidates/java/current/bin/java
+    java.home = /home/stevdrey/.sdkman/candidates/java/27.0.0+35-zulu
+    java.specification.version = 27
+openjdk version "27" 2026-09-15
+OpenJDK Runtime Environment Zulu27.28+101-CA (build 27+35)
+session=wayland wayland=wayland-0 display=:0
+Linux 7.2.9-200.fc44.x86_64 x86_64
+cpus=16
+model name	: AMD Ryzen 7 7730U with Radeon Graphics
+MemTotal:       15690536 kB
