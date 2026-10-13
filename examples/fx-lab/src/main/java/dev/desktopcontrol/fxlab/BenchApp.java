@@ -80,6 +80,7 @@ public final class BenchApp extends Application {
 
     private final CopyOnWriteArrayList<Generation> generations = new CopyOnWriteArrayList<>();
     private volatile Generation current;
+    private volatile double cadenceP50;
     private FxAtSpiBridge bridge;
 
     @Override public void start(Stage primary) {
@@ -94,10 +95,16 @@ public final class BenchApp extends Application {
         originalScene = new Scene(pane, 1200, 800);
         stage.setScene(originalScene);
         stage.show();
-        if (bridgeOn) bridge = installBridge();
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
         CompletableFuture.runAsync(() -> {
             try {
+                // Cadence is checked before the bridge exists, so its own scan cost can never look like a throttled display.
+                cadenceP50 = measureCadence();
+                if (bridgeOn) {
+                    var installed = new CompletableFuture<Void>();
+                    Platform.runLater(() -> { bridge = installBridge(); installed.complete(null); });
+                    installed.join();
+                }
                 var json = run(nodes, bridgeOn);
                 if (bridgeOn && totalErrors() > 0) {
                     System.err.println("bench invalid: provider reported " + totalErrors() + " error status message(s)");
@@ -113,6 +120,19 @@ public final class BenchApp extends Application {
         });
     }
 
+    /** Median idle-pulse time without the bridge; aborts the run (exit 3) when the display is throttled. */
+    private double measureCadence() {
+        var cadence = new double[CADENCE_SAMPLES];
+        for (var i = 0; i < CADENCE_SAMPLES; i++) cadence[i] = awaitPulse(() -> { }) / 1e6;
+        Arrays.sort(cadence);
+        var p50 = percentile(cadence, 0.50);
+        if (p50 > MAX_CADENCE_MS) {
+            System.err.println("bench invalid: idle pulse p50 " + p50 + " ms; display is throttled (screen blanked, locked or window hidden)");
+            Runtime.getRuntime().halt(3);
+        }
+        return p50;
+    }
+
     private String run(int nodes, boolean bridgeOn) throws InterruptedException {
         var warmup = bounded("warmup", 50, 0, MAX_SAMPLES);
         var samples = bounded("samples", 200, 1, MAX_SAMPLES);
@@ -121,14 +141,6 @@ public final class BenchApp extends Application {
         var installChurn = bounded("install-churn", 100, 0, MAX_CHURN);
         var structural = bounded("structural", 100, 0, MAX_CHURN);
         if (bridgeOn) requireReady(current, "initial provider");
-        var cadence = new double[CADENCE_SAMPLES];
-        for (var i = 0; i < CADENCE_SAMPLES; i++) cadence[i] = awaitPulse(() -> { }) / 1e6;
-        Arrays.sort(cadence);
-        var cadenceP50 = percentile(cadence, 0.50);
-        if (cadenceP50 > MAX_CADENCE_MS) {
-            System.err.println("bench invalid: idle pulse p50 " + cadenceP50 + " ms; display is throttled (screen blanked, locked or window hidden)");
-            Runtime.getRuntime().halt(3);
-        }
         var json = new StringBuilder("{");
         field(json, "bridge", bridgeOn ? "\"on\"" : "\"off\"");
         if (bridgeOn) field(json, "bridgeReady", true);
