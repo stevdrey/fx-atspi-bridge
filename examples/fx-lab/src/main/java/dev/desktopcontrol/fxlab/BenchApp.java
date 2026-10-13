@@ -61,6 +61,8 @@ public final class BenchApp extends Application {
     /** Idle pulses well above one frame mean a blanked/locked/occluded display; the run is not valid evidence. */
     private static final int CADENCE_SAMPLES = 30;
     private static final double MAX_CADENCE_MS = 50;
+    /** A ~1 Hz throttled display yields ~1000 ms samples; any sample at or above this invalidates the run. */
+    private static final double MAX_VALID_PULSE_MS = 900;
 
     private final Map<String, String> options = new HashMap<>();
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
@@ -173,6 +175,12 @@ public final class BenchApp extends Application {
         for (var i = 0; i < samples; i++) latenciesMs[i] = mutateAndWait(dirty, warmup + i) / 1e6;
         var allocated = allocatedBytes() - allocBefore;
         Arrays.sort(latenciesMs);
+        var latencyMax = latenciesMs[latenciesMs.length - 1];
+        if (latencyMax >= MAX_VALID_PULSE_MS) {
+            System.err.println("bench invalid: a measured pulse took " + latencyMax + " ms; display throttled or process stalled during the measured phase");
+            Runtime.getRuntime().halt(3);
+        }
+        field(json, "latencyMaxMs", latencyMax);
         field(json, "latencyP50Ms", percentile(latenciesMs, 0.50));
         field(json, "latencyP95Ms", percentile(latenciesMs, 0.95));
         field(json, "latencyP99Ms", percentile(latenciesMs, 0.99));
@@ -234,7 +242,12 @@ public final class BenchApp extends Application {
         var done = new CompletableFuture<Long>();
         var start = new long[1];
         Platform.runLater(() -> {
-            action.run();
+            try {
+                action.run();
+            } catch (RuntimeException | Error e) {
+                done.completeExceptionally(e);
+                return;
+            }
             start[0] = System.nanoTime();
             new AnimationTimer() {
                 @Override public void handle(long now) {
@@ -303,9 +316,13 @@ public final class BenchApp extends Application {
         for (var i = 0; i < cycles; i++) {
             var cycle = new CompletableFuture<Void>();
             Platform.runLater(() -> {
-                bridge.close();
-                bridge = installBridge();
-                cycle.complete(null);
+                try {
+                    bridge.close();
+                    bridge = installBridge();
+                    cycle.complete(null);
+                } catch (RuntimeException | Error e) {
+                    cycle.completeExceptionally(e);
+                }
             });
             cycle.join();
         }

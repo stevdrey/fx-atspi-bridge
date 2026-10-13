@@ -51,6 +51,18 @@ class BudgetsTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("| Install churn heap delta after GC (MB) | 1 |", out.stdout)
 
+    def test_throttled_display_run_is_rejected(self):
+        out = self.collect(self.runs([20.0, 1001.0], 0))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
+
+    def test_slow_idle_cadence_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], pulseCadenceP50Ms=185.0)
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
+
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))
         self.assertNotEqual(out.returncode, 0)

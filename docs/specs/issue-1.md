@@ -36,7 +36,7 @@ Non-goals: production refactor, Maven Central release, desktop claims inferred f
 
 - Bench inputs are bounded (nodes ≤ 10,000, samples/churn bounded by CLI validation). The run ends with `Platform.exit()` and a hard timeout in the script.
 - Readiness is tracked per installed provider (generation): the initial provider and the final provider after install churn must report `AT-SPI2 listo` within 15 s, and no generation may report an `Error…` status.
-- If the AT-SPI bus is unavailable, the provider is not ready within 15 s, or it reports any `Error…` status, the bridge-on run is **invalid**: the process exits with code 3, writes no JSON and `run-baseline.sh` aborts. Unavailability is therefore not recorded as a result; it blocks the baseline instead.
+- If the AT-SPI bus is unavailable, the provider is not ready within 15 s, or it reports any `Error…` status, the bridge-on run is **invalid**: the process exits with code 3, writes no JSON and `run-baseline.sh` aborts. Unavailability is therefore not recorded as a result; it blocks the baseline instead. A throttled display (idle pulse median > 50 ms at startup, or any measured pulse ≥ 900 ms) also invalidates the run.
 - RSS alone does not prove a leak; trends over repeated runs are reported with variance.
 - Latency measures mutation-to-pulse-end on the FX thread, not end-to-end screen-reader latency.
 

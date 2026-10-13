@@ -14,6 +14,8 @@ import sys
 
 DATA = sys.argv[1] if len(sys.argv) > 1 else "docs/verification/data/issue-1"
 DIRTY = (1, 10, 100)
+MAX_VALID_PULSE_MS = 900  # keep in sync with BenchApp
+MAX_CADENCE_MS = 50
 
 
 def read_plan():
@@ -34,6 +36,21 @@ EXPECTED = sum(reps * len(dirties) * 2 for reps, dirties, _ in PLAN.values())
 FOUND = len(glob.glob(f"{DATA}/n*-d*-*-r*.json"))
 if FOUND != EXPECTED:
     sys.exit(f"expected {EXPECTED} run files from the recorded plan, found {FOUND}: mixed collection?")
+
+
+def validate_runs():
+    """Reject evidence from throttled displays: a ~1 Hz pulse shows up as ~1000 ms samples or a slow idle cadence."""
+    bad = []
+    for f in sorted(glob.glob(f"{DATA}/n*-d*-*-r*.json")):
+        r = json.load(open(f))
+        if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS or r.get("latencyMaxMs", 0) >= MAX_VALID_PULSE_MS \
+                or r.get("pulseCadenceP50Ms", 0) > MAX_CADENCE_MS:
+            bad.append(f)
+    if bad:
+        sys.exit("invalid runs (throttled display or stalls), refusing to summarise: " + ", ".join(bad))
+
+
+validate_runs()
 
 
 def dirties(n):
