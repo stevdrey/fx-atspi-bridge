@@ -195,10 +195,12 @@ public final class BenchApp extends Application {
         field(json, "rssAfterWarmupKb", status("VmRSS"));
 
         requireAllocationTracking();
-        var allocBefore = allocatedBytes();
+        var allocBefore = totalAllocatedBytes();
+        var threadSumBefore = allocatedBytes();
         var latenciesMs = new double[samples];
         for (var i = 0; i < samples; i++) latenciesMs[i] = mutateAndWait(dirty, warmup + i) / 1e6;
-        var allocated = allocatedBytes() - allocBefore;
+        var allocated = totalAllocatedBytes() - allocBefore;
+        var threadSumDelta = allocatedBytes() - threadSumBefore;
         if (allocated <= 0) invalid("thread allocation counters reported no allocation during the sampled phase");
         if (bridgeOn) requireProviderAlive("after the sampled phase");
         Arrays.sort(latenciesMs);
@@ -211,7 +213,11 @@ public final class BenchApp extends Application {
         field(json, "latencyP50Ms", percentile(latenciesMs, 0.50));
         field(json, "latencyP95Ms", percentile(latenciesMs, 0.95));
         field(json, "latencyP99Ms", percentile(latenciesMs, 0.99));
+        // Monotonic total (includes threads that terminated during the phase); the per-thread sum is kept only as a
+        // cross-check because threads that exit between the two snapshots make it undercount.
+        field(json, "allocationMethod", "\"total\"");
         field(json, "allocatedBytesPerSample", allocated / samples);
+        field(json, "allocatedBytesPerSampleThreadSum", threadSumDelta / samples);
 
         if (idleSeconds > 0) idle(json, idleSeconds);
         if (bridgeOn) requireProviderAlive("after the idle phase");
@@ -448,6 +454,14 @@ public final class BenchApp extends Application {
         if (!threads.isThreadAllocatedMemoryEnabled()) invalid("thread allocation measurement could not be enabled");
     }
 
+    /** Heap bytes allocated by all threads since JVM start, terminated ones included (monotonic). */
+    private long totalAllocatedBytes() {
+        var total = threads.getTotalThreadAllocatedBytes();
+        if (total < 0) invalid("total thread allocation counter is unavailable");
+        return total;
+    }
+
+    /** Sum over the threads alive right now: loses the history of threads that exited since the previous call. */
     private long allocatedBytes() {
         return Arrays.stream(threads.getThreadAllocatedBytes(threads.getAllThreadIds())).filter(v -> v > 0).sum();
     }

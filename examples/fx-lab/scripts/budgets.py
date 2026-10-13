@@ -66,6 +66,8 @@ def validate_runs():
             bad.append(f)
         is_legacy = "latencyMaxMs" not in r  # collection predating the current validity markers (needs the waiver)
         # Current harness markers: display unthrottled around the idle window, bridge ready and provider alive.
+        if not is_legacy and r.get("allocationMethod") != "total":
+            missing_markers.append(f"{f} (allocationMethod=total)")
         if not is_legacy and r.get("idleSeconds", 0) > 0 and "idleEdgePulseMaxMs" not in r:
             missing_markers.append(f"{f} (idleEdgePulseMaxMs)")
         if r.get("bridge") == "on":

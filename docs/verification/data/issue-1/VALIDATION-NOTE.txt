@@ -20,3 +20,11 @@ The idle window itself is evidenced only indirectly: the structural phase direct
 about five pulse waits per cycle, so a display throttled to ~1 Hz would need at least 3.75 s per cycle; the retained runs take
 0.8-0.93 s per cycle (100/1,000 nodes) and 1.7-2.4 s per cycle (10,000 nodes). `budgets.py` enforces a limit of 3.0 s per cycle.
 A display that was blanked and un-blanked entirely inside the 10 s idle window is NOT excluded for these files.
+
+Allocation method: these files predate `allocationMethod`. Their `allocatedBytesPerSample` is the delta of the sum of
+`getThreadAllocatedBytes` over the threads alive at each snapshot, which loses the history of threads that exit in
+between. A cross-check with the monotonic `getTotalThreadAllocatedBytes()` (same machine, dirty=10, 200 samples,
+2 runs per cell, taken after this issue was raised) showed the old method undercounting by a nearly constant
+about 0.46 KB per sample: 0.46-0.56 % at 100 nodes, 0.18-0.25 % at 1,000 nodes and 0.01-0.05 % at 10,000 nodes.
+The retained allocation figures and their budgets (worst value + 25 %) are therefore usable as provisional values;
+new collections use the monotonic total.

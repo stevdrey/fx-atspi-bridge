@@ -30,6 +30,7 @@ def run_json(bridge, p99, heap_delta_bytes, with_max=True):
     if with_max:
         run["latencyMaxMs"] = p99 + 1.0
         run["idleEdgePulseMaxMs"] = 16.0
+        run["allocationMethod"] = "total"
     if bridge == "on":
         run["bridgeReady"] = True
         run["installChurnFinalGenerationReady"] = True
@@ -161,6 +162,13 @@ class BudgetsTest(unittest.TestCase):
                 out = self.collect(runs)
                 self.assertNotEqual(out.returncode, 0)
                 self.assertIn(key, out.stderr + out.stdout)
+
+    def test_current_run_with_the_per_thread_sum_method_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["off"][1] = {k: v for k, v in runs["off"][1].items() if k != "allocationMethod"}
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("allocationMethod", out.stderr + out.stdout)
 
     def test_bridge_on_run_with_provider_errors_is_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
