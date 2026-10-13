@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SC-01 baseline: paired bridge off/on runs, one JVM per cell.
-# Usage: run-baseline.sh <output-dir> [quick|full]   (default: quick)
+# Usage: run-baseline.sh <output-dir> [quick|full|smoke]   (default: quick)
+#   smoke (~2 min): 100 nodes, dirty 10, 1 rep, short phases. Validates harness/script changes; NEVER use it as evidence.
 #   quick (~30 min): 100 and 1000 nodes x dirty 1/10/100 x 3 reps; 10000 nodes x dirty 1/10 x 2 reps;
 #                    structural churn 100 cycles (30 cycles at 10000 nodes).
 #   full  (~2 h):    all sizes x dirty 1/10/100 x 5 reps; structural churn 100 cycles everywhere.
@@ -17,10 +18,12 @@ if [ -z "${BASELINE_INHIBITED:-}" ] && command -v gnome-session-inhibit >/dev/nu
 fi
 out="${1:?output directory}"
 profile="${2:-quick}"
+warmup=50; samples=200; idle_seconds=10; install_churn=100
 case "$profile" in
+  smoke) plan=("100:1:10:10"); warmup=10; samples=30; idle_seconds=3; install_churn=10 ;;
   quick) plan=("100:3:1,10,100:100" "1000:3:1,10,100:100" "10000:2:1,10:30") ;;
   full)  plan=("100:5:1,10,100:100" "1000:5:1,10,100:100" "10000:5:1,10,100:100") ;;
-  *) echo "Unknown profile '$profile' (quick|full)" >&2; exit 1 ;;
+  *) echo "Unknown profile '$profile' (quick|full|smoke)" >&2; exit 1 ;;
 esac
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
@@ -79,9 +82,9 @@ for entry in "${plan[@]}"; do
       for bridge in off on; do
         name="n${nodes}-d${dirty}-${bridge}-r${rep}"
         extra=(--idle-seconds=0 --install-churn=0 --structural=0)
-        if [ "$dirty" = 10 ]; then extra=(--idle-seconds=10 --install-churn=100 --structural="$structural"); fi
+        if [ "$dirty" = 10 ]; then extra=(--idle-seconds="$idle_seconds" --install-churn="$install_churn" --structural="$structural"); fi
         timeout 900 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty="$dirty" \
-          --warmup=50 --samples=200 "${extra[@]}" \
+          --warmup="$warmup" --samples="$samples" "${extra[@]}" \
           --out="$out/$name.json" > "$out/$name.log" 2>&1 \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }
         echo "done $name"

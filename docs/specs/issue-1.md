@@ -53,6 +53,10 @@ No prerequisites. New: `.github/workflows/build.yml`, `docs/verification/issue-1
 - [ ] Budgets and compatibility matrix in `docs/verification/issue-1.md`, from measured data only.
 - [ ] No Xvfb inference.
 
+## Verification strategy for review iterations
+
+Fast checks only: `./gradlew check`, `python3 -m unittest` for `budgets.py` (also in CI), and the `smoke` profile (~2 min) after harness/script changes. The long collections (`quick` ≈ 45 min, `full` ≈ 2 h) run once to produce the provisional baseline and again only in dedicated QA sessions; they are not repeated per review comment.
+
 ## Rollout and documentation
 
 README CI section updated. Later issues (SC-02…SC-10) compare against `docs/verification/issue-1.md`. Rollback: delete the workflow. No release-readiness claim.

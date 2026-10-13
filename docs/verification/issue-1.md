@@ -26,6 +26,8 @@ Not recorded: whether JavaFX used native Wayland or XWayland for the benchmark w
 ./gradlew :examples:fx-lab:installDist --no-daemon
 examples/fx-lab/scripts/run-baseline.sh docs/verification/data/issue-1 quick   # ~45 min; builds the harness; needs a clean tree and JDK 27; `full` = 5 reps, everywhere
 python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-1   # tables and budgets
+python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'      # budget rule/guards, <1 s, also run in CI
+examples/fx-lab/scripts/run-baseline.sh /tmp/sc01-smoke smoke                # ~2 min harness check, never evidence
 python3 examples/fx-lab/scripts/atspi_probe.py                       # with fx-lab (bridge on) running; exit 0 only if all expected roles and buttons exist
 ```
 
@@ -43,6 +45,8 @@ One JVM per cell, bridge `{off, on}` paired, all produced by one invocation of `
 
 The recorded plan is in `environment.txt` and `budgets.py` refuses to summarise a directory that does not match it (44 run files here). The `full` profile (5 repetitions, all dirty sizes, 100 structural cycles at every size) exists in the script; its last complete collection (commit 04ad3e7, before the later script hardening) is in the history of this branch at 9b3a5b8 and is not part of the current evidence. The script builds the harness itself, requires JDK 27 and a clean tree (output directory excluded, inside or outside the repository), and records the commit, Gradle/JDK versions and jar hashes. Each run: 50 warmup mutations, then 200 sampled mutations. Idle (10 s), structural churn and bridge-install churn run only for `dirty=10`, because they do not depend on the dirty count. A bridge-on run is accepted only if the provider reports readiness (`AT-SPI2 listo`) within 15 s and no `Error…` status, and any run is rejected when idle pulses without the bridge exceed 50 ms (blanked, locked or hidden display); otherwise the process exits with code 3, writes no JSON and the script aborts. Every accepted bridge-on JSON has `"bridgeReady":true`; per-run logs are kept. Tables and budgets below are produced by `examples/fx-lab/scripts/budgets.py`.
 
+Review-iteration policy: this data is the *initial provisional baseline*. Harness or script changes made after collection are limited to input validation, error handling, documentation and tests, none of which touch the measured code paths (the commits after `031f25c` are listed below); they are checked with the unit tests and the `smoke` profile, and the baseline is **not** re-collected for them. A full collection (`full` profile and the extra interactions below) is deferred to dedicated QA sessions.
+
 Reduced coverage compared with `docs/verification/README.md` (**limitation**): 2–3 repetitions per cell, no 100-dirty-node run at 10,000 nodes, and 30 instead of 100 structural cycles at 10,000 nodes.
 
 | Metric | How |
@@ -58,7 +62,7 @@ Reduced coverage compared with `docs/verification/README.md` (**limitation**): 2
 
 Not measured (**missing**): retained listener and invocation counters (not observable without library changes), request floods, and a native-memory breakdown (NMT/`pmap`).
 
-## Results (median over 5 runs; parentheses = min–max)
+## Results (median over 2–3 runs per cell, see the Runs column; parentheses = min–max)
 
 ### FX latency and allocation per update batch
 
@@ -138,7 +142,7 @@ Not verified in this issue (**missing evidence**): action invocation, text editi
 
 ## Initial budgets (provisional, derived from the tables above)
 
-Single rule: `ceil(worst observed bridge-on value across the recorded repetitions × 1.25)` (2–3 repetitions per cell in the `quick` profile), applied by `budgets.py` to every cell below, including counts. They detect regressions in later issues; they are not product promises or targets. The 10,000-node values and the 1,000-node thread rows document a known-bad baseline; with so few repetitions, latency budgets are loose and `n/a` marks cells that the profile did not run.
+Single rule (with one stated floor for MB delta metrics): `ceil(worst observed bridge-on value across the recorded repetitions × 1.25)` (2–3 repetitions per cell in the `quick` profile), applied by `budgets.py` to every cell below, including counts. They detect regressions in later issues; they are not product promises or targets. The 10,000-node values and the 1,000-node thread rows document a known-bad baseline; with so few repetitions, latency budgets are loose and `n/a` marks cells that the profile did not run.
 
 | Metric | 100 nodes | 1,000 nodes | 10,000 nodes |
 | --- | --- | --- | --- |
@@ -151,7 +155,7 @@ Single rule: `ceil(worst observed bridge-on value across the recorded repetition
 | Provider threads after drain | 2 | 2 | 2 |
 | Structural heap delta after GC (MB) | 2 | 6 | 18 |
 
-Thread rows: the rule gives 2 where exactly one provider thread was observed (one extra thread of margin), including after the drain. The 1,000-node "provider threads at install-churn checkpoint" row encodes the observed shutdown backlog, not acceptable behaviour. Bridge-off budgets were not derived. RSS growth across the churn phases is **not budgeted** because its cause is not established.
+Delta rows (install-churn and structural heap delta) use a floor of 1 MB, `max(1, ceil(worst × 1.25))`, because post-GC deltas can be zero or negative. Thread rows: the rule gives 2 where exactly one provider thread was observed (one extra thread of margin), including after the drain. The 1,000-node "provider threads at install-churn checkpoint" row encodes the observed shutdown backlog, not acceptable behaviour. Bridge-off budgets were not derived. RSS growth across the churn phases is **not budgeted** because its cause is not established.
 
 ## Defects and limitations found
 
@@ -161,6 +165,15 @@ Thread rows: the rule gives 2 where exactly one provider thread was observed (on
 4. Single machine, 2–3 repetitions per cell (`quick` profile), one scene shape (flat buttons plus synthetic churn controls); latency is FX-pulse based. Native Wayland vs XWayland for the benchmark window was not checked.
 5. The probe verified discovery of the expected roles and button names only; actions, text editing, events and a second window were not exercised through an independent client.
 
+## Deferred to dedicated QA sessions
+
+These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
+
+- `full` profile collection (5 repetitions per cell, 100-dirty-node runs and 100 structural cycles at 10,000 nodes) and narrower budgets from it.
+- Independent-client interactions on the Fedora/GNOME/Wayland session: action invocation, text editing/Unicode round-trip, second window, scene replacement and event delivery.
+- Native Wayland vs XWayland check for the benchmark window, other distributions/GNOME versions, Orca, and other AT-SPI client versions.
+- Explaining the RSS growth during churn (NMT, `pmap`, GLib allocation tracing).
+
 ## CI
 
-`.github/workflows/build.yml`: Zulu 27, SHA-pinned `actions/checkout` (v7.0.1) and `actions/setup-java` (v6.0.1), `permissions: contents: read`, no secrets, no wiki steps. `build` passed on the PR commits checked so far (e.g. d91f036: 38 s, 9b3a5b8: 31 s); the latest run is shown on the PR.
+`.github/workflows/build.yml` (also runs the Python tooling tests): Zulu 27, SHA-pinned `actions/checkout` (v7.0.1) and `actions/setup-java` (v6.0.1), `permissions: contents: read`, no secrets, no wiki steps. `build` passed on the PR commits checked so far (e.g. d91f036: 38 s, 9b3a5b8: 31 s); the latest run is shown on the PR.

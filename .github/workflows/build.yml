@@ -28,3 +28,5 @@ jobs:
         run: java -version
       - name: Build library and example; test native variants and Unicode offsets
         run: ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
+      - name: Test baseline tooling
+        run: python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'

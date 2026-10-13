@@ -87,7 +87,11 @@ public final class BenchApp extends Application {
         stage = primary;
         parse(getParameters().getRaw());
         var nodes = bounded("nodes", 100, 1, MAX_NODES);
-        var bridgeOn = "on".equals(options.getOrDefault("bridge", "off"));
+        var bridgeMode = options.getOrDefault("bridge", "off");
+        if (!bridgeMode.equals("on") && !bridgeMode.equals("off")) {
+            throw new IllegalArgumentException("--bridge must be 'on' or 'off', got '" + bridgeMode + "'");
+        }
+        var bridgeOn = bridgeMode.equals("on");
         pane = new FlowPane();
         for (var i = 0; i < nodes; i++) pane.getChildren().add(new Button("n" + i));
         // Titled like a real window; the untitled-Stage NPE was fixed in the library by Issue 13 (PR #14).
@@ -102,7 +106,14 @@ public final class BenchApp extends Application {
                 cadenceP50 = measureCadence();
                 if (bridgeOn) {
                     var installed = new CompletableFuture<Void>();
-                    Platform.runLater(() -> { bridge = installBridge(); installed.complete(null); });
+                    Platform.runLater(() -> {
+                        try {
+                            bridge = installBridge();
+                            installed.complete(null);
+                        } catch (RuntimeException | Error e) {
+                            installed.completeExceptionally(e);
+                        }
+                    });
                     installed.join();
                 }
                 var json = run(nodes, bridgeOn);

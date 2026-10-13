@@ -3,6 +3,8 @@
 
 Usage: budgets.py <data-dir>
 Budget rule (single, stated once): ceil(worst observed bridge-on value across repetitions * 1.25).
+Delta metrics that are expressed in MB and can be zero or negative after GC (install-churn and structural heap
+deltas) use a floor of 1 MB: max(1, ceil(worst * 1.25)), so GC noise is not reported as a regression.
 """
 import glob
 import json
