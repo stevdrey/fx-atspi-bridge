@@ -199,6 +199,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 
 | `9fdb56b` | CI: `python3-gi` and `gir1.2-atspi-2.0` are installed and the tooling step sets `REQUIRE_ATSPI_TESTS=1`, so the probe suite runs and a missing binding fails the build instead of skipping 12 tests; locally the guard was checked with simulated missing bindings. | No: CI and tests only. |
 
+| `d6a68ea` | `budgets.py`: runs from the current harness must carry `idleEdgePulseMaxMs` (when idle is measured) and, for bridge-on runs, `bridgeReady`, `providerAliveAtEnd` and, for the install churn, `installChurnFinalGenerationReady` and zero `installChurnProviderErrors`; bridge-off runs must not carry bridge markers. Only collections that predate `latencyMaxMs` are exempt from the markers they could not have (`idleEdgePulseMaxMs`, `providerAliveAtEnd`), through the waiver; the retained files do carry `bridgeReady` and the install-churn markers. The install-churn table heading uses the validated profile's cycle count. `atspi_probe.py`: a desktop with more than 256 children is reported as truncated instead of accepting a match from a partial scan. | No: evidence validation and probe bounds. The retained 44 files pass; a smoke run from the current harness passes without the legacy warning. |
+
 ## Deferred to dedicated QA sessions
 
 These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
