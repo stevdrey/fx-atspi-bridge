@@ -134,10 +134,17 @@ def process_ids(apps, deadline):
     return None if time.monotonic() >= deadline else pids
 
 
+class DiscoveryTruncated(Exception):
+    """The desktop has more children than the probe is willing to scan, so a single match proves nothing."""
+
+
 def find_applications(desktop, name, deadline):
     """Applications on the desktop with the given name; None when the deadline expires during discovery."""
     matches = []
-    for i in range(min(desktop.get_child_count(), MAX_DESKTOP_APPS)):
+    total = desktop.get_child_count()
+    if total > MAX_DESKTOP_APPS:
+        raise DiscoveryTruncated(f"the desktop has {total} children, more than the {MAX_DESKTOP_APPS} the probe scans")
+    for i in range(total):
         if time.monotonic() >= deadline:
             return None
         app = desktop.get_child_at_index(i)
@@ -153,7 +160,11 @@ def main():
     print_client_versions()
     Atspi.set_timeout(CALL_TIMEOUT_MS, 15000)  # per-call and app-startup D-Bus timeouts (ms)
     desktop = Atspi.get_desktop(0)
-    matches = find_applications(desktop, APP, deadline)
+    try:
+        matches = find_applications(desktop, APP, deadline)
+    except DiscoveryTruncated as error:
+        print(f"TRUNCATED: {error}; refusing to accept a match from a partial scan")
+        return 1
     if matches is None:
         print(f"TRUNCATED: {PROBE_DEADLINE_S} s deadline reached during application discovery")
         return 1

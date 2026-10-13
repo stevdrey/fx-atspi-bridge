@@ -29,6 +29,13 @@ def run_json(bridge, p99, heap_delta_bytes, with_max=True):
     }
     if with_max:
         run["latencyMaxMs"] = p99 + 1.0
+        run["idleEdgePulseMaxMs"] = 16.0
+    if bridge == "on":
+        run["bridgeReady"] = True
+        run["installChurnFinalGenerationReady"] = True
+        run["installChurnProviderErrors"] = 0
+        if with_max:
+            run["providerAliveAtEnd"] = True
     return run
 
 
@@ -105,10 +112,13 @@ class BudgetsTest(unittest.TestCase):
 
     def test_swapped_bridge_files_are_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
-        runs["on"][1] = dict(runs["on"][1], bridge="off")
+        runs["on"][1] = dict(runs["on"][1], nodes=1000)
         out = self.collect(runs)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("does not match its name", out.stderr + out.stdout)
+        swapped = self.runs([20.0, 20.0], 0)
+        swapped["on"][1] = dict(swapped["on"][1], bridge="off")
+        self.assertNotEqual(self.collect(swapped).returncode, 0)
 
     def test_workload_differing_from_profile_is_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
@@ -135,6 +145,36 @@ class BudgetsTest(unittest.TestCase):
         out = self.collect(runs)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("invalid runs", out.stderr + out.stdout)
+
+    def test_current_run_without_idle_edge_evidence_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["off"][1] = {k: v for k, v in runs["off"][1].items() if k != "idleEdgePulseMaxMs"}
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("idleEdgePulseMaxMs", out.stderr + out.stdout)
+
+    def test_bridge_on_run_without_health_markers_is_rejected(self):
+        for key in ("bridgeReady", "providerAliveAtEnd", "installChurnFinalGenerationReady"):
+            with self.subTest(missing=key):
+                runs = self.runs([20.0, 20.0], 0)
+                runs["on"][1] = {k: v for k, v in runs["on"][1].items() if k != key}
+                out = self.collect(runs)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn(key, out.stderr + out.stdout)
+
+    def test_bridge_on_run_with_provider_errors_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], installChurnProviderErrors=1)
+        self.assertNotEqual(self.collect(runs).returncode, 0)
+
+    def test_bridge_off_run_with_bridge_markers_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["off"][1] = dict(runs["off"][1], bridgeReady=True)
+        self.assertNotEqual(self.collect(runs).returncode, 0)
+
+    def test_install_churn_heading_uses_the_profile_cycle_count(self):
+        out = self.collect(self.runs([20.0, 20.0], 0))
+        self.assertIn("Bridge install/close churn (100 cycles, bridge on)", out.stdout)
 
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))

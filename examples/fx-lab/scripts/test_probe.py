@@ -98,7 +98,7 @@ class WalkTest(unittest.TestCase):
         probe = self.load()
 
         class SlowDesktop:
-            def get_child_count(self): return 10_000
+            def get_child_count(self): return 200
             def get_child_at_index(self, index):
                 time.sleep(0.05)
                 return None
@@ -188,6 +188,16 @@ class WalkTest(unittest.TestCase):
                 return 0
 
         self.assertFalse(probe.walk(SlowCount(0), 0, [], deadline=time.monotonic() + 0.1))
+
+    def test_oversized_desktop_is_rejected_not_partially_scanned(self):
+        probe = self.load()
+
+        class Crowded:
+            def get_child_count(self): return probe.MAX_DESKTOP_APPS + 1
+            def get_child_at_index(self, index): raise AssertionError("must not scan a partial desktop")
+
+        with self.assertRaises(probe.DiscoveryTruncated):
+            probe.find_applications(Crowded(), "x", time.monotonic() + 5)
 
     def test_small_tree_is_fully_walked(self):
         probe = self.load()

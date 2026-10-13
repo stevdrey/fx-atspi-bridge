@@ -49,7 +49,7 @@ def validate_runs():
     latencyMaxMs is mandatory (with 200 samples p99 cannot see the two largest pulses). A collection that predates the
     field is accepted only when a human-written VALIDATION-NOTE.txt waiver sits next to the data; a warning is printed.
     """
-    bad, legacy, missing_cadence = [], [], []
+    bad, legacy, missing_cadence, missing_markers = [], [], [], []
     for f in sorted(glob.glob(f"{DATA}/n*-d*-*-r*.json")):
         r = json.load(open(f))
         if "latencyMaxMs" not in r:
@@ -64,12 +64,28 @@ def validate_runs():
             bad.append(f)
         if r.get("idleEdgePulseMaxMs", 0) >= MAX_VALID_PULSE_MS:
             bad.append(f)
+        is_legacy = "latencyMaxMs" not in r  # collection predating the current validity markers (needs the waiver)
+        # Current harness markers: display unthrottled around the idle window, bridge ready and provider alive.
+        if not is_legacy and r.get("idleSeconds", 0) > 0 and "idleEdgePulseMaxMs" not in r:
+            missing_markers.append(f"{f} (idleEdgePulseMaxMs)")
+        if r.get("bridge") == "on":
+            if r.get("bridgeReady") is not True:
+                missing_markers.append(f"{f} (bridgeReady)")
+            if not is_legacy and r.get("providerAliveAtEnd") is not True:
+                missing_markers.append(f"{f} (providerAliveAtEnd)")
+            if r.get("installChurnCycles") and (r.get("installChurnFinalGenerationReady") is not True
+                                               or r.get("installChurnProviderErrors") != 0):
+                missing_markers.append(f"{f} (installChurnFinalGenerationReady/installChurnProviderErrors)")
+        elif any(k in r for k in ("bridgeReady", "providerAliveAtEnd", "installChurnCycles")):
+            bad.append(f)  # a bridge-off run must not carry bridge-on markers
         # The structural phase directly follows the idle phase and is ~5 pulse waits per cycle: a 1 Hz display needs
         # >= 3.75 s per cycle, the slowest legitimate cell (10,000 nodes with the bridge) ~2.4 s.
         if r.get("structuralCycles") and r.get("structuralElapsedSeconds", 0) / r["structuralCycles"] >= MAX_STRUCTURAL_S_PER_CYCLE:
             bad.append(f)
     if missing_cadence:
         sys.exit("runs without pulseCadenceP50Ms (no startup display-cadence evidence): " + ", ".join(missing_cadence))
+    if missing_markers:
+        sys.exit("runs without the required validity markers: " + ", ".join(missing_markers))
     if bad:
         sys.exit("invalid runs (throttled display or stalls), refusing to summarise: " + ", ".join(sorted(set(bad))))
     if legacy:
@@ -168,7 +184,7 @@ def main():
         for b in ("off", "on"):
             rs = load(n, 10, b)
             print(f"| {n:,} | {b} | {len(rs)} | {rs[0]['structuralCycles']} | {rng(rs, 'structuralRssDeltaKbCheckpoint', 1024)} | {rng(rs, 'structuralRssDeltaKbAfterGc', 1024)} | {rng(rs, 'structuralHeapDeltaBytesAfterGc', 2**20, 2)} | {rng(rs, 'structuralThreadDeltaCheckpoint', 1, 0)} |")
-    print("\n### Bridge install/close churn (100 cycles, bridge on)\n")
+    print(f"\n### Bridge install/close churn ({WORKLOAD['installChurn']} cycles, bridge on)\n")
     print("| Nodes | Checkpoint (s) | Provider threads at checkpoint | After ≤30 s drain | Drain (s) | RSS delta MB (checkpoint) | Heap delta MB (after GC) |\n| ---: | --- | --- | ---: | --- | --- | --- |")
     for n in SIZES:
         rs = load(n, 10, "on")
