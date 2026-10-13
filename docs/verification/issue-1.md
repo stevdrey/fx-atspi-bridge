@@ -52,7 +52,7 @@ Reduced coverage compared with `docs/verification/README.md` (**limitation**): 2
 | Metric | How |
 | --- | --- |
 | FX latency | Time from mutating the dirty nodes on the FX thread to the end of the next pulse (`AnimationTimer` + `runLater`). Not end-to-end screen-reader latency. |
-| Allocation | Sum of `getThreadAllocatedBytes` across threads over the 200 samples, divided by 200. |
+| Allocation | `ThreadMXBean.getTotalThreadAllocatedBytes()` (monotonic, includes terminated threads) delta over the 200 samples, divided by 200 (`allocationMethod: "total"`). The retained files used the delta of the sum of `getThreadAllocatedBytes` over the threads alive at each snapshot; see the correction below. |
 | Heap | Used heap after three `System.gc()` calls. Observation only. |
 | Process memory | `VmRSS` from `/proc/self/status`. RSS alone does not prove a leak. |
 | Idle CPU | `utime+stime` from `/proc/self/stat` over 10 s idle, percent of one core. |
@@ -200,6 +200,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 | `9fdb56b` | CI: `python3-gi` and `gir1.2-atspi-2.0` are installed and the tooling step sets `REQUIRE_ATSPI_TESTS=1`, so the probe suite runs and a missing binding fails the build instead of skipping 12 tests; locally the guard was checked with simulated missing bindings. | No: CI and tests only. |
 
 | `d6a68ea` | `budgets.py`: runs from the current harness must carry `idleEdgePulseMaxMs` (when idle is measured) and, for bridge-on runs, `bridgeReady`, `providerAliveAtEnd` and, for the install churn, `installChurnFinalGenerationReady` and zero `installChurnProviderErrors`; bridge-off runs must not carry bridge markers. Only collections that predate `latencyMaxMs` are exempt from the markers they could not have (`idleEdgePulseMaxMs`, `providerAliveAtEnd`), through the waiver; the retained files do carry `bridgeReady` and the install-churn markers. The install-churn table heading uses the validated profile's cycle count. `atspi_probe.py`: a desktop with more than 256 children is reported as truncated instead of accepting a match from a partial scan. | No: evidence validation and probe bounds. The retained 44 files pass; a smoke run from the current harness passes without the legacy warning. |
+
+| `b18f477` | `BenchApp`: allocation is measured with the monotonic `getTotalThreadAllocatedBytes()` (`allocationMethod: "total"`; the per-thread-sum delta is still recorded as `allocatedBytesPerSampleThreadSum` for cross-checking). `budgets.py`: runs from the current harness must declare `allocationMethod: "total"`. | **Yes, this one touches a measured quantity.** The retained files use the per-thread sum, which loses the history of threads that exit between the snapshots. A cross-check of both methods in the same runs (dirty=10, 200 samples, 2 runs per cell, bridge off/on) shows a nearly constant undercount of about 0.46 KB/sample: 0.46–0.56 % at 100 nodes, 0.18–0.25 % at 1,000 and 0.01–0.05 % at 10,000. The retained allocation figures are therefore usable as provisional values and the 25 % budget margin absorbs the difference; they are not re-collected, and new collections use the corrected method (`VALIDATION-NOTE.txt` records this). |
 
 ## Deferred to dedicated QA sessions
 
