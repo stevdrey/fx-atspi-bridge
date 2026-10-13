@@ -179,6 +179,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 
 | `0d6f9ae` | `BenchApp`: reject the run when thread allocation counters are unsupported/disabled/zero, and, for bridge-on runs, when no `fx-atspi-provider` thread is alive after the sampled phase or at the end (records `providerAliveAtEnd`). `budgets.py`: `pulseCadenceP50Ms` mandatory; each file's embedded `nodes`/`dirty`/`bridge` must match its name. | No: preconditions and post-run validation. The existing 44 files pass the cadence and metadata checks; their provider liveness is evidenced only for dirty=10 runs (see `VALIDATION-NOTE.txt`). Observation: `AtSpiProvider.serve()` catches only `Exception`, so an `Error` can end the provider thread silently (library change, out of scope). |
 
+| `9ebbbcc` | `BenchApp`: provider liveness is tied to the thread started by the current generation's install (not to any thread named `fx-atspi-provider`); each install now reads the provider thread set before and after to identify it. `budgets.py`: every run's `warmup`, `samples`, `idleSeconds`, `structuralCycles` and `installChurnCycles` must match the recorded profile and plan, and an unknown profile is rejected. | No measured quantity: the per-install thread-set read adds negligible work to the install-churn loop, whose results are counts and deltas after the loop. The existing 44 files pass the workload check. |
+
 ## Deferred to dedicated QA sessions
 
 These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
