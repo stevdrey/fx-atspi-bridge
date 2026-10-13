@@ -27,6 +27,24 @@ case "$profile" in
 esac
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
+# Evidence under docs/verification/ may be committed publicly. Inherited JVM options can carry secrets (proxy/keystore
+# passwords, agent arguments), so only an allowlist of benign flags is recorded and the JVM's "Picked up ..." echo of
+# JAVA_TOOL_OPTIONS/JDK_JAVA_OPTIONS is redacted everywhere it could reach a retained file.
+safe_opts() {
+  local tok kept="" redacted=0
+  set -f
+  for tok in $1; do
+    case "$tok" in
+      -Xmx[0-9]*|-Xms[0-9]*|-Xss[0-9]*|-XX:[+-]DisableExplicitGC|-XX:+ExitOnOutOfMemoryError|-XX:+Use*GC|-XX:ActiveProcessorCount=[0-9]*|-XX:NativeMemoryTracking=*|--enable-native-access=*)
+        kept+="$tok " ;;
+      *) redacted=$((redacted + 1)) ;;
+    esac
+  done
+  set +f
+  printf '%s(redacted_tokens=%d)' "$kept" "$redacted"
+}
+redact_picked_up() { sed -E 's/^(Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
+
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd)"
 
@@ -67,11 +85,11 @@ fi
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
   echo "java_bin=$java_bin"
-  echo "JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:-}"
-  echo "JDK_JAVA_OPTIONS=${JDK_JAVA_OPTIONS:-}"
-  echo "JAVA_OPTS=${JAVA_OPTS:-}"
+  echo "JAVA_TOOL_OPTIONS_safe=$(safe_opts "${JAVA_TOOL_OPTIONS:-}")"
+  echo "JDK_JAVA_OPTIONS_safe=$(safe_opts "${JDK_JAVA_OPTIONS:-}")"
+  echo "JAVA_OPTS_safe=$(safe_opts "${JAVA_OPTS:-}")"
   "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
-  "$java_bin" -version 2>&1 | head -2
+  "$java_bin" -version 2>&1 | redact_picked_up | head -3
   echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
   uname -srm
   echo "cpus=$(nproc)"
@@ -88,7 +106,7 @@ for entry in "${plan[@]}"; do
         if [ "$dirty" = 10 ]; then extra=(--idle-seconds="$idle_seconds" --install-churn="$install_churn" --structural="$structural"); fi
         timeout 900 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty="$dirty" \
           --warmup="$warmup" --samples="$samples" "${extra[@]}" \
-          --out="$out/$name.json" > "$out/$name.log" 2>&1 \
+          --out="$out/$name.json" 2>&1 | redact_picked_up > "$out/$name.log" \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }
         echo "done $name"
       done
