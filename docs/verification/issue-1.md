@@ -197,6 +197,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 
 | `dd46e5d` | `atspi_probe.py`: the exact rendered line (indentation included) is what counts against the 1 MiB output budget, so a deep chain with empty names stops at about depth 1,000 instead of printing megabytes; the 60 s deadline is checked before, between and after each node metadata call, and a walk that crosses the deadline is never reported as complete. | No: probe output and time bounds only. Unit tests cover indentation accounting, a stalled `get_name()` and a leaf that crosses the deadline; the live probe still lists the 19 nodes of fx-lab and exits 0. |
 
+| `9fdb56b` | CI: `python3-gi` and `gir1.2-atspi-2.0` are installed and the tooling step sets `REQUIRE_ATSPI_TESTS=1`, so the probe suite runs and a missing binding fails the build instead of skipping 12 tests; locally the guard was checked with simulated missing bindings. | No: CI and tests only. |
+
 ## Deferred to dedicated QA sessions
 
 These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
