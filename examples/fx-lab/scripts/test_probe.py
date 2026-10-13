@@ -199,6 +199,29 @@ class WalkTest(unittest.TestCase):
         with self.assertRaises(probe.DiscoveryTruncated):
             probe.find_applications(Crowded(), "x", time.monotonic() + 5)
 
+    def test_role_summary_is_bounded(self):
+        probe = self.load()
+        names = [probe.clip(f"{i:05d}" + "r" * 400) for i in range(2000)]
+        summary = probe.summarize_roles(names)
+        self.assertLess(len(summary.encode()), 5 * 1024)
+        self.assertIn("2000 distinct roles", summary)
+        self.assertIn("(+1984 more)", summary)
+        self.assertEqual(probe.summarize_roles(["frame", "button", "frame"]), "2 distinct roles ['button', 'frame']")
+
+    def test_stalled_name_of_the_last_child_is_a_deadline_not_a_miss(self):
+        probe = self.load()
+
+        class StalledApp:
+            def get_name(self):
+                time.sleep(0.3)
+                return "other"
+
+        class Desktop:
+            def get_child_count(self): return 1
+            def get_child_at_index(self, index): return StalledApp()
+
+        self.assertIsNone(probe.find_applications(Desktop(), "x", time.monotonic() + 0.1))
+
     def test_small_tree_is_fully_walked(self):
         probe = self.load()
         node = FakeNode(children=3)

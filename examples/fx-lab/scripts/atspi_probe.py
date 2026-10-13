@@ -124,6 +124,21 @@ def walk(root, depth, out, lookups=None, deadline=None, text=None):
     return not expired()
 
 
+MAX_SUMMARY_ROLES = 16
+
+
+def summarize_roles(role_names):
+    """Bounded role summary (at most MAX_SUMMARY_ROLES names of at most MAX_NAME_CHARS+1 characters each, ~4 KB).
+
+    Total output is therefore bounded by MAX_TEXT_BYTES for the node lines (indentation included) plus this summary
+    plus the fixed one-line messages; a hostile tree cannot repeat its names a second time here.
+    """
+    distinct = sorted(set(role_names))
+    shown = distinct[:MAX_SUMMARY_ROLES]
+    more = f" (+{len(distinct) - len(shown)} more)" if len(distinct) > len(shown) else ""
+    return f"{len(distinct)} distinct roles {shown}{more}"
+
+
 def process_ids(apps, deadline):
     """get_process_id() of every app, or None when the deadline expires between or around the remote calls."""
     pids = []
@@ -139,9 +154,15 @@ class DiscoveryTruncated(Exception):
 
 
 def find_applications(desktop, name, deadline):
-    """Applications on the desktop with the given name; None when the deadline expires during discovery."""
+    """Applications on the desktop with the given name; None when the deadline expires at any point of discovery.
+
+    The deadline is checked around every remote call (child count, child lookup, name), so even a stalled last child
+    cannot turn into a plain "not found".
+    """
     matches = []
     total = desktop.get_child_count()
+    if time.monotonic() >= deadline:
+        return None
     if total > MAX_DESKTOP_APPS:
         raise DiscoveryTruncated(f"the desktop has {total} children, more than the {MAX_DESKTOP_APPS} the probe scans")
     for i in range(total):
@@ -150,7 +171,12 @@ def find_applications(desktop, name, deadline):
         app = desktop.get_child_at_index(i)
         if time.monotonic() >= deadline:
             return None
-        if app is not None and app.get_name() == name:
+        if app is None:
+            continue
+        app_name = app.get_name()
+        if time.monotonic() >= deadline:
+            return None
+        if app_name == name:
             matches.append(app)
     return matches
 
@@ -192,7 +218,7 @@ def main():
         print(render_line(depth, role_name, name, children))
     roles = {role for _, role, _, _, _ in nodes}
     buttons = {name for _, role, _, name, _ in nodes if role == Atspi.Role.PUSH_BUTTON}
-    print(f"nodes={len(nodes)} roles={sorted({rn for _, _, rn, _, _ in nodes})}")
+    print(f"nodes={len(nodes)} roles: {summarize_roles([rn for _, _, rn, _, _ in nodes])}")
     if not complete:
         print(f"TRUNCATED: stopped after {len(nodes)} nodes (cap {MAX_NODES} nodes/lookups, {MAX_TEXT_BYTES} text bytes or {PROBE_DEADLINE_S} s deadline)")
         return 1
