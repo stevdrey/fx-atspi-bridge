@@ -203,6 +203,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 
 | `b18f477` | `BenchApp`: allocation is measured with the monotonic `getTotalThreadAllocatedBytes()` (`allocationMethod: "total"`; the per-thread-sum delta is still recorded as `allocatedBytesPerSampleThreadSum` for cross-checking). `budgets.py`: runs from the current harness must declare `allocationMethod: "total"`. | **Yes, this one touches a measured quantity.** The retained files use the per-thread sum, which loses the history of threads that exit between the snapshots. A cross-check of both methods in the same runs (dirty=10, 200 samples, 2 runs per cell, bridge off/on) shows a nearly constant undercount of about 0.46 KB/sample: 0.46–0.56 % at 100 nodes, 0.18–0.25 % at 1,000 and 0.01–0.05 % at 10,000. The retained allocation figures are therefore usable as provisional values and the 25 % budget margin absorbs the difference; they are not re-collected, and new collections use the corrected method (`VALIDATION-NOTE.txt` records this). |
 
+| `4ff8474` | `atspi_probe.py`: the closing role summary is bounded (distinct count plus at most 16 names, about 4 KB) so total output is the 1 MiB node-line budget plus that summary; application discovery checks the deadline after the child count, each child lookup and each `get_name()`, so a stalled last child ends as `TRUNCATED` rather than `MISSING`. | No: probe output and time bounds only. Unit tests cover 2,000 distinct 256-character roles and a stalled `get_name()`; the live probe still lists the 19 fx-lab nodes with 7 roles. |
+
 ## Deferred to dedicated QA sessions
 
 These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
