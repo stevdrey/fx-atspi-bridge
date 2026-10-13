@@ -15,6 +15,7 @@ SCRIPT = pathlib.Path(__file__).with_name("budgets.py")
 
 def run_json(bridge, p99, heap_delta_bytes, with_max=True):
     run = {
+        "bridge": bridge, "nodes": 100, "dirty": 10,
         "latencyP50Ms": 16.0, "latencyP99Ms": p99, "allocatedBytesPerSample": 2048.0,
         "idleCpuPercent": 2.0, "idleVoluntarySwitchesPerSecond": 100.0,
         "heapAfterIdleGcBytes": 2 ** 20, "rssAfterIdleKb": 200_000,
@@ -88,6 +89,20 @@ class BudgetsTest(unittest.TestCase):
         out = self.collect(runs)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("invalid runs", out.stderr + out.stdout)
+
+    def test_run_without_cadence_is_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = {k: v for k, v in runs["on"][1].items() if k != "pulseCadenceP50Ms"}
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("pulseCadenceP50Ms", out.stderr + out.stdout)
+
+    def test_swapped_bridge_files_are_rejected(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], bridge="off")
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("does not match its name", out.stderr + out.stdout)
 
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))

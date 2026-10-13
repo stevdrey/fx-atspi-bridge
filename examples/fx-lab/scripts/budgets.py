@@ -48,15 +48,21 @@ def validate_runs():
     latencyMaxMs is mandatory (with 200 samples p99 cannot see the two largest pulses). A collection that predates the
     field is accepted only when a human-written VALIDATION-NOTE.txt waiver sits next to the data; a warning is printed.
     """
-    bad, legacy = [], []
+    bad, legacy, missing_cadence = [], [], []
     for f in sorted(glob.glob(f"{DATA}/n*-d*-*-r*.json")):
         r = json.load(open(f))
         if "latencyMaxMs" not in r:
             legacy.append(f)
         elif r["latencyMaxMs"] >= MAX_VALID_PULSE_MS:
             bad.append(f)
-        if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS or r.get("pulseCadenceP50Ms", 0) > MAX_CADENCE_MS:
+        if "pulseCadenceP50Ms" not in r:
+            missing_cadence.append(f)
+        elif r["pulseCadenceP50Ms"] > MAX_CADENCE_MS:
             bad.append(f)
+        if r["latencyP99Ms"] >= MAX_VALID_PULSE_MS:
+            bad.append(f)
+    if missing_cadence:
+        sys.exit("runs without pulseCadenceP50Ms (no startup display-cadence evidence): " + ", ".join(missing_cadence))
     if bad:
         sys.exit("invalid runs (throttled display or stalls), refusing to summarise: " + ", ".join(sorted(set(bad))))
     if legacy:
@@ -73,7 +79,12 @@ def dirties(n):
 
 
 def load(n, d, bridge):
-    rs = [json.load(open(f)) for f in sorted(glob.glob(f"{DATA}/n{n}-d{d}-{bridge}-r*.json"))]
+    files = sorted(glob.glob(f"{DATA}/n{n}-d{d}-{bridge}-r*.json"))
+    rs = [json.load(open(f)) for f in files]
+    for f, r in zip(files, rs):
+        if (r.get("nodes"), r.get("dirty"), r.get("bridge")) != (n, d, bridge):
+            sys.exit(f"{f}: embedded cell (nodes={r.get('nodes')}, dirty={r.get('dirty')}, bridge={r.get('bridge')}) "
+                     f"does not match its name (nodes={n}, dirty={d}, bridge={bridge}); renamed or swapped file?")
     if len(rs) != PLAN[n][0]:
         sys.exit(f"cell n={n} d={d} {bridge}: {len(rs)} runs, expected {PLAN[n][0]}")
     return rs

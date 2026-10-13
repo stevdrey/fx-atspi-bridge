@@ -46,6 +46,9 @@ No prerequisites. New: `.github/workflows/build.yml`, `docs/verification/issue-1
 
 ## Acceptance and verification
 
+Scope note: for native memory this issue records the methodology and the RSS/heap trends only; an NMT/`smaps_rollup` breakdown is deferred to a dedicated QA session (see `docs/verification/issue-1.md`).
+
+
 - [ ] CI workflow green on the PR branch.
 - [ ] `./gradlew check` passes on JDK 27 locally.
 - [ ] Harness runs for 100/1,000/10,000 nodes, bridge on/off, with repeated runs and variance (`quick` profile by default: reduced coverage at 10,000 nodes is recorded as a limitation; `full` profile available).

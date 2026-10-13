@@ -10,3 +10,7 @@ NOT excluded: one or two isolated pulses of 900 ms or more per run (with 200 sam
 
 This waiver applies only to this collection. Any new collection (quick or full) records latencyMaxMs and must not use
 a waiver; the dedicated QA sessions listed in docs/verification/issue-1.md will replace this data.
+
+Provider liveness: these files predate `providerAliveAtEnd`. For dirty=10 bridge-on runs a live provider is evidenced by the
+provider-thread counts recorded at the churn checkpoints and after the drain (1). For dirty=1 and dirty=100 bridge-on runs no
+end-of-run liveness was recorded; a provider that died silently after reporting ready is not excluded for those files.

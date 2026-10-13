@@ -172,10 +172,13 @@ public final class BenchApp extends Application {
         field(json, "heapAfterWarmupGcBytes", usedHeap());
         field(json, "rssAfterWarmupKb", status("VmRSS"));
 
+        requireAllocationTracking();
         var allocBefore = allocatedBytes();
         var latenciesMs = new double[samples];
         for (var i = 0; i < samples; i++) latenciesMs[i] = mutateAndWait(dirty, warmup + i) / 1e6;
         var allocated = allocatedBytes() - allocBefore;
+        if (allocated <= 0) invalid("thread allocation counters reported no allocation during the sampled phase");
+        if (bridgeOn) requireProviderAlive("after the sampled phase");
         Arrays.sort(latenciesMs);
         var latencyMax = latenciesMs[latenciesMs.length - 1];
         if (latencyMax >= MAX_VALID_PULSE_MS) {
@@ -193,6 +196,10 @@ public final class BenchApp extends Application {
 
         if (structural > 0) structuralChurn(json, structural);
         if (bridgeOn && installChurn > 0) installChurn(json, installChurn);
+        if (bridgeOn) {
+            requireProviderAlive("at the end of the run");
+            field(json, "providerAliveAtEnd", true);
+        }
         json.setLength(json.length() - 1);
         return json.append("}\n").toString();
     }
@@ -369,6 +376,22 @@ public final class BenchApp extends Application {
 
     private static double percentile(double[] sorted, double p) {
         return sorted[Math.min(sorted.length - 1, (int) Math.ceil(p * sorted.length) - 1)];
+    }
+
+    private static void invalid(String reason) {
+        System.err.println("bench invalid: " + reason);
+        Runtime.getRuntime().halt(3);
+    }
+
+    /** A provider that died after reporting ready (e.g. an uncaught Error in its thread) must not yield bridge-on evidence. */
+    private static void requireProviderAlive(String when) {
+        if (providerThreads() < 1) invalid("no fx-atspi-provider thread is alive " + when);
+    }
+
+    private void requireAllocationTracking() {
+        if (!threads.isThreadAllocatedMemorySupported()) invalid("thread allocation measurement is not supported by this JVM");
+        if (!threads.isThreadAllocatedMemoryEnabled()) threads.setThreadAllocatedMemoryEnabled(true);
+        if (!threads.isThreadAllocatedMemoryEnabled()) invalid("thread allocation measurement could not be enabled");
     }
 
     private long allocatedBytes() {

@@ -60,7 +60,7 @@ Reduced coverage compared with `docs/verification/README.md` (**limitation**): 2
 | Structural churn | 100 cycles (30 at 10,000 nodes) of (1) adding 10 `TextField`s and removing the previous 10, (2) swapping the stage to a fresh `Scene`, (3) restoring the original `Scene`; each state is held 250 ms (at least two scans of the bridge's 100 ms `AnimationTimer`) before the next change, for bridge off and on. Observation by the provider is not confirmed (the library has no hook), only made possible. RSS and thread counts are read 2 s after the loop **before** GC; heap and RSS are read again after GC. |
 | Install churn | 100 `FxAtSpiBridge` close+install cycles (bridge on). Readiness is tracked per installed provider; the final provider must report ready (15 s limit) or the run is invalid. Provider-thread count, RSS and thread delta are read when 2 s have passed since the loop end (later when waiting for the final provider took longer, see "Checkpoint (s)"), **before** GC; heap after GC; then up to 30 s are waited for stopped providers to exit. |
 
-Not measured (**missing**): retained listener and invocation counters (not observable without library changes), request floods, and a native-memory breakdown (NMT/`pmap`).
+Not measured (**missing**): retained listener and invocation counters (not observable without library changes), request floods, and **any native-memory breakdown**. SC-01 therefore records the *methodology* for native memory (process RSS trend per phase, read from `/proc/self/status`, plus Java heap after GC) and its results, but no NMT/`pmap`/`smaps_rollup` split between Java heap, JavaFX, GLib/GDBus and allocator behaviour. RSS alone cannot attribute growth to native retention, which is why RSS growth during churn is reported but not budgeted. The native breakdown is deferred (below); until it exists, this baseline cannot detect native-resource regressions on its own, and the native part of the SC-01 acceptance criterion is only partially met.
 
 ## Results (median over 2–3 runs per cell, see the Runs column; parentheses = min–max)
 
@@ -177,6 +177,8 @@ Commits after the harness commit `031f25c` that produced the data, and why the d
 | `8fb522e` | `BenchApp`: reject runs with a measured pulse ≥ 900 ms and record `latencyMaxMs`; per-cycle and `awaitPulse` futures complete exceptionally when FX work throws. `budgets.py`: validates all runs (p99 < 900 ms, cadence ≤ 50 ms) before summarising, with unit tests. | No: validation after sampling and error paths. The existing 44 files predate `latencyMaxMs`: `budgets.py` now requires the field and accepts this collection only through the hand-written waiver `data/issue-1/VALIDATION-NOTE.txt` (p99 < 900 ms, max 504 ms; idle cadence 14.9–16.0 ms), printing a warning. Isolated one-or-two-sample stalls are not excluded for these files. |
 | `3b5717a` | `BenchApp`: the worker boundary catches `Throwable` (including `OutOfMemoryError`) and exits with code 2 instead of exiting successfully without a result; the fx-lab launcher adds `-XX:+ExitOnOutOfMemoryError` (a forced `-Xmx48m` run previously hung on an `OutOfMemoryError` in a JavaFX thread and now exits with code 3 without a result). `budgets.py`: `latencyMaxMs` mandatory unless the waiver exists; unit tests. | No: error path, JVM exit-on-OOM flag (no effect unless memory is exhausted) and evidence validation. Checked with the smoke profile and the forced-OOM run. |
 
+| `this commit` | `BenchApp`: reject the run when thread allocation counters are unsupported/disabled/zero, and, for bridge-on runs, when no `fx-atspi-provider` thread is alive after the sampled phase or at the end (records `providerAliveAtEnd`). `budgets.py`: `pulseCadenceP50Ms` mandatory; each file's embedded `nodes`/`dirty`/`bridge` must match its name. | No: preconditions and post-run validation. The existing 44 files pass the cadence and metadata checks; their provider liveness is evidenced only for dirty=10 runs (see `VALIDATION-NOTE.txt`). Observation: `AtSpiProvider.serve()` catches only `Exception`, so an `Error` can end the provider thread silently (library change, out of scope). |
+
 ## Deferred to dedicated QA sessions
 
 These are intentionally not done in this PR, to keep review iterations short; they belong to a QA issue (manual or automated) with its own time budget:
@@ -185,7 +187,7 @@ These are intentionally not done in this PR, to keep review iterations short; th
 - `full` profile collection (5 repetitions per cell, 100-dirty-node runs and 100 structural cycles at 10,000 nodes) and narrower budgets from it.
 - Independent-client interactions on the Fedora/GNOME/Wayland session: action invocation, text editing/Unicode round-trip, second window, scene replacement and event delivery.
 - Native Wayland vs XWayland check for the benchmark window, other distributions/GNOME versions, Orca, and other AT-SPI client versions.
-- Explaining the RSS growth during churn (NMT, `pmap`, GLib allocation tracing).
+- A native-memory baseline: NMT summary (`-XX:NativeMemoryTracking=summary` + `jcmd VM.native_memory`, run separately because it adds overhead) and a `smaps_rollup` anonymous/file split at the existing phase checkpoints, bridge off and on; then explaining the RSS growth during churn (`pmap`, GLib allocation tracing).
 
 ## CI
 
