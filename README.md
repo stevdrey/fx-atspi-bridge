@@ -99,9 +99,9 @@ The original prototype was verified on Fedora/GNOME through an external MCP/liba
 
 The project's own code and example are distributed under the [Apache License 2.0](LICENSE), copyright Steven Rey Sequeira. Commercial use, modification, and redistribution are permitted under its terms, including an express patent grant from contributors. When redistributing, preserve the notices and license and identify modified files. Dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Optional CI
+## Continuous integration
 
-`ci/github-actions-build.yml.example` contains a template that builds the library and example and runs native tests on Linux with JDK 27. To enable it, copy it to `.github/workflows/build.yml` using a GitHub session with permission to modify workflows. The template is included, but GitHub Actions has not yet been enabled in this repository.
+`.github/workflows/build.yml` runs `./gradlew check generatePomFileForMavenJavaPublication` on Linux with Zulu JDK 27 for pull requests and pushes to `main`. It has read-only permissions, pinned action SHAs and no secrets. It covers the native Unicode/variant unit tests only; it is not desktop QA. Baseline measurements and the compatibility matrix live in `docs/verification/issue-1.md`.
 
 ## Product development
 
