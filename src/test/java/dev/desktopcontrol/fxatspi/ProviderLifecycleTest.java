@@ -31,6 +31,7 @@ import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
@@ -68,6 +69,7 @@ class ProviderLifecycleTest {
         }
     }
     @AfterEach void cleanUp() {
+        Ffm.resetAbandonedForTesting();
         providers.forEach(AtSpiProvider::stop);
         if (daemon != null) daemon.destroyForcibly();
     }
@@ -230,24 +232,32 @@ class ProviderLifecycleTest {
             Gio.bus_own_name_on_connection(connection, "org.a11y.atspi.Registry", Gio.BusNameOwnerFlags.NONE, on_name, None)
             GLib.MainLoop().run()
             """;
-    @Test void stopWhileEmbedIsOutstandingCancelsAndDrainsBeforeFreeingCallbacks() throws Exception {
-        var script = Files.createTempFile("stalled-registry", ".py");
+    /** Starts the stalled registry helper, or skips the test when python3 with PyGObject is unavailable. */
+    private Process startStalledRegistry(Path script) throws Exception {
         Files.writeString(script, STALLED_REGISTRY);
         var registry = new ProcessBuilder("python3", "-I", "-W", "ignore", script.toString(), address).redirectErrorStream(true).start();
+        var ready = new BufferedReader(new InputStreamReader(registry.getInputStream())).readLine(); // null when the helper exits early
+        if (!"ready".equals(ready)) {
+            registry.destroyForcibly();
+            if ("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("stalled registry helper unavailable: " + ready);
+            Assumptions.abort("python3 with PyGObject Gio unavailable");
+        }
+        return registry;
+    }
+    private static void awaitEmbedOutstanding(AtSpiProvider provider) throws InterruptedException {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!provider.embedOutstanding() && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(provider.embedOutstanding(), "the Embed call must still be outstanding when shutdown starts");
+    }
+    @Test void stopWhileEmbedIsOutstandingCancelsAndDrainsBeforeFreeingCallbacks() throws Exception {
+        var script = Files.createTempFile("stalled-registry", ".py");
+        var registry = startStalledRegistry(script);
         try {
-            var output = new BufferedReader(new InputStreamReader(registry.getInputStream()));
-            var ready = output.readLine(); // null when the helper exits early (for example no PyGObject)
-            if (!"ready".equals(ready)) {
-                if ("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("stalled registry helper unavailable: " + ready);
-                Assumptions.abort("python3 with PyGObject Gio unavailable");
-            }
             var provider = new AtSpiProvider(statuses::add, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
             providers.add(provider);
             provider.start();
             await(provider, State.RUNNING);
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!provider.embedOutstanding() && System.nanoTime() < deadline) Thread.sleep(10);
-            assertTrue(provider.embedOutstanding(), "the Embed call must still be outstanding when shutdown starts");
+            awaitEmbedOutstanding(provider);
             provider.stop();
             awaitTermination(provider);
             assertEquals(State.CLOSED, provider.state());
@@ -255,5 +265,53 @@ class ProviderLifecycleTest {
             assertFalse(provider.embedAbandoned(), "draining must not need the retain-memory fallback");
             assertTrue(statuses.stream().noneMatch(s -> s.contains("registrar")), statuses.toString());
         } finally { registry.destroyForcibly(); Files.deleteIfExists(script); }
+    }
+    @Test void abandonNoticeFromAFailingConsumerCannotBreakCleanup() throws Exception {
+        var script = Files.createTempFile("stalled-registry", ".py");
+        var registry = startStalledRegistry(script);
+        try {
+            var notices = new CopyOnWriteArrayList<Boolean>();
+            var holder = new AtSpiProvider[1];
+            holder[0] = new AtSpiProvider(message -> {
+                if (message.contains("did not complete")) notices.add(holder[0].isTerminated());
+                throw new IllegalStateException("consumer failure");
+            }, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
+            var provider = holder[0];
+            providers.add(provider);
+            provider.embedDrainNanos(0); // forces the abandon path: the cancelled callback is not awaited
+            provider.start();
+            await(provider, State.RUNNING);
+            awaitEmbedOutstanding(provider);
+            provider.stop();
+            awaitTermination(provider);
+            assertEquals(State.CLOSED, provider.state());
+            assertTrue(provider.embedAbandoned());
+            assertEquals(0, provider.pendingCount());
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (notices.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertEquals(List.of(true), notices, "the notice must be delivered once, after termination was published");
+        } finally { registry.destroyForcibly(); Files.deleteIfExists(script); }
+    }
+    @Test void abandonNoticeFromABlockingConsumerCannotDelayTermination() throws Exception {
+        var script = Files.createTempFile("stalled-registry", ".py");
+        var registry = startStalledRegistry(script);
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try {
+            var provider = new AtSpiProvider(message -> {
+                if (!message.contains("did not complete")) return;
+                entered.countDown();
+                try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            }, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
+            providers.add(provider);
+            provider.embedDrainNanos(0);
+            provider.start();
+            await(provider, State.RUNNING);
+            awaitEmbedOutstanding(provider);
+            provider.stop();
+            awaitTermination(provider); // must complete while the consumer is (or will be) blocked
+            assertEquals(State.CLOSED, provider.state());
+            assertTrue(entered.await(WAIT_SECONDS, TimeUnit.SECONDS), "the notice should still be delivered");
+        } finally { release.countDown(); registry.destroyForcibly(); Files.deleteIfExists(script); }
     }
 }

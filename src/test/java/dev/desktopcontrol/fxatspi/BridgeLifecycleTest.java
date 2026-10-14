@@ -121,6 +121,19 @@ class BridgeLifecycleTest {
         last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
         awaitSlotReleased();
     }
+    @Test void installIsRefusedOnceTooManyArenasWereRetained() throws Exception {
+        try {
+            for (int i = 0; i < Ffm.MAX_ABANDONED; i++) {
+                assertFalse(Ffm.abandonedLimitReached());
+                try (var api = new Ffm()) { api.detach(); api.detach(); } // a repeated detach of one instance counts once
+            }
+            assertTrue(Ffm.abandonedLimitReached());
+            var refused = assertThrows(ExecutionException.class,
+                    () -> onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)));
+            assertTrue(refused.getCause().getMessage().contains("restart the JVM"), refused.getCause().getMessage());
+            assertFalse(onFx(FxAtSpiBridge::slotHeld), "a refused install must not take the slot");
+        } finally { Ffm.resetAbandonedForTesting(); }
+    }
     @Test void failedProviderDoesNotBlockReinstall() throws Exception {
         var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false));
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);

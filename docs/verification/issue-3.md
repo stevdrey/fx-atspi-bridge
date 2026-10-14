@@ -10,8 +10,8 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 14 tests (10 provider + 4 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 34 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 17 tests (12 provider + 5 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 37 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -42,6 +42,12 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 - `closed()` now returns one cached read-only stage (`terminationStageIsOneSharedReadOnlyView`).
 - `boolean starter` → `var starter`.
 - `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 14 tests each (10 provider + 4 bridge), 0 failures, 0 skipped.
+
+## Code-review follow-up 5 (Codex, PR #19, commit d441d79)
+
+- The abandon notice called the application status consumer inside `teardown()` under the provider lock. It is now recorded and delivered after cleanup and after termination is published; all status callbacks use a guarded `report`. Tests `abandonNoticeFromAFailingConsumerCannotBreakCleanup` and `abandonNoticeFromABlockingConsumerCannotDelayTermination` force the abandon path with the stalled-registry helper and a drain deadline of 0. Mutation check: delivering the notice inside teardown again makes both fail.
+- Retained arenas are now bounded process-wide (`Ffm.MAX_ABANDONED` = 3) and `install` is refused beyond that (`installIsRefusedOnceTooManyArenasWereRetained`, which also checks a repeated `detach()` counts once). The abandon path is exercised only through the test seam, not through a naturally occurring timeout; behavior of GIO when a cancelled callback is never delivered is not independently verified.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 17 tests each (12 provider + 5 bridge), 0 failures, 0 skipped.
 
 ## Defect found and fixed while testing
 

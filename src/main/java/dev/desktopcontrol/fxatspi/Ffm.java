@@ -20,6 +20,8 @@ import java.lang.foreign.*;
 import java.lang.invoke.*;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import static java.lang.foreign.ValueLayout.*;
 
 /** Explicit Linux x86_64 GIO/GLib/GObject C ABI, without JNI/JNA. */
@@ -32,7 +34,11 @@ final class Ffm implements AutoCloseable {
     /** A resolved downcall together with the descriptor it was linked with. */
     private record Binding(FunctionDescriptor descriptor, MethodHandle handle) {}
     private final ConcurrentHashMap<String, Binding> bindings = new ConcurrentHashMap<>();
-    private volatile boolean closed, detached;
+    /** Arenas intentionally retained process-wide; installs are refused once this many providers could not release one. */
+    static final int MAX_ABANDONED = 3;
+    private static final AtomicInteger ABANDONED = new AtomicInteger();
+    private volatile boolean closed;
+    private final AtomicBoolean detached = new AtomicBoolean();
     Object call(String name, MemoryLayout result, MemoryLayout[] signature, Object... args) {
         if (closed) throw new IllegalStateException("Native API closed");
         var descriptor = result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature);
@@ -84,8 +90,10 @@ final class Ffm implements AutoCloseable {
     /** Idempotent; later calls fail with a stable exception instead of entering unloaded libraries. */
     /**
      * Keeps the arena open at {@link #close()}: native code may still hold an upcall stub that lives in it.
-     * A bounded, one-time leak is preferred to a callback into freed memory.
+     * At most {@link #MAX_ABANDONED} arenas can be retained per JVM: the bridge refuses to install beyond that.
      */
-    void detach() { detached = true; }
-    @Override public void close() { if (!closed) { closed = true; if (!detached) arena.close(); } }
+    void detach() { if (detached.compareAndSet(false, true)) ABANDONED.incrementAndGet(); }
+    static boolean abandonedLimitReached() { return ABANDONED.get() >= MAX_ABANDONED; }
+    static void resetAbandonedForTesting() { ABANDONED.set(0); }
+    @Override public void close() { if (!closed) { closed = true; if (!detached.get()) arena.close(); } }
 }
