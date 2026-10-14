@@ -15,6 +15,9 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import dev.desktopcontrol.fxatspi.fx.ActionExecutor;
+import dev.desktopcontrol.fxatspi.fx.SceneModelBuilder;
+import dev.desktopcontrol.fxatspi.fx.TargetRegistry;
 import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import java.util.function.Consumer;
@@ -22,11 +25,13 @@ import java.util.function.Consumer;
 /** Opt-in experimental accessibility bridge for the current JavaFX process. */
 public final class FxAtSpiBridge implements AutoCloseable {
     private final AtSpiProvider provider;
+    private final TargetRegistry registry;
     private final AnimationTimer observer;
     private static boolean installed;
     private boolean closed;
     private FxAtSpiBridge(Consumer<String> status) {
-        provider = new AtSpiProvider(status);
+        registry = new TargetRegistry();
+        provider = new AtSpiProvider(status, new SceneModelBuilder(registry), new ActionExecutor(registry));
         observer = new AnimationTimer() {
             private long previous;
             @Override public void handle(long now) {
@@ -53,6 +58,6 @@ public final class FxAtSpiBridge implements AutoCloseable {
     public static FxAtSpiBridge install() { return install(message -> System.err.println(message)); }
     @Override public void close() {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Close on the FX application thread");
-        if (!closed) { closed=true; observer.stop(); provider.stop(); installed=false; }
+        if (!closed) { closed=true; observer.stop(); provider.stop(); registry.clear(); installed=false; }
     }
 }

@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import dev.desktopcontrol.fxatspi.protocol.VariantText;
 import java.lang.foreign.*;
 import java.lang.invoke.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,10 +54,7 @@ final class Ffm implements AutoCloseable {
         throw new IllegalStateException(message);
     }
     static String string(MemorySegment address) { return address.address() == 0 ? "" : address.reinterpret(1024 * 1024).getString(0); }
-    static String quote(String value) {
-        if (value.indexOf('\0') >= 0) throw new IllegalArgumentException("NUL in text");
-        return "'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "'";
-    }
+    static String quote(String value) { return VariantText.quote(value); }
     MemorySegment variant(String text) {
         try (Arena temporary = Arena.ofConfined()) {
             return checked("g_variant_parse", new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS}, NIL, temporary.allocateFrom(text), NIL, NIL);

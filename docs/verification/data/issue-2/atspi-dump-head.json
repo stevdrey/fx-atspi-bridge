@@ -1,0 +1,185 @@
+{
+ "tree": {
+  "name": "JavaFX AT-SPI Lab",
+  "role": "application",
+  "roleEnum": "application",
+  "ifaces": [
+   "Accessible",
+   "Application"
+  ],
+  "states": [
+   "enabled",
+   "sensitive",
+   "showing",
+   "visible"
+  ],
+  "children": [
+   {
+    "name": "SmokeApp",
+    "role": "frame",
+    "roleEnum": "frame",
+    "ifaces": [
+     "Accessible"
+    ],
+    "states": [
+     "enabled",
+     "focused",
+     "sensitive",
+     "showing",
+     "visible"
+    ],
+    "children": [
+     {
+      "name": "",
+      "role": "panel",
+      "roleEnum": "panel",
+      "ifaces": [
+       "Accessible"
+      ],
+      "states": [
+       "enabled",
+       "sensitive",
+       "showing",
+       "visible"
+      ],
+      "children": [
+       {
+        "name": "idle",
+        "role": "label",
+        "roleEnum": "label",
+        "ifaces": [
+         "Accessible"
+        ],
+        "states": [
+         "enabled",
+         "sensitive",
+         "showing",
+         "visible"
+        ],
+        "children": []
+       },
+       {
+        "name": "Go",
+        "role": "button",
+        "roleEnum": "button",
+        "ifaces": [
+         "Accessible",
+         "Action"
+        ],
+        "states": [
+         "enabled",
+         "focusable",
+         "focused",
+         "sensitive",
+         "showing",
+         "visible"
+        ],
+        "children": [],
+        "nactions": 1
+       },
+       {
+        "name": "Off",
+        "role": "button",
+        "roleEnum": "button",
+        "ifaces": [
+         "Accessible",
+         "Action"
+        ],
+        "states": [
+         "focusable",
+         "showing",
+         "visible"
+        ],
+        "children": [],
+        "nactions": 1
+       },
+       {
+        "name": "field",
+        "role": "entry",
+        "roleEnum": "entry",
+        "ifaces": [
+         "Accessible",
+         "EditableText",
+         "Text"
+        ],
+        "states": [
+         "editable",
+         "enabled",
+         "focusable",
+         "sensitive",
+         "showing",
+         "single-line",
+         "visible"
+        ],
+        "children": [],
+        "count": 3,
+        "text": "a🧪b",
+        "caret": 0
+       },
+       {
+        "name": "",
+        "role": "text",
+        "roleEnum": "text",
+        "ifaces": [
+         "Accessible",
+         "EditableText",
+         "Text"
+        ],
+        "states": [
+         "editable",
+         "enabled",
+         "focusable",
+         "multi-line",
+         "sensitive",
+         "showing",
+         "visible"
+        ],
+        "children": [],
+        "count": 11,
+        "text": "line1\nline2",
+        "caret": 0
+       },
+       {
+        "name": "pw",
+        "role": "entry",
+        "roleEnum": "entry",
+        "ifaces": [
+         "Accessible"
+        ],
+        "states": [
+         "enabled",
+         "focusable",
+         "sensitive",
+         "showing",
+         "single-line",
+         "visible"
+        ],
+        "children": []
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "acts": {
+  "do_action": true,
+  "set_text_field": true,
+  "pw_set_text": "error",
+  "pw_get_text": "error",
+  "after": [
+   [
+    "fired",
+    null
+   ],
+   [
+    "field",
+    "new🧪"
+   ],
+   [
+    "pw",
+    null
+   ]
+  ]
+ }
+}
