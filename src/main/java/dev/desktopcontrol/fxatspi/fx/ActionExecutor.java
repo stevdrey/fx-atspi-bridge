@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi.fx;
 
+import dev.desktopcontrol.fxatspi.model.ActionPort;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextInputControl;
@@ -24,20 +25,20 @@ import javafx.scene.control.TextInputControl;
  * thread, never while holding a lock shared with the provider. Each method revalidates the target
  * immediately before acting and returns {@code false} when the action is not permitted.
  */
-public final class ActionExecutor {
+public final class ActionExecutor implements ActionPort {
     private final TargetRegistry registry;
 
     public ActionExecutor(TargetRegistry registry) { this.registry = registry; }
 
     /** Fires an enabled button-like target. */
-    public boolean press(String id) {
+    @Override public boolean press(String id) {
         if (!(registry.target(id) instanceof ButtonBase button) || button.isDisabled()) return false;
         button.fire();
         return true;
     }
 
     /** Replaces the text of an editable, enabled, non-password text input. */
-    public boolean setText(String id, String value) {
+    @Override public boolean setText(String id, String value) {
         if (!(registry.target(id) instanceof TextInputControl text) || text instanceof PasswordField) return false;
         if (!text.isEditable() || text.isDisabled()) return false;
         text.setText(value);

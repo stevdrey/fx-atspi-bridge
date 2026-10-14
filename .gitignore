@@ -30,3 +30,5 @@ replay_pid*
 *.iml
 .env
 !gradle/wrapper/gradle-wrapper.jar
+
+__pycache__/

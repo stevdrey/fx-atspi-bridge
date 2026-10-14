@@ -1,0 +1,152 @@
+{
+ "name": "JavaFX AT-SPI Lab",
+ "role": "application",
+ "interfaces": [
+  "org.a11y.atspi.Accessible",
+  "org.a11y.atspi.Application"
+ ],
+ "states": [
+  8,
+  24,
+  25,
+  30
+ ],
+ "children": [
+  {
+   "name": "SmokeApp",
+   "role": "frame",
+   "interfaces": [
+    "org.a11y.atspi.Accessible"
+   ],
+   "states": [
+    8,
+    24,
+    25,
+    30
+   ],
+   "children": [
+    {
+     "name": "",
+     "role": "panel",
+     "interfaces": [
+      "org.a11y.atspi.Accessible"
+     ],
+     "states": [
+      8,
+      24,
+      25,
+      30
+     ],
+     "children": [
+      {
+       "name": "fired",
+       "role": "label",
+       "interfaces": [
+        "org.a11y.atspi.Accessible"
+       ],
+       "states": [
+        8,
+        24,
+        25,
+        30
+       ],
+       "children": []
+      },
+      {
+       "name": "Go",
+       "role": "push button",
+       "interfaces": [
+        "org.a11y.atspi.Accessible",
+        "org.a11y.atspi.Action"
+       ],
+       "states": [
+        8,
+        11,
+        24,
+        25,
+        30
+       ],
+       "children": []
+      },
+      {
+       "name": "Off",
+       "role": "push button",
+       "interfaces": [
+        "org.a11y.atspi.Accessible",
+        "org.a11y.atspi.Action"
+       ],
+       "states": [
+        11,
+        25,
+        30
+       ],
+       "children": []
+      },
+      {
+       "name": "field",
+       "role": "entry",
+       "interfaces": [
+        "org.a11y.atspi.Accessible",
+        "org.a11y.atspi.EditableText",
+        "org.a11y.atspi.Text"
+       ],
+       "states": [
+        7,
+        8,
+        11,
+        24,
+        25,
+        26,
+        30
+       ],
+       "children": [],
+       "text": {
+        "count": 4,
+        "text": "new🧪"
+       }
+      },
+      {
+       "name": "",
+       "role": "text",
+       "interfaces": [
+        "org.a11y.atspi.Accessible",
+        "org.a11y.atspi.EditableText",
+        "org.a11y.atspi.Text"
+       ],
+       "states": [
+        7,
+        8,
+        11,
+        17,
+        24,
+        25,
+        30
+       ],
+       "children": [],
+       "text": {
+        "count": 11,
+        "text": "line1\nline2"
+       }
+      },
+      {
+       "name": "pw",
+       "role": "entry",
+       "interfaces": [
+        "org.a11y.atspi.Accessible"
+       ],
+       "states": [
+        8,
+        11,
+        24,
+        25,
+        26,
+        30
+       ],
+       "children": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,90 @@
+{
+ "name": "JavaFX AT-SPI Lab",
+ "role": "application",
+ "interfaces": [
+  "Accessible",
+  "Application"
+ ],
+ "children": [
+  {
+   "name": "SmokeApp",
+   "role": "frame",
+   "interfaces": [
+    "Accessible"
+   ],
+   "children": [
+    {
+     "name": "",
+     "role": "panel",
+     "interfaces": [
+      "Accessible"
+     ],
+     "children": [
+      {
+       "name": "idle",
+       "role": "label",
+       "interfaces": [
+        "Accessible"
+       ],
+       "children": []
+      },
+      {
+       "name": "Go",
+       "role": "button",
+       "interfaces": [
+        "Accessible",
+        "Action"
+       ],
+       "children": []
+      },
+      {
+       "name": "Off",
+       "role": "button",
+       "interfaces": [
+        "Accessible",
+        "Action"
+       ],
+       "children": []
+      },
+      {
+       "name": "field",
+       "role": "entry",
+       "interfaces": [
+        "Accessible",
+        "EditableText",
+        "Text"
+       ],
+       "children": [],
+       "text": {
+        "count": 3,
+        "text": "a🧪b"
+       }
+      },
+      {
+       "name": "",
+       "role": "text",
+       "interfaces": [
+        "Accessible",
+        "EditableText",
+        "Text"
+       ],
+       "children": [],
+       "text": {
+        "count": 11,
+        "text": "line1\nline2"
+       }
+      },
+      {
+       "name": "pw",
+       "role": "entry",
+       "interfaces": [
+        "Accessible"
+       ],
+       "children": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

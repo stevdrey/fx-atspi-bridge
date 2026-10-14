@@ -15,9 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi;
 
-import dev.desktopcontrol.fxatspi.fx.ActionExecutor;
-import dev.desktopcontrol.fxatspi.fx.SceneModelBuilder;
-import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import javafx.application.Platform;
@@ -30,12 +28,20 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.DESCRIPTION;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.PREFIX;
@@ -52,32 +58,95 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /** Experimental dynamic AT-SPI2 provider: Application/Accessible/Action/Text/EditableText.
  * The bus thread owns GDBus registrations; immutable UI snapshots avoid blocking JavaFX.
- * Mutations retain their invocation and reply asynchronously after executing on the FX thread.
+ * Mutations retain their invocation on the provider thread; the FX thread only runs the action and posts a
+ * completion, and the provider thread replies and releases the invocation. No provider lock exists.
  */
 final class AtSpiProvider {
     private final Consumer<String> status;
-    private final SceneModelBuilder scene;
-    private final ActionExecutor actions;
+    private final ActionPort actions;
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(Snapshot.EMPTY);
     private final AtomicReference<Snapshot> desired = new AtomicReference<>(Snapshot.EMPTY);
     private volatile boolean running = true, registered;
-    private Ffm ffi;
+    private volatile Ffm ffi;
     private volatile MemorySegment connection = Ffm.NIL;
-    private String busName = "", busAddress = "", parent = "('', objectpath '/org/a11y/atspi/null')";
+    private volatile String busName = "";
+    private String busAddress = "", parent = "('', objectpath '/org/a11y/atspi/null')";
     private int applicationId;
-    private final Map<Long, MemorySegment> pending = new HashMap<>();
+    /** Invocations accepted but not yet answered. Owned by the provider thread; concurrent only so tests can read the size. */
+    private final Map<Long, MemorySegment> pending = new ConcurrentHashMap<>();
+    /** Results posted by FX tasks; the provider thread turns each into exactly one reply and release. */
+    private record Completion(long address, boolean accepted, Throwable failure) {}
+    private final Queue<Completion> completions = new ConcurrentLinkedQueue<>();
     private record Export(List<Integer> registrations, MemorySegment info) {}
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
+    private final Supplier<Snapshot> scene;
+    private final BusAddress bus;
+    private final boolean embed;
+    private final Executor fxExecutor;
+    /** Guards publication of {@code desired} against disposal; never held during scene traversal or callbacks. */
+    private final Object publication = new Object();
+    private volatile boolean disposed;
+    private volatile Throwable registrationFailure;
+    private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
+    private final CompletableFuture<Void> terminated = new CompletableFuture<>();
+    /** One shared read-only view: each minimalCompletionStage() call would add a dependent to the pending future. */
+    private final CompletionStage<Void> terminatedView = terminated.minimalCompletionStage();
+    private volatile boolean embedOutstanding;
+    private long embedId;
+    private MemorySegment embedCancellable = Ffm.NIL;
+    private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
+    private final AtomicLong exportsAcquired = new AtomicLong(), exportsReleased = new AtomicLong();
 
-    AtSpiProvider(Consumer<String> status, SceneModelBuilder scene, ActionExecutor actions) {
-        this.status = status; this.scene = scene; this.actions = actions;
+    /** Provider lifecycle: NEW → STARTING → RUNNING → STOPPING → CLOSED, or FAILED after cleanup. */
+    enum State { NEW, STARTING, RUNNING, STOPPING, CLOSED, FAILED }
+    /** Resolves the accessibility bus address on the provider thread (replaceable in tests). */
+    @FunctionalInterface interface BusAddress { String resolve(Ffm ffi); }
+    /** Failure whose message is safe to show to a D-Bus peer; every other failure is reported generically. */
+    static final class Rejected extends RuntimeException {
+        Rejected(String message) { super(message, null, false, false); }
+    }
+
+    /** @param embed false skips the registry Embed call, for tests that run on a private bus without a registry */
+    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed) {
+        this(status, scene, actions, bus, embed, Platform::runLater);
+    }
+    /** @param fxExecutor runs mutations on the FX thread; tests substitute a queue to hold invocations pending */
+    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed, Executor fxExecutor) {
+        this.fxExecutor = fxExecutor;
+        this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
+        this.bus = bus != null ? bus : this::sessionAccessibilityAddress;
         refresh(); snapshot.set(desired.get());
     }
     // Called only on the FX application thread.
-    void refresh() { desired.set(scene.build()); }
-    void start() { new Thread(this::serve, "fx-atspi-provider").start(); }
-    synchronized void stop() { running = false; }
+    void refresh() {
+        if (disposed) return;
+        var built = scene.get();
+        synchronized (publication) { if (!disposed) desired.set(built); }
+    }
+    State state() { return state.get(); }
+    /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
+    CompletionStage<Void> terminated() { return terminatedView; }
+    boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
+    boolean embedOutstanding() { return embedOutstanding; }
+    boolean isTerminated() { return terminated.isDone(); }
+    String busName() { return busName; }
+    long pendingAcquired() { return pendingAcquired.get(); }
+    long pendingReleased() { return pendingReleased.get(); }
+    int pendingCount() { return pending.size(); }
+    long exportsAcquired() { return exportsAcquired.get(); }
+    long exportsReleased() { return exportsReleased.get(); }
+    /** Starts the provider thread once; later calls and calls after stop are ignored. */
+    void start() {
+        if (!state.compareAndSet(State.NEW, State.STARTING)) return;
+        new Thread(this::serve, "fx-atspi-provider").start();
+    }
+    /** Nonblocking and idempotent. Never touches GLib: the provider thread performs all native cleanup. */
+    void stop() {
+        running = false;
+        if (state.compareAndSet(State.NEW, State.CLOSED)) { complete(); return; }
+        state.updateAndGet(current -> current == State.STARTING || current == State.RUNNING ? State.STOPPING : current);
+    }
     private MemorySegment stub(String method, MemoryLayout result, int count) throws ReflectiveOperationException {
         var parameters = new Class<?>[count]; Arrays.fill(parameters, MemorySegment.class);
         var layouts = new MemoryLayout[count]; Arrays.fill(layouts, ADDRESS);
@@ -86,19 +155,18 @@ final class AtSpiProvider {
         return Linker.nativeLinker().upcallStub(handle, result == null ? FunctionDescriptor.ofVoid(layouts) : FunctionDescriptor.of(result, layouts), ffi.arena);
     }
     private void serve() {
+        Throwable failure = null;
         try (var nativeApi = new Ffm()) {
             ffi = nativeApi;
-            var context = (MemorySegment) ffi.call("g_main_context_new", ADDRESS, new MemoryLayout[]{});
-            ffi.call("g_main_context_push_thread_default", null, new MemoryLayout[]{ADDRESS}, context);
+            var context = Ffm.NIL;
+            var pushed = false;
             try {
-                var session = ffi.checked("g_bus_get_sync", new MemoryLayout[]{JAVA_INT, ADDRESS}, 2, Ffm.NIL);
-                try {
-                    var reply = sync(session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", "()");
-                    try { busAddress = ffi.text(reply, 0); } finally { ffi.release(reply); }
-                } finally { ffi.unref(session); }
-                connection = ffi.checked("g_dbus_connection_new_for_address_sync", new MemoryLayout[]{ADDRESS, JAVA_INT, ADDRESS, ADDRESS},
-                        ffi.arena.allocateFrom(busAddress), 9, Ffm.NIL, Ffm.NIL);
-                busName = Ffm.string((MemorySegment) ffi.call("g_dbus_connection_get_unique_name", ADDRESS, new MemoryLayout[]{ADDRESS}, connection));
+                context = ffi.mainContextNew();
+                ffi.pushThreadDefault(context);
+                pushed = true;
+                busAddress = bus.resolve(ffi);
+                connection = ffi.connectionForAddress(busAddress);
+                busName = ffi.uniqueName(connection);
                 // GDBusInterfaceVTable: 3 function pointers + 8 reserved pointers (Linux x86_64).
                 vtable = ffi.arena.allocate(88, 8);
                 vtable.set(ADDRESS, 0, stub("method", null, 8));
@@ -106,63 +174,162 @@ final class AtSpiProvider {
                 vtable.set(ADDRESS, 16, stub("setProperty", JAVA_INT, 8));
                 for (String id : snapshot.get().nodes().keySet()) export(id);
                 export(CACHE_ID);
-                var embed = ffi.variant("((" + Ffm.quote(busName) + ", objectpath '" + ROOT_PATH + "'),)");
-                try {
-                    ffi.call("g_dbus_connection_call", null,
-                            new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS},
-                            connection, ffi.arena.allocateFrom("org.a11y.atspi.Registry"), ffi.arena.allocateFrom(ROOT_PATH),
-                            ffi.arena.allocateFrom(PREFIX + "Socket"), ffi.arena.allocateFrom("Embed"), embed,
-                            Ffm.NIL, 0, 5000, Ffm.NIL, stub("embedded", null, 3), Ffm.NIL);
-                } finally { ffi.release(embed); }
+                if (embed) embedWithRegistry();
+                state.compareAndSet(State.STARTING, State.RUNNING);
                 while (running) {
+                    if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
+                    drainCompletions();
                     reconcile();
-                    while ((int) ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0) != 0) {}
+                    while (ffi.iterate(context)) {}
                     Thread.sleep(5);
                 }
             } finally {
-              synchronized (this) {
-                running = false; registered = false;
-                for (var invocation : pending.values()) { error(invocation, new IllegalStateException("Provider stopped")); ffi.unref(invocation); }
-                pending.clear();
-                for (String id : List.copyOf(exports.keySet())) unexport(id);
-                if (connection.address() != 0) {
-                    try (Arena temporary = Arena.ofConfined()) {
-                        var error = temporary.allocate(ADDRESS);
-                        ffi.call("g_dbus_connection_close_sync", JAVA_INT, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS}, connection, Ffm.NIL, error);
-                        ffi.check(error);
-                    }
-                    catch (RuntimeException ignored) { /* Connection closure removes the application from the registry. */ }
-                    ffi.unref(connection); connection = Ffm.NIL;
-                }
-                ffi.call("g_main_context_pop_thread_default", null, new MemoryLayout[]{ADDRESS}, context);
-                ffi.call("g_main_context_unref", null, new MemoryLayout[]{ADDRESS}, context);
-              }
+                teardown(context, pushed);
             }
-        } catch (Exception error) { status.accept("Error AT-SPI2: " + error.getMessage()); error.printStackTrace(); }
+        } catch (Throwable error) {
+            failure = error;
+            report("Error AT-SPI2: " + code(error), true);
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+        } finally {
+            if (failure == null) failure = registrationFailure;
+            state.set(failure == null ? State.CLOSED : State.FAILED);
+            complete();
+        }
+    }
+    /**
+     * The Embed completion callback is one process-wide upcall stub in the global arena, so it never points into a
+     * provider arena that has been closed. {@code user_data} carries a provider id; a completion that arrives
+     * after teardown finds no provider and does nothing.
+     */
+    private static final AtomicLong NEXT_EMBED_ID = new AtomicLong(1);
+    private static final Map<Long, AtSpiProvider> EMBED_TARGETS = new ConcurrentHashMap<>();
+    private static final class EmbedStub {
+        static final MemorySegment POINTER = create();
+        private static MemorySegment create() {
+            try {
+                var handle = MethodHandles.lookup().findStatic(AtSpiProvider.class, "embeddedCallback",
+                        MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class));
+                return Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), Arena.global());
+            } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
+        }
+    }
+    static void embeddedCallback(MemorySegment source, MemorySegment result, MemorySegment data) {
+        try {
+            var provider = EMBED_TARGETS.get(data.address());
+            if (provider != null) provider.embedded(source, result);
+        } catch (Throwable ignored) { /* Nothing may escape an upcall. */ }
+    }
+    private void embedWithRegistry() {
+        var request = ffi.variant("((" + Ffm.quote(busName) + ", objectpath '" + ROOT_PATH + "'),)");
+        embedCancellable = ffi.newCancellable();
+        embedId = NEXT_EMBED_ID.getAndIncrement();
+        EMBED_TARGETS.put(embedId, this);
+        embedOutstanding = true;
+        try {
+            ffi.callAsync(connection, "org.a11y.atspi.Registry", ROOT_PATH, PREFIX + "Socket", "Embed", request,
+                    5000, embedCancellable, EmbedStub.POINTER, MemorySegment.ofAddress(embedId));
+        } catch (Throwable failure) { embedOutstanding = false; throw failure; }
+        finally { ffi.release(request); }
+    }
+    /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
+    private void complete() {
+        synchronized (publication) { disposed = true; snapshot.set(Snapshot.EMPTY); desired.set(Snapshot.EMPTY); }
+        terminated.complete(null);
+    }
+    private boolean busClosed() {
+        return ffi.isClosed(connection);
+    }
+    /**
+     * The Embed completion is delivered through the main context, so cancel it and iterate the context briefly so the
+     * callback runs before the context is released. If GLib never delivers it, teardown continues: the callback is
+     * a global stub that ignores completions for unknown providers.
+     */
+    private void drainEmbed(MemorySegment context) {
+        if (!embedOutstanding) return;
+        guarded(() -> ffi.cancel(embedCancellable));
+        var deadline = System.nanoTime() + EMBED_DRAIN_NANOS;
+        while (embedOutstanding && System.nanoTime() < deadline) {
+            guarded(() -> ffi.iterate(context));
+            if (embedOutstanding) LockSupport.parkNanos(5_000_000L);
+        }
+    }
+    /** Replies to FX results already posted. Provider thread only: it owns every invocation reference. */
+    private void drainCompletions() {
+        for (var completion = completions.poll(); completion != null; completion = completions.poll()) {
+            var invocation = pending.remove(completion.address());
+            if (invocation == null) continue; // Shutdown already replied and released it.
+            try {
+                if (completion.failure() == null) reply(invocation, "(" + completion.accepted() + ",)");
+                else error(invocation, completion.failure());
+            } catch (Throwable failure) { fail(invocation, failure); }
+            finally { guarded(() -> releaseInvocation(invocation)); }
+        }
+    }
+    /** Runs on the provider thread; every step is independent so one failure cannot skip the rest. */
+    private void teardown(MemorySegment context, boolean pushed) {
+        running = false; registered = false; // from here on mutate() rejects new work
+        drainEmbed(context);
+        EMBED_TARGETS.remove(embedId);
+        if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
+        guarded(this::drainCompletions);
+        for (var invocation : List.copyOf(pending.values())) {
+            guarded(() -> error(invocation, new Rejected("Provider stopped")));
+            guarded(() -> releaseInvocation(invocation));
+        }
+        pending.clear();
+        for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
+        if (connection.address() != 0) {
+            var closing = connection;
+            guarded(() -> {
+                try { ffi.closeConnection(closing); }
+                catch (RuntimeException ignored) { /* Connection closure removes the application from the registry. */ }
+            });
+            guarded(() -> ffi.unref(closing));
+            connection = Ffm.NIL;
+        }
+        if (pushed) guarded(() -> ffi.popThreadDefault(context));
+        if (context.address() != 0) guarded(() -> ffi.mainContextUnref(context));
+    }
+    private void releaseInvocation(MemorySegment invocation) {
+        pendingReleased.incrementAndGet();
+        ffi.unref(invocation);
+    }
+    private static final long EMBED_DRAIN_NANOS = 1_000_000_000L;
+    /**
+     * Hands a status message to the shared dispatcher and returns immediately, so a slow or blocked consumer can
+     * never hold the provider thread or delay teardown and {@code closed()}.
+     */
+    private void report(String message, boolean terminal) { StatusDispatcher.shared().post(status, message, terminal); }
+    private static void guarded(Runnable step) {
+        try { step.run(); } catch (Throwable ignored) { /* Cleanup continues; details may contain peer data. */ }
+    }
+    /** A stable, value-free diagnostic code for logs and status. */
+    static String code(Throwable failure) { return failure.getClass().getSimpleName(); }
+    private String sessionAccessibilityAddress(Ffm nativeApi) {
+        var session = nativeApi.sessionBus();
+        try {
+            var reply = sync(nativeApi, session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", "()");
+            try { return nativeApi.text(reply, 0); } finally { nativeApi.release(reply); }
+        } finally { nativeApi.unref(session); }
     }
     private void export(String id) {
-        var info = ffi.checked("g_dbus_node_info_new_for_xml", new MemoryLayout[]{ADDRESS}, ffi.arena.allocateFrom(xml(id)));
+        var info = ffi.nodeInfoFromXml(xml(id));
+        exportsAcquired.incrementAndGet();
         var registrations = new ArrayList<Integer>();
         exports.put(id,new Export(registrations,info));
         var vector = info.reinterpret(40).get(ADDRESS,16).reinterpret(64);
         for (int i=0;i<8;i++) {
             var iface = vector.getAtIndex(ADDRESS,i); if (iface.address()==0) break;
-            try (Arena temporary = Arena.ofConfined()) {
-                var error = temporary.allocate(ADDRESS);
-                int registration = (int) ffi.call("g_dbus_connection_register_object", JAVA_INT,
-                        new MemoryLayout[]{ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS},connection,
-                        temporary.allocateFrom(path(id)),iface,vtable,Ffm.NIL,Ffm.NIL,error);
-                ffi.check(error); if (registration==0) throw new IllegalStateException("Registration failed: " + id);
-                registrations.add(registration);
-            }
+            registrations.add(ffi.registerObject(connection, path(id), iface, vtable));
         }
     }
     private void unexport(String id) {
         Export exported = exports.remove(id); if (exported==null) return;
-        for (int registration : exported.registrations()) ffi.call("g_dbus_connection_unregister_object",JAVA_INT,new MemoryLayout[]{ADDRESS,JAVA_INT},connection,registration);
-        ffi.call("g_dbus_node_info_unref",null,new MemoryLayout[]{ADDRESS},exported.info());
+        try {
+            for (int registration : exported.registrations()) ffi.unregisterObject(connection, registration);
+        } finally { exportsReleased.incrementAndGet(); ffi.nodeInfoUnref(exported.info()); }
     }
-    private synchronized void reconcile() {
+    private void reconcile() {
         var before=snapshot.get();
         var after=desired.get();
         if (before.equals(after)) return;
@@ -192,27 +359,28 @@ final class AtSpiProvider {
     private void childEvent(String id,String type,int index,String child) {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
     }
-    private void embedded(MemorySegment source, MemorySegment result, MemorySegment data) {
+    private void embedded(MemorySegment source, MemorySegment result) {
+        embedOutstanding = false;
         try {
-            var reply = ffi.checked("g_dbus_connection_call_finish", new MemoryLayout[]{ADDRESS, ADDRESS}, source, result);
+            var reply = ffi.finishCall(source, result);
             try {
                 var ref = ffi.child(reply, 0);
                 try { parent = "(" + Ffm.quote(ffi.text(ref, 0)) + ", objectpath " + Ffm.quote(ffi.text(ref, 1)) + ")"; }
                 finally { ffi.release(ref); }
             } finally { ffi.release(reply); }
+            if (!running) return; // completed while shutting down
             registered = true;
-            status.accept("AT-SPI2 listo: controles publicados sin sudo ni capturas.");
+            report("AT-SPI2 listo: controles publicados sin sudo ni capturas.", false);
             System.err.println("FX AT-SPI Lab ready: " + busName + " " + ROOT_PATH);
-        } catch (RuntimeException error) { running = false; status.accept("Error al registrar AT-SPI2: " + error.getMessage()); }
-    }
-    private MemorySegment sync(MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
-        try (Arena temporary = Arena.ofConfined()) {
-            var args = ffi.variant(parameters);
-            try { return ffi.checked("g_dbus_connection_call_sync", new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS},
-                    bus, temporary.allocateFrom(destination), temporary.allocateFrom(path), temporary.allocateFrom(iface),
-                    temporary.allocateFrom(method), args, Ffm.NIL, 0, 5000, Ffm.NIL); }
-            finally { ffi.release(args); }
+        } catch (Throwable error) {
+            if (!running) return; // a cancelled or failed completion during shutdown is expected
+            registrationFailure = error; running = false; report("Error al registrar AT-SPI2: " + code(error), true);
         }
+    }
+    private static MemorySegment sync(Ffm nativeApi, MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
+        var args = nativeApi.variant(parameters);
+        try { return nativeApi.callSync(bus, destination, path, iface, method, args, 5000); }
+        finally { nativeApi.release(args); }
     }
     private String reference(String id) { return AtSpiObjects.reference(busName, id); }
     private List<String> children(String id) { return snapshot.get().get(id).children(); }
@@ -241,14 +409,14 @@ final class AtSpiProvider {
                 default -> throw new IllegalArgumentException("Unknown property: " + key);
             };
             return ffi.variant(value);
-        } catch (RuntimeException failure) { System.err.println("AT-SPI property: " + failure); return Ffm.NIL; }
+        } catch (Throwable failure) { System.err.println("AT-SPI property failed: " + code(failure)); return Ffm.NIL; }
     }
     private int setProperty(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
                             MemorySegment property, MemorySegment value, MemorySegment error, MemorySegment data) {
         try {
             if (!id(objectPath).equals(Snapshot.ROOT_ID) || !Ffm.string(iface).equals(PREFIX + "Application") || !Ffm.string(property).equals("Id")) return 0;
-            applicationId = (int) ffi.call("g_variant_get_int32", JAVA_INT, new MemoryLayout[]{ADDRESS}, value); return 1;
-        } catch (RuntimeException failure) { return 0; }
+            applicationId = ffi.int32(value); return 1;
+        } catch (Throwable failure) { return 0; }
     }
     private void method(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
                         MemorySegment method, MemorySegment args, MemorySegment invocation, MemorySegment data) {
@@ -258,13 +426,13 @@ final class AtSpiProvider {
             var api = Ffm.string(iface);
             var item = snapshot.get().get(id);
             if (api.endsWith("Action") && name.equals("DoAction")) {
-                if (ffi.integer(args, 0) != 0) throw new IllegalArgumentException("Action index out of range");
+                if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
                 mutate(invocation, () -> actions.press(id));
                 return;
             }
             if (api.endsWith("EditableText") && name.equals("SetTextContents")) {
                 String value = ffi.text(args, 0);
-                if (value.length() > 32768) throw new IllegalArgumentException("Text exceeds experimental limit");
+                if (value.length() > 32768) throw new Rejected("Text exceeds experimental limit");
                 mutate(invocation, () -> actions.setText(id, value));
                 return;
             }
@@ -283,56 +451,60 @@ final class AtSpiProvider {
                 case "GetLocale" -> "('es',)";
                 case "GetApplicationBusAddress" -> "('',)"; // Shared accessibility bus, not a private peer bus.
                 case "GetName", "GetLocalizedName", "GetDescription", "GetKeyBinding" -> {
-                    if (ffi.integer(args, 0) != 0) throw new IllegalArgumentException("Action index out of range");
+                    if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
                     yield "(" + Ffm.quote(name.equals("GetKeyBinding") ? "" : "click") + ",)";
                 }
                 case "GetActions" -> "([('click', 'Activate button', '')],)";
                 case "GetText" -> "(" + Ffm.quote(textRange(item.text(), ffi.integer(args, 0), ffi.integer(args, 1))) + ",)";
-                default -> throw new UnsupportedOperationException(api + "." + name + " is outside this experiment");
+                default -> throw new Rejected("Operation is outside this experiment");
             };
             reply(invocation, result);
-        } catch (RuntimeException failure) { error(invocation, failure); }
+        } catch (Throwable failure) { fail(invocation, failure); }
     }
     private interface Mutation { boolean apply(); }
-    private synchronized void mutate(MemorySegment invocation, Mutation operation) {
-        if (!running) { error(invocation, new IllegalStateException("Provider stopped")); return; }
-        ffi.call("g_object_ref", ADDRESS, new MemoryLayout[]{ADDRESS}, invocation);
-        pending.put(invocation.address(), invocation);
-        Platform.runLater(() -> {
-            synchronized (this) {
-                if (pending.remove(invocation.address()) == null) return; // Shutdown already replied and freed it.
-                try {
-                    if (!running) throw new IllegalStateException("Provider stopped");
-                    refresh(); boolean accepted = operation.apply(); refresh(); reply(invocation, "(" + accepted + ",)");
-                } catch (RuntimeException failure) { error(invocation, failure); }
-                finally { ffi.unref(invocation); }
-            }
-        });
+    private void mutate(MemorySegment invocation, Mutation operation) {
+        if (!running) { fail(invocation, new Rejected("Provider stopped")); return; }
+        ffi.ref(invocation);
+        pendingAcquired.incrementAndGet();
+        var address = invocation.address();
+        pending.put(address, invocation);
+        try {
+            fxExecutor.execute(() -> completions.add(runOnFx(address, operation)));
+        } catch (Throwable schedulingFailure) {
+            // The task never ran (for example no FX toolkit): this call still owns the reference.
+            if (pending.remove(address) != null) { fail(invocation, schedulingFailure); guarded(() -> releaseInvocation(invocation)); }
+        }
+    }
+    /** Runs on the FX thread. Touches no native object: it only produces a result for the provider thread to deliver. */
+    private Completion runOnFx(long address, Mutation operation) {
+        try {
+            if (!running) return new Completion(address, false, new Rejected("Provider stopped"));
+            refresh(); var accepted = operation.apply(); refresh();
+            return new Completion(address, accepted, null);
+        } catch (Throwable failure) { return new Completion(address, false, failure); }
     }
     private void reply(MemorySegment invocation, String value) {
         var tuple = ffi.variant(value);
-        try { ffi.call("g_dbus_method_invocation_return_value", null, new MemoryLayout[]{ADDRESS, ADDRESS}, invocation, tuple); }
+        try { ffi.returnValue(invocation, tuple); }
         finally { ffi.release(tuple); }
     }
-    private void error(MemorySegment invocation, RuntimeException failure) {
-        try (Arena temporary = Arena.ofConfined()) {
-            ffi.call("g_dbus_method_invocation_return_dbus_error", null, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS}, invocation,
-                    temporary.allocateFrom("org.freedesktop.DBus.Error.InvalidArgs"), temporary.allocateFrom(failure.getMessage() == null ? failure.toString() : failure.getMessage()));
-        }
+    /** Replies once with a sanitized error; never lets a failure escape an upcall or the FX task. */
+    private void fail(MemorySegment invocation, Throwable failure) {
+        try { error(invocation, failure); } catch (Throwable replyFailure) { System.err.println("AT-SPI reply failed: " + code(replyFailure)); }
+    }
+    private void error(MemorySegment invocation, Throwable failure) {
+        var message = failure instanceof Rejected ? failure.getMessage() : "Operation failed";
+        ffi.returnError(invocation, "org.freedesktop.DBus.Error.InvalidArgs", message);
     }
     private void stateEvent(String id, String state, boolean value) { event(id, "StateChanged", "(" + Ffm.quote(state) + ", " + (value ? 1 : 0) + ", 0, <0>, @a{sv} {})"); }
     private void event(String id, String member, String value) { signal(id,PREFIX+"Event.Object",member,value); }
-    private synchronized void signal(String id, String iface, String member, String value) {
+    private void signal(String id, String iface, String member, String value) {
         if (!registered || !running) return;
-        try (Arena temporary = Arena.ofConfined()) {
+        try {
             var parameters = ffi.variant(value);
-            try {
-                var error = temporary.allocate(ADDRESS);
-                ffi.call("g_dbus_connection_emit_signal", JAVA_INT, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS}, connection,
-                        Ffm.NIL, temporary.allocateFrom(path(id)), temporary.allocateFrom(iface), temporary.allocateFrom(member), parameters, error);
-                ffi.check(error);
-            } finally { ffi.release(parameters); }
-        } catch (RuntimeException error) { System.err.println("AT-SPI event: " + error); }
+            try { ffi.emitSignal(connection, path(id), iface, member, parameters); }
+            finally { ffi.release(parameters); }
+        } catch (Throwable error) { System.err.println("AT-SPI event failed: " + code(error)); }
     }
     private String xml(String id) { return id.equals(CACHE_ID) ? cacheXml() : AtSpiObjects.xml(snapshot.get().get(id)); }
 }
