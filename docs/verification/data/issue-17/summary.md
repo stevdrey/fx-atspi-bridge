@@ -4,28 +4,30 @@ Source: raw artifacts of the collection described in `environment.txt` (not comm
 
 ## Phase deltas (MB, after − before)
 
-| Cell | Runs | Phase | Point | Heap | RSS | Anonymous | Pss_File |
-| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |
-| install n=1000 bridge on arena2 | 3 | install | installChurnCheckpoint | – | 147.4 (146.3–148.4) | 147.3 (146.3–148.4) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on arena2 | 3 | install | installChurnAfterGc | -0.1 (-0.1–-0.0) | 148.9 (147.5–149.7) | 148.9 (147.5–149.6) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on arena2 | 3 | install | installChurnAfterDrain | – | 148.9 (147.5–149.7) | 148.9 (147.5–149.6) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on arena2 | 3 | install | installChurnAfterTrim | – | 109.8 (105.0–111.6) | 109.8 (105.0–111.6) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on nmt | 3 | install | installChurnCheckpoint | – | 156.2 (155.7–157.0) | 156.2 (155.7–157.0) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on nmt | 3 | install | installChurnAfterGc | -0.0 (-0.2–0.1) | 158.0 (157.2–158.6) | 158.0 (157.2–158.6) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on nmt | 3 | install | installChurnAfterDrain | – | 158.6 (157.3–159.1) | 158.6 (157.3–159.1) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on nmt | 3 | install | installChurnAfterTrim | – | 101.2 (98.8–104.1) | 101.2 (98.8–104.1) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on plain | 3 | install | installChurnCheckpoint | – | 151.4 (148.9–157.8) | 151.4 (148.9–157.8) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on plain | 3 | install | installChurnAfterGc | -0.1 (-0.2–0.0) | 153.2 (150.6–159.2) | 153.2 (150.6–159.2) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on plain | 3 | install | installChurnAfterDrain | – | 153.7 (151.2–159.5) | 153.7 (151.2–159.5) | 0.0 (0.0–0.0) |
-| install n=1000 bridge on plain | 3 | install | installChurnAfterTrim | – | 94.5 (92.6–106.0) | 94.5 (92.6–106.0) | 0.0 (0.0–0.0) |
-| structural n=10000 bridge off nmt | 3 | structural | structuralCheckpoint | – | 401.5 (348.2–439.3) | 397.9 (344.7–435.9) | 0.5 (-6.2–0.5) |
-| structural n=10000 bridge off nmt | 3 | structural | structuralAfterGc | 1.1 (-0.8–1.3) | 404.7 (348.7–441.5) | 401.1 (345.2–438.1) | 0.5 (-6.2–0.5) |
-| structural n=10000 bridge off plain | 3 | structural | structuralCheckpoint | – | 402.9 (349.4–448.1) | 399.4 (346.0–444.5) | 0.5 (-8.7–6.1) |
-| structural n=10000 bridge off plain | 3 | structural | structuralAfterGc | 0.1 (0.1–1.5) | 404.7 (350.2–450.5) | 401.2 (346.9–447.0) | 0.5 (-8.7–6.1) |
-| structural n=10000 bridge on nmt | 3 | structural | structuralCheckpoint | – | 310.9 (234.4–345.4) | 307.4 (231.0–341.8) | 0.5 (0.4–0.5) |
-| structural n=10000 bridge on nmt | 3 | structural | structuralAfterGc | 3.9 (3.6–4.0) | 316.2 (236.8–348.5) | 312.7 (233.4–344.9) | 0.5 (0.4–0.5) |
-| structural n=10000 bridge on plain | 3 | structural | structuralCheckpoint | – | 335.1 (213.5–389.5) | 331.5 (210.1–385.9) | 0.5 (0.4–0.5) |
-| structural n=10000 bridge on plain | 3 | structural | structuralAfterGc | 3.8 (2.8–3.9) | 337.8 (217.5–392.8) | 334.1 (214.1–389.2) | 0.5 (0.4–0.5) |
+Snapshot cost: RSS added by the diagnostic snapshots taken inside the interval (the phase's own "before" snapshot and any mid-phase snapshot), recorded as `<checkpoint>SnapshotRssKb`; the RSS and Anonymous deltas include it. – = not recorded by this collection.
+
+| Cell | Runs | Phase | Point | Heap | RSS | Anonymous | Pss_File | Snapshot cost |
+| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| install n=1000 bridge on arena2 | 3 | install | installChurnCheckpoint | – | 147.4 (146.3–148.4) | 147.3 (146.3–148.4) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on arena2 | 3 | install | installChurnAfterGc | -0.1 (-0.1–-0.0) | 148.9 (147.5–149.7) | 148.9 (147.5–149.6) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on arena2 | 3 | install | installChurnAfterDrain | – | 148.9 (147.5–149.7) | 148.9 (147.5–149.6) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on arena2 | 3 | install | installChurnAfterTrim | – | 109.8 (105.0–111.6) | 109.8 (105.0–111.6) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on nmt | 3 | install | installChurnCheckpoint | – | 156.2 (155.7–157.0) | 156.2 (155.7–157.0) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on nmt | 3 | install | installChurnAfterGc | -0.0 (-0.2–0.1) | 158.0 (157.2–158.6) | 158.0 (157.2–158.6) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on nmt | 3 | install | installChurnAfterDrain | – | 158.6 (157.3–159.1) | 158.6 (157.3–159.1) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on nmt | 3 | install | installChurnAfterTrim | – | 101.2 (98.8–104.1) | 101.2 (98.8–104.1) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on plain | 3 | install | installChurnCheckpoint | – | 151.4 (148.9–157.8) | 151.4 (148.9–157.8) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on plain | 3 | install | installChurnAfterGc | -0.1 (-0.2–0.0) | 153.2 (150.6–159.2) | 153.2 (150.6–159.2) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on plain | 3 | install | installChurnAfterDrain | – | 153.7 (151.2–159.5) | 153.7 (151.2–159.5) | 0.0 (0.0–0.0) | – |
+| install n=1000 bridge on plain | 3 | install | installChurnAfterTrim | – | 94.5 (92.6–106.0) | 94.5 (92.6–106.0) | 0.0 (0.0–0.0) | – |
+| structural n=10000 bridge off nmt | 3 | structural | structuralCheckpoint | – | 401.5 (348.2–439.3) | 397.9 (344.7–435.9) | 0.5 (-6.2–0.5) | – |
+| structural n=10000 bridge off nmt | 3 | structural | structuralAfterGc | 1.1 (-0.8–1.3) | 404.7 (348.7–441.5) | 401.1 (345.2–438.1) | 0.5 (-6.2–0.5) | – |
+| structural n=10000 bridge off plain | 3 | structural | structuralCheckpoint | – | 402.9 (349.4–448.1) | 399.4 (346.0–444.5) | 0.5 (-8.7–6.1) | – |
+| structural n=10000 bridge off plain | 3 | structural | structuralAfterGc | 0.1 (0.1–1.5) | 404.7 (350.2–450.5) | 401.2 (346.9–447.0) | 0.5 (-8.7–6.1) | – |
+| structural n=10000 bridge on nmt | 3 | structural | structuralCheckpoint | – | 310.9 (234.4–345.4) | 307.4 (231.0–341.8) | 0.5 (0.4–0.5) | – |
+| structural n=10000 bridge on nmt | 3 | structural | structuralAfterGc | 3.9 (3.6–4.0) | 316.2 (236.8–348.5) | 312.7 (233.4–344.9) | 0.5 (0.4–0.5) | – |
+| structural n=10000 bridge on plain | 3 | structural | structuralCheckpoint | – | 335.1 (213.5–389.5) | 331.5 (210.1–385.9) | 0.5 (0.4–0.5) | – |
+| structural n=10000 bridge on plain | 3 | structural | structuralAfterGc | 3.8 (2.8–3.9) | 337.8 (217.5–392.8) | 334.1 (214.1–389.2) | 0.5 (0.4–0.5) | – |
 
 ## Install churn timing
 
@@ -179,31 +181,31 @@ structural n=10000 bridge on plain:
 
 ## pmap: anonymous versus file-backed RSS (MB)
 
-JVM low range: anonymous mappings below 0x100000000000 (Java heap and class space with compressed oops); native range: everything above (malloc arenas, thread stacks, other native mappings).
+Java heap: anonymous mappings inside the Java heap range. "recorded heap range" uses the reserved range the bench read from GC.heap_info; "legacy heuristic" (collections without it) counts every anonymous mapping below 0x100000000000, which with compressed oops is the heap plus class space. Outside Java heap: malloc arenas, thread stacks, class space and other native mappings.
 
-| Cell | Checkpoint | Anonymous RSS | JVM low range | Native range | File RSS | Anonymous mappings |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| install n=1000 bridge on arena2 | afterWarmupGc | 193.0 (190.1–199.1) | 59.8 (59.8–60.1) | 133.2 (130.0–139.3) | 111.0 (111.0–111.1) | 182 (181–183) |
-| install n=1000 bridge on arena2 | afterIdleGc | 197.2 (190.9–199.5) | 60.3 (60.0–60.6) | 136.8 (130.3–139.5) | 111.0 (111.0–111.1) | 184 (183–185) |
-| install n=1000 bridge on arena2 | installChurnBefore | 197.2 (190.9–199.5) | 60.3 (60.0–60.6) | 136.9 (130.3–139.5) | 111.0 (111.0–111.1) | 184 (183–185) |
-| install n=1000 bridge on arena2 | installChurnCheckpoint | 344.6 (339.3–345.8) | 194.9 (193.7–195.2) | 149.7 (145.6–150.6) | 111.0 (111.0–111.1) | 183 (182–184) |
-| install n=1000 bridge on arena2 | installChurnAfterGc | 346.1 (340.5–347.1) | 195.0 (193.6–195.0) | 151.1 (146.9–152.0) | 111.0 (111.0–111.1) | 197 (196–198) |
-| install n=1000 bridge on arena2 | installChurnAfterDrain | 346.1 (340.5–347.1) | 195.0 (193.6–195.0) | 151.1 (146.9–152.0) | 111.0 (111.0–111.1) | 197 (196–198) |
-| install n=1000 bridge on arena2 | installChurnAfterTrim | 304.6 (302.5–307.0) | 195.0 (193.6–195.0) | 109.5 (108.9–112.0) | 111.0 (111.0–111.1) | 197 (196–198) |
-| install n=1000 bridge on plain | afterWarmupGc | 229.9 (217.2–271.7) | 60.1 (60.0–60.5) | 169.4 (157.1–211.7) | 111.2 (111.2–111.2) | 304 (304–312) |
-| install n=1000 bridge on plain | afterIdleGc | 230.7 (230.2–240.5) | 60.6 (60.5–60.7) | 170.1 (169.5–179.8) | 111.2 (111.2–111.2) | 306 (306–307) |
-| install n=1000 bridge on plain | installChurnBefore | 230.8 (230.7–240.6) | 60.6 (60.5–60.7) | 170.3 (170.0–179.9) | 111.2 (111.2–111.2) | 306 (306–307) |
-| install n=1000 bridge on plain | installChurnCheckpoint | 381.7 (379.5–398.3) | 193.6 (193.5–195.3) | 188.2 (186.0–203.0) | 111.2 (111.2–111.2) | 305 (305–306) |
-| install n=1000 bridge on plain | installChurnAfterGc | 383.9 (381.9–400.0) | 193.6 (193.6–195.1) | 190.3 (188.2–204.9) | 111.2 (111.2–111.2) | 320 (319–323) |
-| install n=1000 bridge on plain | installChurnAfterDrain | 383.9 (381.9–400.0) | 193.6 (193.6–195.1) | 190.3 (188.2–204.9) | 111.2 (111.2–111.2) | 320 (319–323) |
-| install n=1000 bridge on plain | installChurnAfterTrim | 333.4 (325.0–337.0) | 193.6 (193.6–195.1) | 138.3 (131.4–143.4) | 111.2 (111.2–111.2) | 320 (319–323) |
-| structural n=10000 bridge off plain | afterWarmupGc | 598.3 (587.0–620.5) | 357.8 (339.9–389.8) | 240.5 (230.7–247.1) | 111.0 (110.7–111.0) | 302 (296–308) |
-| structural n=10000 bridge off plain | afterIdleGc | 686.1 (672.6–702.3) | 440.7 (438.0–451.4) | 248.1 (231.9–250.9) | 111.0 (110.7–111.0) | 302 (296–308) |
-| structural n=10000 bridge off plain | structuralBefore | 686.2 (672.9–702.9) | 440.7 (438.0–451.4) | 248.2 (232.2–251.5) | 111.0 (110.7–111.0) | 302 (296–308) |
-| structural n=10000 bridge off plain | structuralCheckpoint | 1101.7 (1018.7–1130.6) | 765.2 (764.2–766.1) | 336.5 (252.6–366.4) | 114.5 (114.3–114.6) | 322 (301–328) |
-| structural n=10000 bridge off plain | structuralAfterGc | 1103.7 (1019.7–1133.3) | 766.6 (766.3–766.9) | 336.8 (253.1–367.0) | 114.5 (114.3–114.6) | 322 (301–328) |
-| structural n=10000 bridge on plain | afterWarmupGc | 933.6 (927.6–985.6) | 599.0 (571.6–599.5) | 356.0 (334.1–386.5) | 111.0 (110.7–111.2) | 318 (315–320) |
-| structural n=10000 bridge on plain | afterIdleGc | 1011.0 (931.5–1056.0) | 667.5 (573.5–669.9) | 358.0 (341.1–388.5) | 111.0 (110.7–111.2) | 320 (317–322) |
-| structural n=10000 bridge on plain | structuralBefore | 1011.4 (932.8–1056.4) | 667.5 (573.5–669.9) | 359.3 (341.5–389.0) | 111.0 (110.7–111.2) | 320 (317–322) |
-| structural n=10000 bridge on plain | structuralCheckpoint | 1318.1 (1221.2–1387.6) | 754.0 (747.4–761.8) | 564.1 (473.7–625.7) | 114.6 (114.3–114.7) | 335 (328–335) |
-| structural n=10000 bridge on plain | structuralAfterGc | 1321.5 (1226.0–1390.4) | 756.9 (751.1–764.0) | 564.6 (474.9–626.4) | 114.6 (114.3–114.7) | 335 (328–335) |
+| Cell | Checkpoint | Anonymous RSS | Java heap | Outside Java heap | File RSS | Anonymous mappings | Split |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| install n=1000 bridge on arena2 | afterWarmupGc | 193.0 (190.1–199.1) | 59.8 (59.8–60.1) | 133.2 (130.0–139.3) | 111.0 (111.0–111.1) | 182 (181–183) | legacy heuristic |
+| install n=1000 bridge on arena2 | afterIdleGc | 197.2 (190.9–199.5) | 60.3 (60.0–60.6) | 136.8 (130.3–139.5) | 111.0 (111.0–111.1) | 184 (183–185) | legacy heuristic |
+| install n=1000 bridge on arena2 | installChurnBefore | 197.2 (190.9–199.5) | 60.3 (60.0–60.6) | 136.9 (130.3–139.5) | 111.0 (111.0–111.1) | 184 (183–185) | legacy heuristic |
+| install n=1000 bridge on arena2 | installChurnCheckpoint | 344.6 (339.3–345.8) | 194.9 (193.7–195.2) | 149.7 (145.6–150.6) | 111.0 (111.0–111.1) | 183 (182–184) | legacy heuristic |
+| install n=1000 bridge on arena2 | installChurnAfterGc | 346.1 (340.5–347.1) | 195.0 (193.6–195.0) | 151.1 (146.9–152.0) | 111.0 (111.0–111.1) | 197 (196–198) | legacy heuristic |
+| install n=1000 bridge on arena2 | installChurnAfterDrain | 346.1 (340.5–347.1) | 195.0 (193.6–195.0) | 151.1 (146.9–152.0) | 111.0 (111.0–111.1) | 197 (196–198) | legacy heuristic |
+| install n=1000 bridge on arena2 | installChurnAfterTrim | 304.6 (302.5–307.0) | 195.0 (193.6–195.0) | 109.5 (108.9–112.0) | 111.0 (111.0–111.1) | 197 (196–198) | legacy heuristic |
+| install n=1000 bridge on plain | afterWarmupGc | 229.9 (217.2–271.7) | 60.1 (60.0–60.5) | 169.4 (157.1–211.7) | 111.2 (111.2–111.2) | 304 (304–312) | legacy heuristic |
+| install n=1000 bridge on plain | afterIdleGc | 230.7 (230.2–240.5) | 60.6 (60.5–60.7) | 170.1 (169.5–179.8) | 111.2 (111.2–111.2) | 306 (306–307) | legacy heuristic |
+| install n=1000 bridge on plain | installChurnBefore | 230.8 (230.7–240.6) | 60.6 (60.5–60.7) | 170.3 (170.0–179.9) | 111.2 (111.2–111.2) | 306 (306–307) | legacy heuristic |
+| install n=1000 bridge on plain | installChurnCheckpoint | 381.7 (379.5–398.3) | 193.6 (193.5–195.3) | 188.2 (186.0–203.0) | 111.2 (111.2–111.2) | 305 (305–306) | legacy heuristic |
+| install n=1000 bridge on plain | installChurnAfterGc | 383.9 (381.9–400.0) | 193.6 (193.6–195.1) | 190.3 (188.2–204.9) | 111.2 (111.2–111.2) | 320 (319–323) | legacy heuristic |
+| install n=1000 bridge on plain | installChurnAfterDrain | 383.9 (381.9–400.0) | 193.6 (193.6–195.1) | 190.3 (188.2–204.9) | 111.2 (111.2–111.2) | 320 (319–323) | legacy heuristic |
+| install n=1000 bridge on plain | installChurnAfterTrim | 333.4 (325.0–337.0) | 193.6 (193.6–195.1) | 138.3 (131.4–143.4) | 111.2 (111.2–111.2) | 320 (319–323) | legacy heuristic |
+| structural n=10000 bridge off plain | afterWarmupGc | 598.3 (587.0–620.5) | 357.8 (339.9–389.8) | 240.5 (230.7–247.1) | 111.0 (110.7–111.0) | 302 (296–308) | legacy heuristic |
+| structural n=10000 bridge off plain | afterIdleGc | 686.1 (672.6–702.3) | 440.7 (438.0–451.4) | 248.1 (231.9–250.9) | 111.0 (110.7–111.0) | 302 (296–308) | legacy heuristic |
+| structural n=10000 bridge off plain | structuralBefore | 686.2 (672.9–702.9) | 440.7 (438.0–451.4) | 248.2 (232.2–251.5) | 111.0 (110.7–111.0) | 302 (296–308) | legacy heuristic |
+| structural n=10000 bridge off plain | structuralCheckpoint | 1101.7 (1018.7–1130.6) | 765.2 (764.2–766.1) | 336.5 (252.6–366.4) | 114.5 (114.3–114.6) | 322 (301–328) | legacy heuristic |
+| structural n=10000 bridge off plain | structuralAfterGc | 1103.7 (1019.7–1133.3) | 766.6 (766.3–766.9) | 336.8 (253.1–367.0) | 114.5 (114.3–114.6) | 322 (301–328) | legacy heuristic |
+| structural n=10000 bridge on plain | afterWarmupGc | 933.6 (927.6–985.6) | 599.0 (571.6–599.5) | 356.0 (334.1–386.5) | 111.0 (110.7–111.2) | 318 (315–320) | legacy heuristic |
+| structural n=10000 bridge on plain | afterIdleGc | 1011.0 (931.5–1056.0) | 667.5 (573.5–669.9) | 358.0 (341.1–388.5) | 111.0 (110.7–111.2) | 320 (317–322) | legacy heuristic |
+| structural n=10000 bridge on plain | structuralBefore | 1011.4 (932.8–1056.4) | 667.5 (573.5–669.9) | 359.3 (341.5–389.0) | 111.0 (110.7–111.2) | 320 (317–322) | legacy heuristic |
+| structural n=10000 bridge on plain | structuralCheckpoint | 1318.1 (1221.2–1387.6) | 754.0 (747.4–761.8) | 564.1 (473.7–625.7) | 114.6 (114.3–114.7) | 335 (328–335) | legacy heuristic |
+| structural n=10000 bridge on plain | structuralAfterGc | 1321.5 (1226.0–1390.4) | 756.9 (751.1–764.0) | 564.6 (474.9–626.4) | 114.6 (114.3–114.7) | 335 (328–335) | legacy heuristic |
