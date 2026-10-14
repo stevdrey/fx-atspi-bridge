@@ -2,6 +2,7 @@
 """Summarise an Issue 17 memory collection (run-memory-diag.sh) into Markdown tables.
 
 Usage: memory_diag.py <data-dir>
+The directory must hold exactly the runs planned by the plan= lines of its environment.txt.
 Every value is reported as median (min-max) over repetitions. Cells are grouped by <kind>-n<nodes>-<bridge>-<variant>.
 Raw artifacts (<cell>/<checkpoint>.<kind>.txt) are read when present; the run JSON alone is enough for the RSS split.
 Histogram classes are grouped by module: the bridge module, JavaFX modules, everything else.
@@ -242,14 +243,40 @@ def all_points(runs, histogram=False):
     return [c for c in CHECKPOINT_ORDER if c in points and (not histogram or c in HISTOGRAM_CHECKPOINTS)]
 
 
+def planned_runs(environment):
+    """Run names the collection planned: plan=kind:nodes:reps:bridges:variants:structural:install lines written by
+    run-memory-diag.sh into environment.txt."""
+    names = set()
+    for line in environment.splitlines():
+        if not line.startswith("plan="):
+            continue
+        kind, nodes, reps, bridges, variants, _, _ = line.split("=", 1)[1].split(":")
+        for rep in range(1, int(reps) + 1):
+            for variant in variants.split(","):
+                for bridge in bridges.split(","):
+                    names.add(f"{kind}-n{nodes}-{bridge}-{variant}-r{rep}")
+    return names
+
+
 def load(data):
+    environment = data / "environment.txt"
+    if not environment.is_file():
+        sys.exit(f"{environment} is missing; refusing to summarise a collection whose plan is unknown")
+    planned = planned_runs(environment.read_text())
+    if not planned:
+        sys.exit(f"{environment} has no plan= lines; refusing to summarise a collection whose plan is unknown")
+    found = {path.stem for path in data.glob("*.json")}
+    missing, unexpected = sorted(planned - found), sorted(found - planned)
+    if missing or unexpected:
+        problems = [f"{name}.json is missing" for name in missing] + [f"{name}.json is not in the plan" for name in unexpected]
+        shown = problems[:MAX_REPORTED_PROBLEMS]
+        more = len(problems) - len(shown)
+        sys.exit("collection does not match the plan in environment.txt:\n  " + "\n  ".join(shown)
+                 + (f"\n  ... and {more} more" if more else ""))
     cells = collections.defaultdict(list)
-    for path in sorted(data.glob("*.json")):
-        key, _ = cell_key(path.stem)
-        if key:
-            cells[key].append((path.stem, json.loads(path.read_text())))
-    if not cells:
-        sys.exit(f"no <kind>-n<nodes>-<bridge>-<variant>-r<rep>.json runs in {data}")
+    for name in sorted(planned):
+        key, _ = cell_key(name)
+        cells[key].append((name, json.loads((data / f"{name}.json").read_text())))
     return cells
 
 

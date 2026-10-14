@@ -126,7 +126,12 @@ class SummaryTest(unittest.TestCase):
                 (cell / f"{checkpoint}.{kind}.txt").write_text(ARTIFACTS[kind])
         (root / f"{name}.json").write_text(json.dumps(run))
 
+    @staticmethod
+    def write_plan(root, reps=3):
+        (root / "environment.txt").write_text(f"git=abc\nplan=structural:100:{reps}:on:plain:5:0\n")
+
     def write_reps(self, root, artifacts=True, extra_checkpoints=()):
+        self.write_plan(root)
         for rep, growth in ((1, 1024), (2, 3072), (3, 2048)):
             self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts, extra_checkpoints)
 
@@ -153,6 +158,7 @@ class SummaryTest(unittest.TestCase):
             root = pathlib.Path(d)
             self.write_reps(root)
             self.write_cell(root, "structural-n100-on-plain-r4", 100_000, 101_000, artifacts=False)
+            self.write_plan(root, reps=4)
             with self.assertRaises(SystemExit) as raised:
                 memory_diag.summary(root)
         self.assertIn("structural-n100-on-plain-r4/structuralBefore.histo.txt is missing", str(raised.exception))
@@ -216,6 +222,38 @@ class SummaryTest(unittest.TestCase):
         self.assertIn(("installChurnAfterGc", "histo"), expected)
         self.assertNotIn(("installChurnCheckpoint", "histo"), expected)
         self.assertNotIn(("installChurnAfterGc", "nmt"), memory_diag.expected_artifacts(run, "plain"))
+
+    def test_a_planned_run_missing_from_the_directory_rejects_the_collection(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            (root / "structural-n100-on-plain-r2.json").unlink()
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structural-n100-on-plain-r2.json is missing", str(raised.exception))
+
+    def test_a_run_outside_the_plan_rejects_the_collection(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            self.write_cell(root, "structural-n100-off-plain-r1", 100_000, 101_000, artifacts=False)
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structural-n100-off-plain-r1.json is not in the plan", str(raised.exception))
+
+    def test_a_directory_without_a_recorded_plan_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            (root / "environment.txt").unlink()
+            with self.assertRaises(SystemExit):
+                memory_diag.summary(root)
+
+    def test_planned_runs_expand_reps_variants_and_bridges(self):
+        names = memory_diag.planned_runs("plan=structural:10000:2:off,on:plain,nmt:30:0\nplan=install:1000:1:on:arena2:0:100\n")
+        self.assertEqual(len(names), 2 * 2 * 2 + 1)
+        self.assertIn("structural-n10000-off-nmt-r2", names)
+        self.assertIn("install-n1000-on-arena2-r1", names)
 
     def test_empty_directory_is_refused(self):
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
