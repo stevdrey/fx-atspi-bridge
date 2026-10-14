@@ -15,7 +15,6 @@
  */
 package dev.desktopcontrol.fxatspi;
 
-import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
@@ -162,13 +161,12 @@ final class AtSpiProvider {
             var context = Ffm.NIL;
             var pushed = false;
             try {
-                context = (MemorySegment) ffi.call("g_main_context_new", ADDRESS, new MemoryLayout[]{});
-                ffi.call("g_main_context_push_thread_default", null, new MemoryLayout[]{ADDRESS}, context);
+                context = ffi.mainContextNew();
+                ffi.pushThreadDefault(context);
                 pushed = true;
                 busAddress = bus.resolve(ffi);
-                connection = ffi.checked("g_dbus_connection_new_for_address_sync", new MemoryLayout[]{ADDRESS, JAVA_INT, ADDRESS, ADDRESS},
-                        ffi.arena.allocateFrom(busAddress), 9, Ffm.NIL, Ffm.NIL);
-                busName = Ffm.string((MemorySegment) ffi.call("g_dbus_connection_get_unique_name", ADDRESS, new MemoryLayout[]{ADDRESS}, connection));
+                connection = ffi.connectionForAddress(busAddress);
+                busName = ffi.uniqueName(connection);
                 // GDBusInterfaceVTable: 3 function pointers + 8 reserved pointers (Linux x86_64).
                 vtable = ffi.arena.allocate(88, 8);
                 vtable.set(ADDRESS, 0, stub("method", null, 8));
@@ -182,7 +180,7 @@ final class AtSpiProvider {
                     if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
                     drainCompletions();
                     reconcile();
-                    while ((int) ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0) != 0) {}
+                    while (ffi.iterate(context)) {}
                     Thread.sleep(5);
                 }
             } finally {
@@ -223,16 +221,13 @@ final class AtSpiProvider {
     }
     private void embedWithRegistry() {
         var request = ffi.variant("((" + Ffm.quote(busName) + ", objectpath '" + ROOT_PATH + "'),)");
-        embedCancellable = (MemorySegment) ffi.call("g_cancellable_new", ADDRESS, new MemoryLayout[]{});
+        embedCancellable = ffi.newCancellable();
         embedId = NEXT_EMBED_ID.getAndIncrement();
         EMBED_TARGETS.put(embedId, this);
         embedOutstanding = true;
         try {
-            ffi.call("g_dbus_connection_call", null,
-                    new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS},
-                    connection, ffi.arena.allocateFrom("org.a11y.atspi.Registry"), ffi.arena.allocateFrom(ROOT_PATH),
-                    ffi.arena.allocateFrom(PREFIX + "Socket"), ffi.arena.allocateFrom("Embed"), request,
-                    Ffm.NIL, 0, 5000, embedCancellable, EmbedStub.POINTER, MemorySegment.ofAddress(embedId));
+            ffi.callAsync(connection, "org.a11y.atspi.Registry", ROOT_PATH, PREFIX + "Socket", "Embed", request,
+                    5000, embedCancellable, EmbedStub.POINTER, MemorySegment.ofAddress(embedId));
         } catch (Throwable failure) { embedOutstanding = false; throw failure; }
         finally { ffi.release(request); }
     }
@@ -242,7 +237,7 @@ final class AtSpiProvider {
         terminated.complete(null);
     }
     private boolean busClosed() {
-        return (int) ffi.call("g_dbus_connection_is_closed", JAVA_INT, new MemoryLayout[]{ADDRESS}, connection) != 0;
+        return ffi.isClosed(connection);
     }
     /**
      * The Embed completion is delivered through the main context, so cancel it and iterate the context briefly so the
@@ -251,10 +246,10 @@ final class AtSpiProvider {
      */
     private void drainEmbed(MemorySegment context) {
         if (!embedOutstanding) return;
-        guarded(() -> ffi.call("g_cancellable_cancel", null, new MemoryLayout[]{ADDRESS}, embedCancellable));
+        guarded(() -> ffi.cancel(embedCancellable));
         var deadline = System.nanoTime() + EMBED_DRAIN_NANOS;
         while (embedOutstanding && System.nanoTime() < deadline) {
-            guarded(() -> ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0));
+            guarded(() -> ffi.iterate(context));
             if (embedOutstanding) LockSupport.parkNanos(5_000_000L);
         }
     }
@@ -286,17 +281,14 @@ final class AtSpiProvider {
         if (connection.address() != 0) {
             var closing = connection;
             guarded(() -> {
-                try (Arena temporary = Arena.ofConfined()) {
-                    var error = temporary.allocate(ADDRESS);
-                    ffi.call("g_dbus_connection_close_sync", JAVA_INT, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS}, closing, Ffm.NIL, error);
-                    ffi.check(error);
-                } catch (RuntimeException ignored) { /* Connection closure removes the application from the registry. */ }
+                try { ffi.closeConnection(closing); }
+                catch (RuntimeException ignored) { /* Connection closure removes the application from the registry. */ }
             });
             guarded(() -> ffi.unref(closing));
             connection = Ffm.NIL;
         }
-        if (pushed) guarded(() -> ffi.call("g_main_context_pop_thread_default", null, new MemoryLayout[]{ADDRESS}, context));
-        if (context.address() != 0) guarded(() -> ffi.call("g_main_context_unref", null, new MemoryLayout[]{ADDRESS}, context));
+        if (pushed) guarded(() -> ffi.popThreadDefault(context));
+        if (context.address() != 0) guarded(() -> ffi.mainContextUnref(context));
     }
     private void releaseInvocation(MemorySegment invocation) {
         pendingReleased.incrementAndGet();
@@ -314,40 +306,28 @@ final class AtSpiProvider {
     /** A stable, value-free diagnostic code for logs and status. */
     static String code(Throwable failure) { return failure.getClass().getSimpleName(); }
     private String sessionAccessibilityAddress(Ffm nativeApi) {
-        var session = nativeApi.checked("g_bus_get_sync", new MemoryLayout[]{JAVA_INT, ADDRESS}, 2, Ffm.NIL);
+        var session = nativeApi.sessionBus();
         try {
-            var reply = sync(session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", "()");
+            var reply = sync(nativeApi, session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", "()");
             try { return nativeApi.text(reply, 0); } finally { nativeApi.release(reply); }
         } finally { nativeApi.unref(session); }
     }
     private void export(String id) {
-        MemorySegment info;
-        // GDBus copies the parsed structure, so the XML text only needs to outlive the parse call.
-        try (Arena temporary = Arena.ofConfined()) {
-            var text = temporary.allocateFrom(xml(id));
-            info = ffi.checked("g_dbus_node_info_new_for_xml", new MemoryLayout[]{ADDRESS}, text);
-        }
+        var info = ffi.nodeInfoFromXml(xml(id));
         exportsAcquired.incrementAndGet();
         var registrations = new ArrayList<Integer>();
         exports.put(id,new Export(registrations,info));
         var vector = info.reinterpret(40).get(ADDRESS,16).reinterpret(64);
         for (int i=0;i<8;i++) {
             var iface = vector.getAtIndex(ADDRESS,i); if (iface.address()==0) break;
-            try (Arena temporary = Arena.ofConfined()) {
-                var error = temporary.allocate(ADDRESS);
-                int registration = (int) ffi.call("g_dbus_connection_register_object", JAVA_INT,
-                        new MemoryLayout[]{ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS,ADDRESS},connection,
-                        temporary.allocateFrom(path(id)),iface,vtable,Ffm.NIL,Ffm.NIL,error);
-                ffi.check(error); if (registration==0) throw new IllegalStateException("Registration failed: " + id);
-                registrations.add(registration);
-            }
+            registrations.add(ffi.registerObject(connection, path(id), iface, vtable));
         }
     }
     private void unexport(String id) {
         Export exported = exports.remove(id); if (exported==null) return;
         try {
-            for (int registration : exported.registrations()) ffi.call("g_dbus_connection_unregister_object",JAVA_INT,new MemoryLayout[]{ADDRESS,JAVA_INT},connection,registration);
-        } finally { exportsReleased.incrementAndGet(); ffi.call("g_dbus_node_info_unref",null,new MemoryLayout[]{ADDRESS},exported.info()); }
+            for (int registration : exported.registrations()) ffi.unregisterObject(connection, registration);
+        } finally { exportsReleased.incrementAndGet(); ffi.nodeInfoUnref(exported.info()); }
     }
     private void reconcile() {
         var before=snapshot.get();
@@ -382,7 +362,7 @@ final class AtSpiProvider {
     private void embedded(MemorySegment source, MemorySegment result) {
         embedOutstanding = false;
         try {
-            var reply = ffi.checked("g_dbus_connection_call_finish", new MemoryLayout[]{ADDRESS, ADDRESS}, source, result);
+            var reply = ffi.finishCall(source, result);
             try {
                 var ref = ffi.child(reply, 0);
                 try { parent = "(" + Ffm.quote(ffi.text(ref, 0)) + ", objectpath " + Ffm.quote(ffi.text(ref, 1)) + ")"; }
@@ -397,14 +377,10 @@ final class AtSpiProvider {
             registrationFailure = error; running = false; report("Error al registrar AT-SPI2: " + code(error), true);
         }
     }
-    private MemorySegment sync(MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
-        try (Arena temporary = Arena.ofConfined()) {
-            var args = ffi.variant(parameters);
-            try { return ffi.checked("g_dbus_connection_call_sync", new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS},
-                    bus, temporary.allocateFrom(destination), temporary.allocateFrom(path), temporary.allocateFrom(iface),
-                    temporary.allocateFrom(method), args, Ffm.NIL, 0, 5000, Ffm.NIL); }
-            finally { ffi.release(args); }
-        }
+    private static MemorySegment sync(Ffm nativeApi, MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
+        var args = nativeApi.variant(parameters);
+        try { return nativeApi.callSync(bus, destination, path, iface, method, args, 5000); }
+        finally { nativeApi.release(args); }
     }
     private String reference(String id) { return AtSpiObjects.reference(busName, id); }
     private List<String> children(String id) { return snapshot.get().get(id).children(); }
@@ -439,7 +415,7 @@ final class AtSpiProvider {
                             MemorySegment property, MemorySegment value, MemorySegment error, MemorySegment data) {
         try {
             if (!id(objectPath).equals(Snapshot.ROOT_ID) || !Ffm.string(iface).equals(PREFIX + "Application") || !Ffm.string(property).equals("Id")) return 0;
-            applicationId = (int) ffi.call("g_variant_get_int32", JAVA_INT, new MemoryLayout[]{ADDRESS}, value); return 1;
+            applicationId = ffi.int32(value); return 1;
         } catch (Throwable failure) { return 0; }
     }
     private void method(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
@@ -488,7 +464,7 @@ final class AtSpiProvider {
     private interface Mutation { boolean apply(); }
     private void mutate(MemorySegment invocation, Mutation operation) {
         if (!running) { fail(invocation, new Rejected("Provider stopped")); return; }
-        ffi.call("g_object_ref", ADDRESS, new MemoryLayout[]{ADDRESS}, invocation);
+        ffi.ref(invocation);
         pendingAcquired.incrementAndGet();
         var address = invocation.address();
         pending.put(address, invocation);
@@ -509,7 +485,7 @@ final class AtSpiProvider {
     }
     private void reply(MemorySegment invocation, String value) {
         var tuple = ffi.variant(value);
-        try { ffi.call("g_dbus_method_invocation_return_value", null, new MemoryLayout[]{ADDRESS, ADDRESS}, invocation, tuple); }
+        try { ffi.returnValue(invocation, tuple); }
         finally { ffi.release(tuple); }
     }
     /** Replies once with a sanitized error; never lets a failure escape an upcall or the FX task. */
@@ -518,23 +494,16 @@ final class AtSpiProvider {
     }
     private void error(MemorySegment invocation, Throwable failure) {
         var message = failure instanceof Rejected ? failure.getMessage() : "Operation failed";
-        try (Arena temporary = Arena.ofConfined()) {
-            ffi.call("g_dbus_method_invocation_return_dbus_error", null, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS}, invocation,
-                    temporary.allocateFrom("org.freedesktop.DBus.Error.InvalidArgs"), temporary.allocateFrom(message));
-        }
+        ffi.returnError(invocation, "org.freedesktop.DBus.Error.InvalidArgs", message);
     }
     private void stateEvent(String id, String state, boolean value) { event(id, "StateChanged", "(" + Ffm.quote(state) + ", " + (value ? 1 : 0) + ", 0, <0>, @a{sv} {})"); }
     private void event(String id, String member, String value) { signal(id,PREFIX+"Event.Object",member,value); }
     private void signal(String id, String iface, String member, String value) {
         if (!registered || !running) return;
-        try (Arena temporary = Arena.ofConfined()) {
+        try {
             var parameters = ffi.variant(value);
-            try {
-                var error = temporary.allocate(ADDRESS);
-                ffi.call("g_dbus_connection_emit_signal", JAVA_INT, new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS}, connection,
-                        Ffm.NIL, temporary.allocateFrom(path(id)), temporary.allocateFrom(iface), temporary.allocateFrom(member), parameters, error);
-                ffi.check(error);
-            } finally { ffi.release(parameters); }
+            try { ffi.emitSignal(connection, path(id), iface, member, parameters); }
+            finally { ffi.release(parameters); }
         } catch (Throwable error) { System.err.println("AT-SPI event failed: " + code(error)); }
     }
     private String xml(String id) { return id.equals(CACHE_ID) ? cacheXml() : AtSpiObjects.xml(snapshot.get().get(id)); }
