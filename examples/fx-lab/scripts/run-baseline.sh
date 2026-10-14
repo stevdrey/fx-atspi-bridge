@@ -45,51 +45,20 @@ done
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd -P)"  # physical path: a symlinked output directory must not hide stale results
 
-# Runtime must be JDK 27: the generated launcher uses JAVA_HOME or PATH, not the Gradle toolchain.
 java_bin="${JAVA_HOME:+$JAVA_HOME/bin/}java"
-spec="$("$java_bin" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java.specification.version = //p')"
-if [ "$spec" != "27" ]; then
-  echo "Refusing to run: $java_bin reports java.specification.version='${spec:-unknown}', JDK 27 is required." >&2
-  exit 1
-fi
+require_jdk27 "$java_bin" || exit 1
 
 check_clean_tree "$root" "$out_abs" || exit 1
 head_sha="$(git -C "$root" rev-parse HEAD)"
-if ! dir_is_empty "$out_abs"; then
-  if [ "$resume" -eq 1 ] && resume_matches "$out_abs/environment.txt" "git=$head_sha" "profile=$profile" "${plan[@]/#/plan=}"; then
-    echo "Resuming the collection in $out (same commit, profile and plan)"
-  else
-    echo "Refusing to run: $out is not empty$([ "$resume" -eq 1 ] && echo ' and its environment.txt does not match this commit/profile/plan'); stale results would mix into the evidence. Remove it or choose a new directory." >&2
-    exit 1
-  fi
-fi
+require_fresh_or_resumable "$out_abs" "$resume" "$head_sha" "$profile" "${plan[@]}" || exit 1
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
 if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
   echo "resumed=$(date -u +%FT%TZ)" >> "$out_abs/environment.txt"
 else
   {
-    echo "date=$(date -u +%FT%TZ)"
-    echo "git=$head_sha"
-    echo "tree=clean"
-    echo "profile=$profile"
-    echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
-    for entry in "${plan[@]}"; do echo "plan=$entry"; done
+    print_environment "$root" "$head_sha" "$profile" "$limits" "$java_bin" "${plan[@]}"
     echo "workload=warmup:$warmup,samples:$samples,idle:$idle_seconds,installChurn:$install_churn"
-    echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
     echo "command=$0 $*"
-    (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
-    (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
-    echo "java_bin=$java_bin"
-    for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
-      echo "${opts_var}_effective=${!opts_var:-}"
-    done
-    "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
-    "$java_bin" -version 2>&1 | redact_picked_up | head -3
-    echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
-    uname -srm
-    echo "cpus=$(nproc)"
-    grep -m1 'model name' /proc/cpuinfo || true
-    grep MemTotal /proc/meminfo
   } > "$out_abs/environment.txt"
 fi
 for entry in "${plan[@]}"; do

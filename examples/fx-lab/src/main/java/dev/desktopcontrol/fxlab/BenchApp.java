@@ -124,6 +124,13 @@ public final class BenchApp extends Application {
         CompletableFuture.runAsync(() -> {
             try {
                 diagnostics = MemoryDiagnostics.open(options.get("diagnostics"));
+                var trim = options.getOrDefault("trim-native-heap", "false");
+                if (!trim.equals("true") && !trim.equals("false")) {
+                    throw new IllegalArgumentException("--trim-native-heap must be 'true' or 'false', got '" + trim + "'");
+                }
+                if (trim.equals("true") && diagnostics == null) {
+                    throw new IllegalArgumentException("--trim-native-heap=true requires --diagnostics=<dir>");
+                }
                 System.err.println("bench pid " + ProcessHandle.current().pid());
                 // Cadence is checked before the bridge exists, so its own scan cost can never look like a throttled display.
                 requireExplicitGcEnabled();
@@ -222,6 +229,7 @@ public final class BenchApp extends Application {
         field(json, "samples", samples);
         field(json, "dirty", dirty);
         field(json, "idleSeconds", idleSeconds);
+        if (diagnostics != null) diagnostics.recordHeapRange(json);
 
         for (var i = 0; i < warmup; i++) mutateAndWait(dirty, i);
         Thread.sleep(2_000);
@@ -463,13 +471,13 @@ public final class BenchApp extends Application {
         field(json, "installChurnHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
         field(json, "installChurnRssDeltaKbAfterGc", status("VmRSS") - rssBefore);
         snapshot(json, "installChurnAfterGc", true);
-        // Distinguish slow shutdown from a leak: wait up to 30 s for stopped providers to exit.
-        var drainStart = System.nanoTime();
-        while (providerThreads() > 1 && System.nanoTime() - drainStart < TimeUnit.SECONDS.toNanos(30)) Thread.sleep(250);
-        field(json, "installChurnProviderThreadsAfterDrain", providerThreads());
-        field(json, "installChurnDrainSeconds", (System.nanoTime() - drainStart) / 1e9);
-        snapshot(json, "installChurnAfterDrain", false);
-        if (diagnostics != null && "true".equals(options.get("trim-native-heap"))) {
+        // Each cycle awaited closed(), so no stopped provider can still be running: there is nothing to drain. The two
+        // fields stay because budgets.py reads them; a second provider thread here is a harness or library defect.
+        var providers = providerThreads();
+        if (providers != 1) invalid(providers + " provider threads after install churn; closed() was awaited every cycle");
+        field(json, "installChurnProviderThreadsAfterDrain", providers);
+        field(json, "installChurnDrainSeconds", 0.0);
+        if ("true".equals(options.get("trim-native-heap"))) {
             // How much of the RSS growth is free memory the glibc allocator kept, rather than live allocations.
             diagnostics.trimNativeHeap("installChurnAfterTrim");
             field(json, "installChurnRssDeltaKbAfterTrim", status("VmRSS") - rssBefore);

@@ -84,6 +84,60 @@ resume_matches() {
   [ "$(grep -E '^(git|profile|plan)=' "$env_file")" = "$(printf '%s\n' "$@")" ]
 }
 
+# --- shared collection preamble (run-baseline.sh, run-memory-diag.sh) ----------------------------------------------
+# require_jdk27 JAVA_BIN -> 1 unless JAVA_BIN reports java.specification.version 27. The generated launcher uses
+# JAVA_HOME or PATH, not the Gradle toolchain, so the runtime has to be checked separately.
+require_jdk27() {
+  local java_bin="$1" spec
+  spec="$("$java_bin" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java.specification.version = //p')"
+  if [ "$spec" != "27" ]; then
+    echo "Refusing to run: $java_bin reports java.specification.version='${spec:-unknown}', JDK 27 is required." >&2
+    return 1
+  fi
+}
+
+# require_fresh_or_resumable OUT_ABS RESUME HEAD_SHA PROFILE PLAN... -> 0 for an empty directory or a --resume of the
+# same commit, profile and plan; otherwise 1, so stale results never mix into the evidence.
+require_fresh_or_resumable() {
+  local out_abs="$1" resume="$2" head_sha="$3" profile="$4"
+  shift 4
+  dir_is_empty "$out_abs" && return 0
+  if [ "$resume" -eq 1 ] && resume_matches "$out_abs/environment.txt" "git=$head_sha" "profile=$profile" "${@/#/plan=}"; then
+    echo "Resuming the collection in $out_abs (same commit, profile and plan)"
+    return 0
+  fi
+  echo "Refusing to run: $out_abs is not empty$([ "$resume" -eq 1 ] && echo ' and its environment.txt does not match this commit/profile/plan'); stale results would mix into the evidence. Remove it or choose a new directory." >&2
+  return 1
+}
+
+# print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
+# commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware.
+print_environment() {
+  local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
+  shift 5
+  echo "date=$(date -u +%FT%TZ)"
+  echo "git=$head_sha"
+  echo "tree=clean"
+  echo "profile=$profile"
+  echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
+  for entry in "$@"; do echo "plan=$entry"; done
+  echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
+  (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
+  (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
+  echo "java_bin=$java_bin"
+  for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
+    echo "${opts_var}_effective=${!opts_var:-}"
+  done
+  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
+  "$java_bin" -version 2>&1 | redact_picked_up | head -3
+  echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
+  uname -srm
+  echo "cpus=$(nproc)"
+  grep -m1 'model name' /proc/cpuinfo || true
+  grep MemTotal /proc/meminfo
+}
+
 # --- one benchmark cell --------------------------------------------------------------------------------------------
 # run_cell MAX_ATTEMPTS NAME OUT_DIR COMMAND... -> runs COMMAND, stores its redacted output in OUT_DIR/NAME.log and
 # retries only when it exits with 3 (the harness' "invalid run": throttled display, stall). Every retry is appended to

@@ -34,9 +34,9 @@ SMAPS = ("Rss", "Anonymous", "PssFile")
 HISTOGRAM_CHECKPOINTS = frozenset({"afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralAfterGc",
                                    "installChurnBefore", "installChurnAfterGc"})
 MAX_REPORTED_PROBLEMS = 20
-# With compressed oops HotSpot reserves the Java heap and class space below this address, while glibc arenas, thread
-# stacks and other native mappings live near the top of the address space. A heuristic: memory_diag.py reports it as
-# "JVM low range" and the verification record cross-checks it against NMT's Java Heap category.
+# Legacy fallback for collections that predate the recorded heap range (javaHeapStart/javaHeapEnd in the run JSON): with
+# compressed oops HotSpot reserves the Java heap and class space below this address, while glibc arenas and thread
+# stacks live near the top of the address space. Only valid for that heap placement; reported as "legacy heuristic".
 LOW_RANGE_LIMIT = 0x1000_0000_0000
 
 
@@ -105,9 +105,19 @@ def histogram_groups(classes):
     return {name: tuple(value) for name, value in groups.items()}
 
 
-def parse_pmap(text):
-    """RSS kB of anonymous versus file-backed mappings, the anonymous RSS below LOW_RANGE_LIMIT (Java heap and class
-    space with compressed oops) and the anonymous mapping count from `pmap -x`."""
+def heap_range(run):
+    """(start, end, method) of the Java heap for splitting anonymous RSS: the range the bench recorded from
+    GC.heap_info, the legacy address heuristic for collections without it, or None when the collector printed none."""
+    if "javaHeapStart" in run:
+        return run["javaHeapStart"], run["javaHeapEnd"], "recorded heap range"
+    if run.get("javaHeapRange") == "unknown":
+        return None
+    return 0, LOW_RANGE_LIMIT, "legacy heuristic"
+
+
+def parse_pmap(text, heap=(0, LOW_RANGE_LIMIT, "legacy heuristic")):
+    """RSS kB of anonymous versus file-backed mappings, the anonymous RSS inside the Java heap range `heap` (start,
+    end, method; None = unknown) and the anonymous mapping count from `pmap -x`."""
     anon = file_backed = anon_count = low = 0
     for line in text.splitlines():
         match = re.match(r"^[0-9a-f]{8,16}\s+\d+\s+(\d+)\s+\d+\s+\S+\s+(.*)$", line)
@@ -117,12 +127,12 @@ def parse_pmap(text):
         if mapping.startswith("[") and mapping.endswith("]"):
             anon += rss
             anon_count += 1
-            if int(line.split()[0], 16) < LOW_RANGE_LIMIT:
+            if heap and heap[0] <= int(line.split()[0], 16) < heap[1]:
                 low += rss
         else:
             file_backed += rss
-    return {"anonRssKb": anon, "fileRssKb": file_backed, "anonMappings": anon_count, "lowAnonRssKb": low,
-            "highAnonRssKb": anon - low}
+    return {"anonRssKb": anon, "fileRssKb": file_backed, "anonMappings": anon_count,
+            "heapAnonRssKb": low if heap else None, "otherAnonRssKb": anon - low if heap else None}
 
 
 def cell_key(name):
@@ -135,12 +145,30 @@ def cell_key(name):
 # --- summary -------------------------------------------------------------------------------------------------------
 
 def fmt(values, scale=1.0, digits=1):
-    values = [v / scale for v in values if v is not None]
-    if not values:
+    """Median (min–max). Every value must be present: a missing one would shrink the sample behind the Runs count, so
+    callers take JSON values through field_values(), which refuses incomplete runs. All-None (not applicable) is –."""
+    if all(v is None for v in values):
         return "–"
+    if any(v is None for v in values):
+        raise ValueError("fmt() got a partial sample; use field_values() to refuse incomplete runs")
+    values = [v / scale for v in values]
     if len(values) == 1:
         return f"{values[0]:.{digits}f}"
     return f"{st.median(values):.{digits}f} ({min(values):.{digits}f}–{max(values):.{digits}f})"
+
+
+def exit_with_problems(title, problems):
+    shown = problems[:MAX_REPORTED_PROBLEMS]
+    more = len(problems) - len(shown)
+    sys.exit(f"{title}:\n  " + "\n  ".join(shown) + (f"\n  ... and {more} more" if more else ""))
+
+
+def field_values(runs, key):
+    """The JSON field `key` from every run of a cell; exits naming the runs that lack it."""
+    missing = [name for name, run in runs if key not in run]
+    if missing:
+        exit_with_problems(f"runs lack the field {key}", [f"{name}.json" for name in missing])
+    return [run[key] for _, run in runs]
 
 
 def checkpoints(run):
@@ -163,42 +191,46 @@ def expected_artifacts(run, variant):
     return expected
 
 
-def artifact_problem(kind, text):
+PARSERS = {"smaps_rollup": parse_smaps_rollup, "malloc": parse_malloc_info, "nmt": parse_nmt,
+           "histo": parse_histogram, "pmap": parse_pmap, "trim": str}
+
+
+def artifact_problem(kind, text, parsed=None):
     """Why an artifact cannot be used (empty, truncated or not the expected output), or None. An unusable artifact
     would otherwise parse to zeros or empty sets and appear in the summary as a measured value."""
+    if kind not in PARSERS:
+        return f"has an unknown kind '{kind}'"
+    if parsed is None:
+        parsed = PARSERS[kind](text)
     if kind == "smaps_rollup":
-        missing = {"Rss", "Anonymous", "Pss_Anon", "Pss_File"} - set(parse_smaps_rollup(text))
+        missing = {"Rss", "Anonymous", "Pss_Anon", "Pss_File"} - set(parsed)
         return f"lacks {', '.join(sorted(missing))}" if missing else None
     if kind == "malloc":
         if not text.rstrip().endswith("</malloc>"):
             return "is not a complete malloc_info document"
-        parsed = parse_malloc_info(text)
         return None if parsed["arenas"] > 0 and parsed["system"] > 0 else "reports no arena or no system memory"
     if kind == "nmt":
-        parsed = parse_nmt(text)
         return None if {"Total", "malloc", "Java Heap"} <= set(parsed) else "is not a complete NMT summary"
     if kind == "histo":
         if not re.search(r"^Total\s+\d+\s+\d+\s*$", text, re.M):
             return "has no Total line (truncated histogram)"
-        return None if parse_histogram(text) else "lists no classes"
+        return None if parsed else "lists no classes"
     if kind == "pmap":
         if not re.search(r"^total kB\s+\d+\s+\d+\s+\d+\s*$", text, re.M):
             return "has no total line (truncated pmap output)"
-        parsed = parse_pmap(text)
         return None if parsed["anonMappings"] > 0 and parsed["fileRssKb"] > 0 else "lists no anonymous or file mappings"
-    if kind == "trim":
-        return None if "Trim native heap" in text else "is not System.trim_native_heap output"
-    return f"has an unknown kind '{kind}'"
+    return None if "Trim native heap" in text else "is not System.trim_native_heap output"
 
 
-def validate(data, cells):
-    """True when the raw artifacts are present and complete for every run, False for a JSON-only directory (no run has
-    an artifact directory, e.g. the committed evidence). A partial collection exits: statistics computed from fewer
-    runs than the cell reports would silently understate the variance."""
+def load_artifacts(data, cells):
+    """{(run, checkpoint, kind): parsed artifact}, each file read and parsed once; None for a JSON-only directory (no
+    run has an artifact directory, e.g. the committed evidence). A partial or unusable collection exits: statistics
+    computed from fewer runs than the cell reports would silently understate the variance."""
     names = [name for runs in cells.values() for name, _ in runs]
     if not any((data / name).is_dir() for name in names):
-        return False
+        return None
     problems = []
+    artifacts = {}
     for key, runs in sorted(cells.items()):
         points = checkpoints(runs[0][1])
         if key[0] in PHASES:
@@ -214,20 +246,15 @@ def validate(data, cells):
                 if not path.is_file():
                     problems.append(f"{name}/{checkpoint}.{kind}.txt is missing")
                     continue
-                problem = artifact_problem(kind, path.read_text(errors="replace"))
+                text = path.read_text(errors="replace")
+                parsed = parse_pmap(text, heap_range(run)) if kind == "pmap" else PARSERS[kind](text)
+                problem = artifact_problem(kind, text, parsed)
                 if problem:
                     problems.append(f"{name}/{checkpoint}.{kind}.txt {problem}")
+                artifacts[(name, checkpoint, kind)] = parsed
     if problems:
-        shown = problems[:MAX_REPORTED_PROBLEMS]
-        more = len(problems) - len(shown)
-        sys.exit("incomplete diagnostic collection in " + str(data) + ":\n  " + "\n  ".join(shown)
-                 + (f"\n  ... and {more} more" if more else ""))
-    return True
-
-
-def read_artifact(data, cell, checkpoint, kind):
-    """Only called for artifacts validate() has required, so a missing file is a bug, not a gap to skip."""
-    return (data / cell / f"{checkpoint}.{kind}.txt").read_text()
+        exit_with_problems(f"incomplete diagnostic collection in {data}", problems)
+    return artifacts
 
 
 def phase_points(key, runs):
@@ -250,7 +277,11 @@ def planned_runs(environment):
     for line in environment.splitlines():
         if not line.startswith("plan="):
             continue
-        kind, nodes, reps, bridges, variants, _, _ = line.split("=", 1)[1].split(":")
+        fields = line.split("=", 1)[1].strip().split(":")
+        if len(fields) != 7 or not all(f.isdigit() for f in (fields[1], fields[2], fields[5], fields[6])):
+            sys.exit(f"'{line.strip()}' is not a run-memory-diag.sh plan (kind:nodes:reps:bridges:variants:structural:"
+                     "install); is this an SC-01 baseline directory?")
+        kind, nodes, reps, bridges, variants, _, _ = fields
         for rep in range(1, int(reps) + 1):
             for variant in variants.split(","):
                 for bridge in bridges.split(","):
@@ -269,10 +300,7 @@ def load(data):
     missing, unexpected = sorted(planned - found), sorted(found - planned)
     if missing or unexpected:
         problems = [f"{name}.json is missing" for name in missing] + [f"{name}.json is not in the plan" for name in unexpected]
-        shown = problems[:MAX_REPORTED_PROBLEMS]
-        more = len(problems) - len(shown)
-        sys.exit("collection does not match the plan in environment.txt:\n  " + "\n  ".join(shown)
-                 + (f"\n  ... and {more} more" if more else ""))
+        exit_with_problems("collection does not match the plan in environment.txt", problems)
     cells = collections.defaultdict(list)
     for name in sorted(planned):
         key, _ = cell_key(name)
@@ -288,34 +316,43 @@ def label(key):
 def summary(data):
     data = pathlib.Path(data)
     cells = load(data)
-    raw = validate(data, cells)
+    artifacts = load_artifacts(data, cells)
     out = [f"# Memory diagnostics summary\n\nSource: `{data}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
 
     out.append("## Phase deltas (MB, after − before)\n")
-    out.append("| Cell | Runs | Phase | Point | Heap | RSS | Anonymous | Pss_File |")
-    out.append("| --- | ---: | --- | --- | ---: | ---: | ---: | ---: |")
+    out.append("Snapshot cost: RSS added by the diagnostic snapshots taken inside the interval (the phase's own \"before\" "
+               "snapshot and any mid-phase snapshot), recorded as `<checkpoint>SnapshotRssKb`; the RSS and Anonymous "
+               "deltas include it. – = not recorded by this collection.\n")
+    out.append("| Cell | Runs | Phase | Point | Heap | RSS | Anonymous | Pss_File | Snapshot cost |")
+    out.append("| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for key, runs in sorted(cells.items()):
         phase = key[0]
         if phase not in PHASES:
             continue
         before, afters = PHASES[phase]
-        for after in afters:
-            if f"{after}SmapsRssKb" not in runs[0][1]:
+        for index, after in enumerate(afters):
+            if not any(f"{after}SmapsRssKb" in run for _, run in runs):
                 continue
             heap_key = {"structuralAfterGc": "structuralHeapDeltaBytesAfterGc", "installChurnAfterGc": "installChurnHeapDeltaBytesAfterGc"}.get(after)
-            heap = fmt([r.get(heap_key) for _, r in runs], 1024 * 1024) if heap_key else "–"
-            row = [fmt([r[f"{after}Smaps{m}Kb"] - r[f"{before}Smaps{m}Kb"] for _, r in runs], 1024) for m in SMAPS]
-            out.append(f"| {label(key)} | {len(runs)} | {phase} | {after} | {heap} | " + " | ".join(row) + " |")
+            heap = fmt(field_values(runs, heap_key), 1024 * 1024) if heap_key else "–"
+            row = [fmt([a - b for a, b in zip(field_values(runs, f"{after}Smaps{m}Kb"), field_values(runs, f"{before}Smaps{m}Kb"))], 1024)
+                   for m in SMAPS]
+            inside = [c for c in (before, *afters[:index]) if f"{c}SmapsRssKb" in runs[0][1]]
+            if all(f"{c}SnapshotRssKb" in runs[0][1] for c in inside):
+                cost = fmt([sum(v) for v in zip(*(field_values(runs, f"{c}SnapshotRssKb") for c in inside))], 1024)
+            else:
+                cost = "–"
+            out.append(f"| {label(key)} | {len(runs)} | {phase} | {after} | {heap} | " + " | ".join(row) + f" | {cost} |")
 
     out.append("\n## Install churn timing\n")
     out.append("| Cell | Close p50 ms | Close max ms | Ready p50 ms | Ready max ms | Provider threads at checkpoint |")
     out.append("| --- | ---: | ---: | ---: | ---: | ---: |")
     for key, runs in sorted(cells.items()):
         if key[0] == "install":
-            values = [fmt([r.get(f) for _, r in runs]) for f in ("installChurnCloseMsP50", "installChurnCloseMsMax", "installChurnReadyMsP50", "installChurnReadyMsMax", "installChurnProviderThreadsCheckpoint")]
+            values = [fmt(field_values(runs, f)) for f in ("installChurnCloseMsP50", "installChurnCloseMsMax", "installChurnReadyMsP50", "installChurnReadyMsMax", "installChurnProviderThreadsCheckpoint")]
             out.append(f"| {label(key)} | " + " | ".join(values) + " |")
 
-    if not raw:
+    if artifacts is None:
         out.append("\nNo raw artifacts in this directory (JSON only): allocator, NMT, histogram and pmap tables need the "
                    "<cell>/ snapshot directories of the collection.")
         return "\n".join(out) + "\n"
@@ -327,7 +364,7 @@ def summary(data):
         if key[3] == "nmt":
             continue  # NMT adds its own malloc headers; read allocator state from the cells without it
         for checkpoint in all_points(runs):
-            parsed = [parse_malloc_info(read_artifact(data, n, checkpoint, "malloc")) for n, _ in runs]
+            parsed = [artifacts[(n, checkpoint, "malloc")] for n, _ in runs]
             out.append(f"| {label(key)} | {checkpoint} | {fmt([p['arenas'] for p in parsed], digits=0)} | "
                        + " | ".join(fmt([p[f] for p in parsed], 1024 * 1024) for f in ("system", "free", "inUse", "mmap")) + " |")
 
@@ -340,8 +377,7 @@ def summary(data):
             continue
         before, *afters = phase_points(key, runs)
         for after in afters:
-            pairs = [(parse_nmt(read_artifact(data, name, before, "nmt")), parse_nmt(read_artifact(data, name, after, "nmt")))
-                     for name, _ in runs]
+            pairs = [(artifacts[(name, before, "nmt")], artifacts[(name, after, "nmt")]) for name, _ in runs]
             # One delta per run for every category any run reports (NMT omits categories under 1 KB).
             seen = {category for start, end in pairs for category in (*start, *end)}
             deltas = {c: [end.get(c, 0) - start.get(c, 0) for start, end in pairs] for c in seen}
@@ -360,7 +396,7 @@ def summary(data):
             if key[3] != "nmt":
                 continue
             for checkpoint in all_points(runs):
-                parsed = [parse_nmt(read_artifact(data, name, checkpoint, "nmt")) for name, _ in runs]
+                parsed = [artifacts[(name, checkpoint, "nmt")] for name, _ in runs]
                 out.append(f"| {label(key)} | {checkpoint} | "
                            + " | ".join(fmt([p.get(c, 0) for p in parsed], 1024) for c in columns) + " |")
 
@@ -372,7 +408,7 @@ def summary(data):
         if key[0] not in PHASES:
             continue
         for checkpoint in all_points(runs, histogram=True):
-            parsed = [parse_histogram(read_artifact(data, n, checkpoint, "histo")) for n, _ in runs]
+            parsed = [artifacts[(n, checkpoint, "histo")] for n, _ in runs]
             groups = [histogram_groups(p) for p in parsed]
             row = [fmt([g["bridge"][1] for g in groups], 1024 * 1024, 2), fmt([g["bridge"][0] for g in groups], digits=0),
                    fmt([g["javafx"][1] for g in groups], 1024 * 1024, 2), fmt([g["javafx"][0] for g in groups], digits=0),
@@ -386,8 +422,7 @@ def summary(data):
             continue
         before, afters = PHASES[key[0]]
         after = next(a for a in afters if a.endswith("AfterGc"))
-        pairs = [(parse_histogram(read_artifact(data, name, before, "histo")),
-                  parse_histogram(read_artifact(data, name, after, "histo"))) for name, _ in runs]
+        pairs = [(artifacts[(name, before, "histo")], artifacts[(name, after, "histo")]) for name, _ in runs]
         # One delta per run for every class seen in any run (0 where a run lacks it), so medians cover all repetitions.
         modules = {}
         for start, end in pairs:
@@ -409,18 +444,21 @@ def summary(data):
             out.append(f"| `{cls}` | {module} | {fmt([i for i, _ in values], digits=0)} | {fmt([b for _, b in values], 1024)} |")
 
     out.append("\n## pmap: anonymous versus file-backed RSS (MB)\n")
-    out.append("JVM low range: anonymous mappings below 0x100000000000 (Java heap and class space with compressed oops); "
-               "native range: everything above (malloc arenas, thread stacks, other native mappings).\n")
-    out.append("| Cell | Checkpoint | Anonymous RSS | JVM low range | Native range | File RSS | Anonymous mappings |")
-    out.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+    out.append("Java heap: anonymous mappings inside the Java heap range. \"recorded heap range\" uses the reserved range "
+               "the bench read from GC.heap_info; \"legacy heuristic\" (collections without it) counts every anonymous "
+               "mapping below 0x100000000000, which with compressed oops is the heap plus class space. Outside Java heap: "
+               "malloc arenas, thread stacks, class space and other native mappings.\n")
+    out.append("| Cell | Checkpoint | Anonymous RSS | Java heap | Outside Java heap | File RSS | Anonymous mappings | Split |")
+    out.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
     for key, runs in sorted(cells.items()):
         if key[3] == "nmt" or key[0] not in PHASES:
             continue
         for checkpoint in all_points(runs):
-            parsed = [parse_pmap(read_artifact(data, n, checkpoint, "pmap")) for n, _ in runs]
+            parsed = [artifacts[(n, checkpoint, "pmap")] for n, _ in runs]
+            methods = {(heap_range(run) or (0, 0, "unknown heap range"))[2] for _, run in runs}
             out.append(f"| {label(key)} | {checkpoint} | "
-                       + " | ".join(fmt([p[f] for p in parsed], 1024) for f in ("anonRssKb", "lowAnonRssKb", "highAnonRssKb", "fileRssKb"))
-                       + f" | {fmt([p['anonMappings'] for p in parsed], digits=0)} |")
+                       + " | ".join(fmt([p[f] for p in parsed], 1024) for f in ("anonRssKb", "heapAnonRssKb", "otherAnonRssKb", "fileRssKb"))
+                       + f" | {fmt([p['anonMappings'] for p in parsed], digits=0)} | {', '.join(sorted(methods))} |")
     return "\n".join(out) + "\n"
 
 

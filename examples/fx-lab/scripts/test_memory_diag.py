@@ -101,7 +101,29 @@ class ParserTest(unittest.TestCase):
 
     def test_pmap_split_ignores_header_and_total(self):
         self.assertEqual(memory_diag.parse_pmap(PMAP), {"anonRssKb": 16, "fileRssKb": 13884, "anonMappings": 2,
-                                                         "lowAnonRssKb": 4, "highAnonRssKb": 12})
+                                                         "heapAnonRssKb": 4, "otherAnonRssKb": 12})
+
+    def test_pmap_split_uses_the_recorded_heap_range(self):
+        # A heap placed high (e.g. -Xmx above 32 GB): the legacy address heuristic would count it as native.
+        run = {"javaHeapStart": 0x7FFD9D27E000, "javaHeapEnd": 0x7FFD9D2A0000}
+        heap = memory_diag.heap_range(run)
+        self.assertEqual(heap[2], "recorded heap range")
+        parsed = memory_diag.parse_pmap(PMAP, heap)
+        self.assertEqual((parsed["heapAnonRssKb"], parsed["otherAnonRssKb"]), (12, 4))
+        self.assertIsNone(memory_diag.heap_range({"javaHeapRange": "unknown"}))
+        unknown = memory_diag.parse_pmap(PMAP, None)
+        self.assertEqual((unknown["heapAnonRssKb"], unknown["otherAnonRssKb"]), (None, None))
+        self.assertEqual(memory_diag.heap_range({})[2], "legacy heuristic")
+
+    def test_plan_lines_of_another_collection_are_refused_clearly(self):
+        with self.assertRaises(SystemExit) as raised:
+            memory_diag.planned_runs("plan=100:3:1,10,100:100\n")
+        self.assertIn("is not a run-memory-diag.sh plan", str(raised.exception))
+
+    def test_fmt_refuses_a_partial_sample(self):
+        self.assertEqual(memory_diag.fmt([None, None]), "–")
+        with self.assertRaises(ValueError):
+            memory_diag.fmt([1, None, 3])
 
     def test_cell_names(self):
         self.assertEqual(memory_diag.cell_key("structural-n10000-off-nmt-r3"), (("structural", 10000, "off", "nmt"), 3))
@@ -113,12 +135,14 @@ ARTIFACTS = {"smaps_rollup": SMAPS, "nmt": NMT, "malloc": MALLOC, "histo": HISTO
 
 
 class SummaryTest(unittest.TestCase):
-    def write_cell(self, root, name, rss_before, rss_after, artifacts=True, extra_checkpoints=()):
+    def write_cell(self, root, name, rss_before, rss_after, artifacts=True, extra_checkpoints=(), snapshot_cost_kb=None):
         run = {"structuralHeapDeltaBytesAfterGc": 2 * 1024 * 1024}
         points = [(c, rss_before) for c in extra_checkpoints] + [("structuralBefore", rss_before), ("structuralAfterGc", rss_after)]
         for checkpoint, rss in points:
             for key, value in (("Rss", rss), ("Anonymous", rss // 2), ("PssFile", 1024)):
                 run[f"{checkpoint}Smaps{key}Kb"] = value
+            if snapshot_cost_kb is not None:
+                run[f"{checkpoint}SnapshotRssKb"] = snapshot_cost_kb
         if artifacts:
             cell = root / name
             cell.mkdir()
@@ -130,10 +154,11 @@ class SummaryTest(unittest.TestCase):
     def write_plan(root, reps=3):
         (root / "environment.txt").write_text(f"git=abc\nplan=structural:100:{reps}:on:plain:5:0\n")
 
-    def write_reps(self, root, artifacts=True, extra_checkpoints=()):
+    def write_reps(self, root, artifacts=True, extra_checkpoints=(), snapshot_cost_kb=None):
         self.write_plan(root)
         for rep, growth in ((1, 1024), (2, 3072), (3, 2048)):
-            self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts, extra_checkpoints)
+            self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts,
+                            extra_checkpoints, snapshot_cost_kb)
 
     def test_median_and_range_over_repetitions(self):
         with tempfile.TemporaryDirectory() as d:
@@ -162,6 +187,38 @@ class SummaryTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 memory_diag.summary(root)
         self.assertIn("structural-n100-on-plain-r4/structuralBefore.histo.txt is missing", str(raised.exception))
+
+    def test_a_run_missing_a_json_field_is_named_instead_of_shrinking_the_sample(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            path = root / "structural-n100-on-plain-r3.json"
+            run = json.loads(path.read_text())
+            del run["structuralHeapDeltaBytesAfterGc"]
+            path.write_text(json.dumps(run))
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structuralHeapDeltaBytesAfterGc", str(raised.exception))
+        self.assertIn("structural-n100-on-plain-r3.json", str(raised.exception))
+
+    def test_json_only_runs_with_uneven_checkpoints_are_named_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            path = root / "structural-n100-on-plain-r2.json"
+            run = {k: v for k, v in json.loads(path.read_text()).items() if not k.startswith("structuralBefore")}
+            path.write_text(json.dumps(run))
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structural-n100-on-plain-r2.json", str(raised.exception))
+
+    def test_snapshot_cost_inside_the_interval_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False, snapshot_cost_kb=512)
+            text = memory_diag.summary(root)
+        # structuralAfterGc's interval contains only the structuralBefore snapshot: 512 KB = 0.5 MB in every run.
+        self.assertIn("| 0.0 (0.0–0.0) | 0.5 (0.5–0.5) |", text)
 
     def test_json_only_directory_reports_only_json_tables(self):
         with tempfile.TemporaryDirectory() as d:

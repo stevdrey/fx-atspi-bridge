@@ -135,6 +135,26 @@ class OutputDirectoryTest(unittest.TestCase):
             self.assertEqual(bash(f'resume_matches "{d}/missing.txt" "git=abc"').returncode, 1)
 
 
+class CollectionPreambleTest(unittest.TestCase):
+    def test_require_jdk27_reads_the_runtime_specification_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            for version, expected in (("27", 0), ("21", 1)):
+                with self.subTest(version=version):
+                    java = pathlib.Path(d, f"java{version}")
+                    java.write_text(f"#!/bin/sh\necho '    java.specification.version = {version}' >&2\n")
+                    java.chmod(0o755)
+                    out = bash(f'require_jdk27 "{java}"')
+                    self.assertEqual(out.returncode, expected, out.stderr)
+
+    def test_fresh_directory_passes_and_stale_one_needs_a_matching_resume(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(bash(f'require_fresh_or_resumable "{d}" 0 abc diag "p:1"').returncode, 0)
+            pathlib.Path(d, "environment.txt").write_text("git=abc\nprofile=diag\nplan=p:1\n")
+            self.assertEqual(bash(f'require_fresh_or_resumable "{d}" 0 abc diag "p:1"').returncode, 1)
+            self.assertEqual(bash(f'require_fresh_or_resumable "{d}" 1 abc diag "p:1"').returncode, 0)
+            self.assertEqual(bash(f'require_fresh_or_resumable "{d}" 1 def diag "p:1"').returncode, 1)
+
+
 class RunCellTest(unittest.TestCase):
     def run_cell(self, body, max_attempts=2):
         d = tempfile.TemporaryDirectory()
