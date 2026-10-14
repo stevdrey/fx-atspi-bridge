@@ -23,6 +23,8 @@ import java.util.Map;
  * the map it passes in; it is wrapped, not copied, so a snapshot costs O(1) to publish.
  */
 public record Snapshot(Map<String, AccessibleNode> nodes) {
+    /** Id of the application root node. */
+    public static final String ROOT_ID = "root";
     public static final Snapshot EMPTY = new Snapshot(Map.of());
 
     public Snapshot {

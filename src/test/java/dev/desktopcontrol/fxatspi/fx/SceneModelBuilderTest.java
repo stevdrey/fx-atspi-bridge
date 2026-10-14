@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
@@ -54,9 +55,15 @@ class SceneModelBuilderTest {
         var started = new CountDownLatch(1);
         try { Platform.startup(started::countDown); }
         catch (IllegalStateException alreadyRunning) { started.countDown(); }
-        catch (Throwable unavailable) { return; }
+        catch (Throwable unavailable) { failOrSkip("JavaFX toolkit failed to start: " + unavailable); return; }
         toolkit = started.await(20, TimeUnit.SECONDS);
         if (toolkit) Platform.setImplicitExit(false);
+        else failOrSkip("JavaFX toolkit did not start within 20 s");
+    }
+
+    /** CI sets REQUIRE_FX_TOOLKIT=1 so a missing toolkit fails instead of silently skipping these tests. */
+    private static void failOrSkip(String reason) {
+        if ("1".equals(System.getenv("REQUIRE_FX_TOOLKIT"))) fail(reason);
     }
 
     @AfterEach void closeWindows() throws Exception {
@@ -164,5 +171,17 @@ class SceneModelBuilderTest {
         assertEquals(List.of(false), result.get(1));
         assertEquals(List.of("new", ""), result.get(2));
         assertEquals(1, fired.get());
+    }
+
+    @Test void clearReleasesEveryTargetSoAClosedBridgeRetainsNothing() throws Exception {
+        var fixture = build();
+        var registry = fixture.registry();
+        var result = onFx(() -> {
+            var present = registry.target(fixture.button()) != null;
+            registry.clear();
+            return List.of(present, registry.target(fixture.button()) == null, registry.size() == 0,
+                    new ActionExecutor(registry).press(fixture.button()));
+        });
+        assertEquals(List.of(true, true, true, false), result);
     }
 }

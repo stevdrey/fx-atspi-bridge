@@ -15,8 +15,6 @@
  */
 package dev.desktopcontrol.fxatspi.model;
 
-import java.util.Collections;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -34,12 +32,11 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
         name = publishable(name);
         text = publishable(text);
         children = List.copyOf(children);
-        capabilities = Collections.unmodifiableSet(capabilities.isEmpty()
-                ? EnumSet.noneOf(Capability.class) : EnumSet.copyOf(capabilities));
+        capabilities = Set.copyOf(capabilities); // no copy when the caller already passes an immutable set
     }
 
     /** NUL becomes U+FFFD one-for-one so code-point offsets still match the JavaFX text. */
-    public static String publishable(String value) { return Objects.requireNonNullElse(value, "").replace('\0', '�'); }
+    public static String publishable(String value) { return Objects.requireNonNullElse(value, "").replace('\0', '\uFFFD'); }
 
     /** Code points in {@code text}, the unit AT-SPI uses for offsets. */
     public int characterCount() { return text.codePointCount(0, text.length()); }

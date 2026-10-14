@@ -8,7 +8,7 @@ Fedora Linux 44 (kernel 7.2.9), Zulu OpenJDK 27 (build 27+35, `27.28+101-CA`), J
 ## Automated
 | Command | Result |
 |---|---|
-| `./gradlew test` / `./gradlew check` (JDK 27) | **Passed**: `ModelTest` 5, `AtSpiObjectsTest` 6, `AtSpiTextTest` 4, `SceneModelBuilderTest` 4; 0 failures, 0 skipped. |
+| `./gradlew test` / `./gradlew check` (JDK 27) | **Passed**: `ModelTest` 5, `AtSpiObjectsTest` 6, `AtSpiTextTest` 4, `SceneModelBuilderTest` 5 (incl. `TargetRegistry.clear()`); 0 failures, 0 skipped (local desktop session). |
 | `./gradlew javadoc` | Passed (6 warnings, not triaged). |
 
 What the tests establish:
@@ -30,3 +30,8 @@ Limits: single run per build; events (`TextChanged`, `ChildrenChanged`, ...) wer
 - The new `protocol` unit tests were not executed against baseline `d77f76d`; baseline parity is evidenced only by the identical AT-SPI dumps above.
 - No performance or memory measurement; no gain is claimed. The linear mark-and-sweep replacing the quadratic cleanup was not benchmarked.
 - No CI result (local only).
+
+## Code-review follow-up
+- Toolkit tests: without a display `SceneModelBuilderTest` skips (5 skipped, build green, checked with `env -u DISPLAY -u WAYLAND_DISPLAY ./gradlew test`), so the earlier CI run most likely did not execute them. CI now installs `xvfb`/`libgtk-3-0t64`, runs Gradle under `xvfb-run -a` and sets `REQUIRE_FX_TOOLKIT=1`; with that variable and no display the suite **fails** (`initializationError`, verified locally). Whether the toolkit starts on the GitHub runner is confirmed only by the PR's CI run.
+- Smoke rerun after the review fixes: baseline `d77f76d` and head dumps are identical again. The committed `atspi-dump-head.json` differs from a fresh dump only by the `focused` state (window focus at probe time), not by roles/interfaces/text.
+- Capability sets are now shared immutable constants (`Set.copyOf` in `AccessibleNode`); allocation was not measured and no performance gain is claimed.

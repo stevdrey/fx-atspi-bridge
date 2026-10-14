@@ -25,11 +25,12 @@ import java.util.function.Consumer;
 /** Opt-in experimental accessibility bridge for the current JavaFX process. */
 public final class FxAtSpiBridge implements AutoCloseable {
     private final AtSpiProvider provider;
+    private final TargetRegistry registry;
     private final AnimationTimer observer;
     private static boolean installed;
     private boolean closed;
     private FxAtSpiBridge(Consumer<String> status) {
-        var registry = new TargetRegistry();
+        registry = new TargetRegistry();
         provider = new AtSpiProvider(status, new SceneModelBuilder(registry), new ActionExecutor(registry));
         observer = new AnimationTimer() {
             private long previous;
@@ -57,6 +58,6 @@ public final class FxAtSpiBridge implements AutoCloseable {
     public static FxAtSpiBridge install() { return install(message -> System.err.println(message)); }
     @Override public void close() {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Close on the FX application thread");
-        if (!closed) { closed=true; observer.stop(); provider.stop(); installed=false; }
+        if (!closed) { closed=true; observer.stop(); provider.stop(); registry.clear(); installed=false; }
     }
 }

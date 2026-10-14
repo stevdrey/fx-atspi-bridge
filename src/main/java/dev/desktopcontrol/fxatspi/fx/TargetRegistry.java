@@ -63,6 +63,12 @@ public final class TargetRegistry {
         }
     }
 
+    /** Drops every mapping so a closed bridge does not retain the last scene graph. FX thread only. */
+    public void clear() {
+        byTarget.clear();
+        byId.clear();
+    }
+
     /** Live target for {@code id}, or {@code null} when unknown or already released. FX thread only. */
     public Object target(String id) { return byId.get(id); }
 

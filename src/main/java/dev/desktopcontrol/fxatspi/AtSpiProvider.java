@@ -21,9 +21,19 @@ import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import javafx.application.Platform;
-import java.lang.foreign.*;
-import java.lang.invoke.*;
-import java.util.*;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemoryLayout;
+import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
@@ -37,7 +47,8 @@ import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.interfaces;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.path;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.stateBits;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.textRange;
-import static java.lang.foreign.ValueLayout.*;
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /** Experimental dynamic AT-SPI2 provider: Application/Accessible/Action/Text/EditableText.
  * The bus thread owns GDBus registrations; immutable UI snapshots avoid blocking JavaFX.
@@ -152,12 +163,13 @@ final class AtSpiProvider {
         ffi.call("g_dbus_node_info_unref",null,new MemoryLayout[]{ADDRESS},exported.info());
     }
     private synchronized void reconcile() {
-        Snapshot before=snapshot.get(), after=desired.get();
+        var before=snapshot.get();
+        var after=desired.get();
         if (before.equals(after)) return;
         snapshot.set(after);
         for (String id : after.nodes().keySet()) if (!before.nodes().containsKey(id)) export(id);
-        for (AccessibleNode item : after.nodes().values()) {
-            AccessibleNode old=before.get(item.id());
+        for (var item : after.nodes().values()) {
+            var old=before.get(item.id());
             if (old==null) signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,item,busName,parent)+",)");
             else {
                 if (old.enabled()!=item.enabled()) { stateEvent(item.id(),"enabled",item.enabled()); stateEvent(item.id(),"sensitive",item.enabled()); }
@@ -208,11 +220,13 @@ final class AtSpiProvider {
     private MemorySegment property(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
                                    MemorySegment property, MemorySegment error, MemorySegment data) {
         try {
-            String id = id(objectPath), key = Ffm.string(property); AccessibleNode item = snapshot.get().get(id);
+            var id = id(objectPath);
+            var key = Ffm.string(property);
+            var item = snapshot.get().get(id);
             String value = switch (key) {
                 case "Name" -> Ffm.quote(item.name());
                 case "Description", "HelpText" -> Ffm.quote(DESCRIPTION);
-                case "Parent" -> id.equals("root") ? parent : reference(item.ancestor());
+                case "Parent" -> id.equals(Snapshot.ROOT_ID) ? parent : reference(item.ancestor());
                 case "ChildCount" -> Integer.toString(children(id).size());
                 case "Locale" -> "'es'";
                 case "AccessibleId" -> Ffm.quote(id);
@@ -232,15 +246,17 @@ final class AtSpiProvider {
     private int setProperty(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
                             MemorySegment property, MemorySegment value, MemorySegment error, MemorySegment data) {
         try {
-            if (!id(objectPath).equals("root") || !Ffm.string(iface).equals(PREFIX + "Application") || !Ffm.string(property).equals("Id")) return 0;
+            if (!id(objectPath).equals(Snapshot.ROOT_ID) || !Ffm.string(iface).equals(PREFIX + "Application") || !Ffm.string(property).equals("Id")) return 0;
             applicationId = (int) ffi.call("g_variant_get_int32", JAVA_INT, new MemoryLayout[]{ADDRESS}, value); return 1;
         } catch (RuntimeException failure) { return 0; }
     }
     private void method(MemorySegment bus, MemorySegment sender, MemorySegment objectPath, MemorySegment iface,
                         MemorySegment method, MemorySegment args, MemorySegment invocation, MemorySegment data) {
         try {
-            String id = id(objectPath), name = Ffm.string(method), api = Ffm.string(iface);
-            AccessibleNode item = snapshot.get().get(id);
+            var id = id(objectPath);
+            var name = Ffm.string(method);
+            var api = Ffm.string(iface);
+            var item = snapshot.get().get(id);
             if (api.endsWith("Action") && name.equals("DoAction")) {
                 if (ffi.integer(args, 0) != 0) throw new IllegalArgumentException("Action index out of range");
                 mutate(invocation, () -> actions.press(id));
@@ -256,13 +272,13 @@ final class AtSpiProvider {
                 case "GetItems" -> cacheItems(snapshot.get(), busName, parent);
                 case "GetChildAtIndex" -> "(" + reference(children(id).get(ffi.integer(args, 0))) + ",)";
                 case "GetChildren" -> "(@a(so) [" + String.join(",", children(id).stream().map(this::reference).toList()) + "],)";
-                case "GetIndexInParent" -> "(" + (id.equals("root") ? -1 : children(item.ancestor()).indexOf(id)) + ",)";
+                case "GetIndexInParent" -> "(" + (id.equals(Snapshot.ROOT_ID) ? -1 : children(item.ancestor()).indexOf(id)) + ",)";
                 case "GetRole" -> "(uint32 " + item.role().atspiValue() + ",)";
                 case "GetRoleName", "GetLocalizedRoleName" -> "(" + Ffm.quote(item.role().roleName()) + ",)";
                 case "GetState" -> "([uint32 " + stateBits(item) + ", uint32 0],)";
                 case "GetRelationSet" -> "(@a(ua(so)) [],)";
                 case "GetAttributes" -> "(@a{ss} {},)";
-                case "GetApplication" -> "(" + reference("root") + ",)";
+                case "GetApplication" -> "(" + reference(Snapshot.ROOT_ID) + ",)";
                 case "GetInterfaces" -> "([" + String.join(",", interfaces(item).stream().map(Ffm::quote).toList()) + "],)";
                 case "GetLocale" -> "('es',)";
                 case "GetApplicationBusAddress" -> "('',)"; // Shared accessibility bus, not a private peer bus.

@@ -31,7 +31,6 @@ import java.util.List;
 public final class AtSpiObjects {
     public static final String PREFIX = "org.a11y.atspi.";
     public static final String ROOT_PATH = "/org/a11y/atspi/accessible/root";
-    public static final String ROOT_ID = "root";
     public static final String CACHE_ID = "cache";
     public static final String DESCRIPTION = "Experimental JavaFX AT-SPI provider";
 
@@ -43,7 +42,7 @@ public final class AtSpiObjects {
 
     public static List<String> interfaces(AccessibleNode node) {
         var result = new ArrayList<>(List.of(PREFIX + "Accessible"));
-        if (node.id().equals(ROOT_ID)) result.add(PREFIX + "Application");
+        if (node.id().equals(Snapshot.ROOT_ID)) result.add(PREFIX + "Application");
         if (node.has(Capability.ACTION)) result.add(PREFIX + "Action");
         if (node.has(Capability.TEXT)) result.add(PREFIX + "Text");
         if (node.has(Capability.EDITABLE_TEXT)) result.add(PREFIX + "EditableText");
@@ -73,10 +72,10 @@ public final class AtSpiObjects {
     /** GVariant text of the {@code ((so)(so)(so)iiassusau)} cache record for {@code node}. */
     public static String cacheRecord(Snapshot snapshot, AccessibleNode node, String busName, String applicationParent) {
         var id = node.id();
-        var root = id.equals(ROOT_ID);
+        var root = id.equals(Snapshot.ROOT_ID);
         var ancestor = root ? applicationParent : reference(busName, node.ancestor());
         var index = root ? -1 : snapshot.get(node.ancestor()).children().indexOf(id);
-        return "(" + reference(busName, id) + ", " + reference(busName, ROOT_ID) + ", " + ancestor + ", " + index + ", " + node.children().size()
+        return "(" + reference(busName, id) + ", " + reference(busName, Snapshot.ROOT_ID) + ", " + ancestor + ", " + index + ", " + node.children().size()
                 + ", [" + String.join(",", interfaces(node).stream().map(VariantText::quote).toList()) + "], " + quote(node.name())
                 + ", uint32 " + node.role().atspiValue() + ", " + quote(DESCRIPTION) + ", [uint32 " + stateBits(node) + ", uint32 0])";
     }
@@ -120,7 +119,7 @@ public final class AtSpiObjects {
                 + methodXml("GetState", "", "au") + methodXml("GetRelationSet", "", "a(ua(so))")
                 + methodXml("GetAttributes", "", "a{ss}") + methodXml("GetApplication", "", "(so)") + methodXml("GetInterfaces", "", "as");
         var xml = new StringBuilder("<node><interface name='" + PREFIX + "Accessible'>" + accessible + "</interface>");
-        if (node.id().equals(ROOT_ID)) xml.append("<interface name='").append(PREFIX).append("Application'>")
+        if (node.id().equals(Snapshot.ROOT_ID)) xml.append("<interface name='").append(PREFIX).append("Application'>")
                 .append(properties("ToolkitName:s", "Version:s", "ToolkitVersion:s", "AtspiVersion:s", "InterfaceVersion:u", "Id:i:readwrite"))
                 .append(methodXml("GetLocale", "u", "s")).append(methodXml("GetApplicationBusAddress", "", "s")).append("</interface>");
         if (node.has(Capability.ACTION)) {
