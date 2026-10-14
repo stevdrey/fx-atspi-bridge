@@ -17,6 +17,7 @@ package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -29,6 +30,7 @@ import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,6 +87,10 @@ class ProviderLifecycleTest {
         provider.terminated().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
+    @Test void terminationStageIsOneSharedReadOnlyView() {
+        var provider = provider();
+        assertSame(provider.terminated(), provider.terminated());
+    }
     @Test void stopBeforeStartTerminatesWithoutNativeWork() throws Exception {
         var provider = provider();
         provider.stop(); provider.stop();
@@ -134,7 +140,7 @@ class ProviderLifecycleTest {
             var pool = Executors.newFixedThreadPool(6);
             try {
                 for (int worker = 0; worker < 6; worker++) {
-                    boolean starter = worker % 2 == 0;
+                    var starter = worker % 2 == 0;
                     pool.submit(() -> { go.await(); if (starter) provider.start(); else provider.stop(); return null; });
                 }
                 go.countDown();
@@ -202,5 +208,52 @@ class ProviderLifecycleTest {
         assertEquals(0, provider.pendingCount());
         heldTasks.forEach(Runnable::run); // late FX tasks find nothing to release
         assertEquals(4, provider.pendingReleased(), "a task running after shutdown must not release again");
+    }
+    /** Owns the AT-SPI registry name on the private bus and never answers, so Embed stays outstanding. */
+    private static final String STALLED_REGISTRY = """
+            import sys
+            import gi
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio, GLib
+            xml = '<node><interface name="org.a11y.atspi.Socket"><method name="Embed"><arg type="(so)" direction="in"/><arg type="(so)" direction="out"/></method></interface></node>'
+            info = Gio.DBusNodeInfo.new_for_xml(xml)
+            held = []
+            def on_bus(connection, name):
+                connection.register_object("/org/a11y/atspi/accessible/root", info.interfaces[0],
+                                           lambda c, s, p, i, m, params, inv: held.append(inv), None, None)
+            def on_name(connection, name):
+                print("ready", flush=True)
+            Gio.bus_own_name_on_connection  # present in PyGObject
+            connection = Gio.DBusConnection.new_for_address_sync(sys.argv[1],
+                Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+            on_bus(connection, "")
+            Gio.bus_own_name_on_connection(connection, "org.a11y.atspi.Registry", Gio.BusNameOwnerFlags.NONE, on_name, None)
+            GLib.MainLoop().run()
+            """;
+    @Test void stopWhileEmbedIsOutstandingCancelsAndDrainsBeforeFreeingCallbacks() throws Exception {
+        var script = Files.createTempFile("stalled-registry", ".py");
+        Files.writeString(script, STALLED_REGISTRY);
+        var registry = new ProcessBuilder("python3", "-I", "-W", "ignore", script.toString(), address).redirectErrorStream(true).start();
+        try {
+            var output = new BufferedReader(new InputStreamReader(registry.getInputStream()));
+            var ready = output.readLine(); // null when the helper exits early (for example no PyGObject)
+            if (!"ready".equals(ready)) {
+                if ("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("stalled registry helper unavailable: " + ready);
+                Assumptions.abort("python3 with PyGObject Gio unavailable");
+            }
+            var provider = new AtSpiProvider(statuses::add, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
+            providers.add(provider);
+            provider.start();
+            await(provider, State.RUNNING);
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!provider.embedOutstanding() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(provider.embedOutstanding(), "the Embed call must still be outstanding when shutdown starts");
+            provider.stop();
+            awaitTermination(provider);
+            assertEquals(State.CLOSED, provider.state());
+            assertFalse(provider.embedOutstanding(), "the Embed callback must have run before teardown finished");
+            assertFalse(provider.embedAbandoned(), "draining must not need the retain-memory fallback");
+            assertTrue(statuses.stream().noneMatch(s -> s.contains("registrar")), statuses.toString());
+        } finally { registry.destroyForcibly(); Files.deleteIfExists(script); }
     }
 }

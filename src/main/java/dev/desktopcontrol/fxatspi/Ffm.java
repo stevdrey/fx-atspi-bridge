@@ -32,7 +32,7 @@ final class Ffm implements AutoCloseable {
     /** A resolved downcall together with the descriptor it was linked with. */
     private record Binding(FunctionDescriptor descriptor, MethodHandle handle) {}
     private final ConcurrentHashMap<String, Binding> bindings = new ConcurrentHashMap<>();
-    private volatile boolean closed;
+    private volatile boolean closed, detached;
     Object call(String name, MemoryLayout result, MemoryLayout[] signature, Object... args) {
         if (closed) throw new IllegalStateException("Native API closed");
         var descriptor = result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature);
@@ -82,5 +82,10 @@ final class Ffm implements AutoCloseable {
     }
     void unref(MemorySegment object) { if (object.address() != 0) call("g_object_unref", null, new MemoryLayout[]{ADDRESS}, object); }
     /** Idempotent; later calls fail with a stable exception instead of entering unloaded libraries. */
-    @Override public void close() { if (!closed) { closed = true; arena.close(); } }
+    /**
+     * Keeps the arena open at {@link #close()}: native code may still hold an upcall stub that lives in it.
+     * A bounded, one-time leak is preferred to a callback into freed memory.
+     */
+    void detach() { detached = true; }
+    @Override public void close() { if (!closed) { closed = true; if (!detached) arena.close(); } }
 }

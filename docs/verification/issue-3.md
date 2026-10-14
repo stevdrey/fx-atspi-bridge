@@ -10,8 +10,8 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 12 tests (8 provider + 4 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 32 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 14 tests (10 provider + 4 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 34 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -35,6 +35,13 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 - `Platform.runLater` after toolkit shutdown drops tasks silently, so the FX release hop could not be the only way to free the install slot. The slot is now an `AtomicReference` cleared on the provider thread at termination (the bridge owns the slot before the provider starts, so a fast termination cannot race ahead of `install`). `slotIsReleasedEvenWhenTheFxReleaseTaskIsDropped` models the dropped task with a discarding executor; a real `Platform.exit()` was not exercised because the toolkit cannot be restarted in the same JVM.
 - `ExecutorService pool` → `var pool`.
 - `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 12 tests each, 0 failures.
+
+## Code-review follow-up 4 (Codex, PR #19, commit b27446f)
+
+- **Outstanding Embed call at teardown (real defect):** the asynchronous registry call completes through the thread-default context and calls a stub from the provider arena; breaking out of the loop and tearing down first could leave a dangling callback and leaked native task. Teardown now cancels it and drains the context before releasing anything; `stopWhileEmbedIsOutstandingCancelsAndDrainsBeforeFreeingCallbacks` uses a Python Gio helper that owns `org.a11y.atspi.Registry` on the private bus and never answers. Mutation check: with the drain disabled the test fails (callback had not run). The test is skipped, or fails with `REQUIRE_NATIVE_BUS=1`, when `python3` with PyGObject is unavailable. The `Ffm.detach()` fallback (callback never runs) is not exercised by a test.
+- `closed()` now returns one cached read-only stage (`terminationStageIsOneSharedReadOnlyView`).
+- `boolean starter` → `var starter`.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 14 tests each (10 provider + 4 bridge), 0 failures, 0 skipped.
 
 ## Defect found and fixed while testing
 

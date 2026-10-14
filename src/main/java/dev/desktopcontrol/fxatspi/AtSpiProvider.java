@@ -37,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -83,6 +84,10 @@ final class AtSpiProvider {
     private volatile Throwable registrationFailure;
     private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
     private final CompletableFuture<Void> terminated = new CompletableFuture<>();
+    /** One shared read-only view: each minimalCompletionStage() call would add a dependent to the pending future. */
+    private final CompletionStage<Void> terminatedView = terminated.minimalCompletionStage();
+    private volatile boolean embedOutstanding, embedAbandoned;
+    private MemorySegment embedCancellable = Ffm.NIL;
     private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
 
     /** Provider lifecycle: NEW → STARTING → RUNNING → STOPPING → CLOSED, or FAILED after cleanup. */
@@ -113,8 +118,10 @@ final class AtSpiProvider {
     }
     State state() { return state.get(); }
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
-    CompletionStage<Void> terminated() { return terminated.minimalCompletionStage(); }
+    CompletionStage<Void> terminated() { return terminatedView; }
     boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
+    boolean embedOutstanding() { return embedOutstanding; }
+    boolean embedAbandoned() { return embedAbandoned; }
     boolean isTerminated() { return terminated.isDone(); }
     String busName() { return busName; }
     long pendingAcquired() { return pendingAcquired.get(); }
@@ -185,13 +192,16 @@ final class AtSpiProvider {
     }
     private void embedWithRegistry() throws ReflectiveOperationException {
         var request = ffi.variant("((" + Ffm.quote(busName) + ", objectpath '" + ROOT_PATH + "'),)");
+        embedCancellable = (MemorySegment) ffi.call("g_cancellable_new", ADDRESS, new MemoryLayout[]{});
+        embedOutstanding = true;
         try {
             ffi.call("g_dbus_connection_call", null,
                     new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS},
                     connection, ffi.arena.allocateFrom("org.a11y.atspi.Registry"), ffi.arena.allocateFrom(ROOT_PATH),
                     ffi.arena.allocateFrom(PREFIX + "Socket"), ffi.arena.allocateFrom("Embed"), request,
-                    Ffm.NIL, 0, 5000, Ffm.NIL, stub("embedded", null, 3), Ffm.NIL);
-        } finally { ffi.release(request); }
+                    Ffm.NIL, 0, 5000, embedCancellable, stub("embedded", null, 3), Ffm.NIL);
+        } catch (Throwable failure) { embedOutstanding = false; throw failure; }
+        finally { ffi.release(request); }
     }
     /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
     private void complete() {
@@ -202,7 +212,26 @@ final class AtSpiProvider {
         return (int) ffi.call("g_dbus_connection_is_closed", JAVA_INT, new MemoryLayout[]{ADDRESS}, connection) != 0;
     }
     /** Runs on the provider thread under the provider lock; every step is independent so one failure cannot skip the rest. */
+    /**
+     * The Embed completion is delivered through the main context and calls an upcall stub from the provider
+     * arena, so cancel it and let the callback run before either is released. Returns false if it never ran.
+     */
+    private boolean drainEmbed(MemorySegment context) {
+        if (!embedOutstanding) return true;
+        guarded(() -> ffi.call("g_cancellable_cancel", null, new MemoryLayout[]{ADDRESS}, embedCancellable));
+        var deadline = System.nanoTime() + EMBED_DRAIN_NANOS;
+        while (embedOutstanding && System.nanoTime() < deadline) {
+            guarded(() -> ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0));
+            if (embedOutstanding) LockSupport.parkNanos(5_000_000L);
+        }
+        return !embedOutstanding;
+    }
     private void teardown(MemorySegment context, boolean pushed) {
+        if (!drainEmbed(context)) {
+            embedAbandoned = true; ffi.detach();
+            status.accept("Error AT-SPI2: registry call did not complete; native memory retained");
+        }
+        if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
         for (var invocation : List.copyOf(pending.values())) {
             guarded(() -> error(invocation, new Rejected("Provider stopped")));
             guarded(() -> releaseInvocation(invocation));
@@ -228,6 +257,7 @@ final class AtSpiProvider {
         pendingReleased.incrementAndGet();
         ffi.unref(invocation);
     }
+    private static final long EMBED_DRAIN_NANOS = 1_000_000_000L;
     private static void guarded(Runnable step) {
         try { step.run(); } catch (Throwable ignored) { /* Cleanup continues; details may contain peer data. */ }
     }
@@ -299,6 +329,7 @@ final class AtSpiProvider {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
     }
     private void embedded(MemorySegment source, MemorySegment result, MemorySegment data) {
+        embedOutstanding = false;
         try {
             var reply = ffi.checked("g_dbus_connection_call_finish", new MemoryLayout[]{ADDRESS, ADDRESS}, source, result);
             try {
@@ -306,10 +337,14 @@ final class AtSpiProvider {
                 try { parent = "(" + Ffm.quote(ffi.text(ref, 0)) + ", objectpath " + Ffm.quote(ffi.text(ref, 1)) + ")"; }
                 finally { ffi.release(ref); }
             } finally { ffi.release(reply); }
+            if (!running) return; // completed while shutting down
             registered = true;
             status.accept("AT-SPI2 listo: controles publicados sin sudo ni capturas.");
             System.err.println("FX AT-SPI Lab ready: " + busName + " " + ROOT_PATH);
-        } catch (Throwable error) { registrationFailure = error; running = false; status.accept("Error al registrar AT-SPI2: " + code(error)); }
+        } catch (Throwable error) {
+            if (!running) return; // a cancelled or failed completion during shutdown is expected
+            registrationFailure = error; running = false; status.accept("Error al registrar AT-SPI2: " + code(error));
+        }
     }
     private MemorySegment sync(MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
         try (Arena temporary = Arena.ofConfined()) {
