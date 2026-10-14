@@ -108,14 +108,14 @@ install n=1000 bridge on plain:
 | `[B` | java.base | 161 (159–175) | 7.8 (7.7–8.2) |
 | `java.lang.Class` | java.base | 33 (33–33) | 4.0 (4.0–4.0) |
 | `java.lang.String` | java.base | 161 (159–175) | 3.8 (3.7–4.1) |
-| `java.util.concurrent.locks.AbstractQueuedSynchronizer$SharedNode` | java.base | 100 (100–100) | 2.3 (2.3–2.3) |
-| `java.util.concurrent.CountDownLatch$Sync` | java.base | 100 (100–100) | 2.3 (2.3–2.3) |
 | `dev.desktopcontrol.fxlab.BenchApp$Generation` | dev.desktopcontrol.fxlab | 100 (100–100) | 2.3 (2.3–2.3) |
+| `java.util.concurrent.CountDownLatch$Sync` | java.base | 100 (100–100) | 2.3 (2.3–2.3) |
+| `java.util.concurrent.locks.AbstractQueuedSynchronizer$SharedNode` | java.base | 100 (100–100) | 2.3 (2.3–2.3) |
 | `java.lang.invoke.MemberName` | java.base | 55 (55–55) | 2.1 (2.1–2.1) |
 | `java.lang.Integer` | java.base | 127 (127–127) | 2.0 (2.0–2.0) |
 | `[D` | java.base | 2 (2–2) | 1.6 (1.6–1.6) |
-| `java.util.concurrent.atomic.AtomicInteger` | java.base | 100 (100–100) | 1.6 (1.6–1.6) |
 | `java.util.concurrent.CountDownLatch` | java.base | 100 (100–100) | 1.6 (1.6–1.6) |
+| `java.util.concurrent.atomic.AtomicInteger` | java.base | 100 (100–100) | 1.6 (1.6–1.6) |
 | `java.lang.invoke.BoundMethodHandle$Species_LLLL` | java.base | 30 (30–30) | 1.4 (1.4–1.4) |
 | `jdk.internal.util.WeakReferenceKey` | java.base | 36 (36–36) | 1.1 (1.1–1.1) |
 

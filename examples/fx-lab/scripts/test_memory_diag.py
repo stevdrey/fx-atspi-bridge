@@ -108,28 +108,71 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(memory_diag.cell_key("n100-d10-on-r1"), (None, None))
 
 
+ARTIFACTS = {"smaps_rollup": SMAPS, "nmt": NMT, "malloc": MALLOC, "histo": HISTO, "pmap": PMAP,
+             "trim": "Trim native heap: RSS+Swap: 277M->241M (-37380K)\n"}
+
+
 class SummaryTest(unittest.TestCase):
-    def write_cell(self, root, name, rss_before, rss_after):
+    def write_cell(self, root, name, rss_before, rss_after, artifacts=True):
         run = {"structuralHeapDeltaBytesAfterGc": 2 * 1024 * 1024}
         for checkpoint, rss in (("structuralBefore", rss_before), ("structuralAfterGc", rss_after)):
             for key, value in (("Rss", rss), ("Anonymous", rss // 2), ("PssFile", 1024)):
                 run[f"{checkpoint}Smaps{key}Kb"] = value
+        if artifacts:
             cell = root / name
-            cell.mkdir(exist_ok=True)
-            (cell / f"{checkpoint}.histo.txt").write_text(HISTO)
-            (cell / f"{checkpoint}.malloc.txt").write_text(MALLOC)
-            (cell / f"{checkpoint}.pmap.txt").write_text(PMAP)
+            cell.mkdir()
+            for checkpoint, kind in memory_diag.expected_artifacts(run, memory_diag.cell_key(name)[0][3]):
+                (cell / f"{checkpoint}.{kind}.txt").write_text(ARTIFACTS[kind])
         (root / f"{name}.json").write_text(json.dumps(run))
+
+    def write_reps(self, root, artifacts=True):
+        for rep, growth in ((1, 1024), (2, 3072), (3, 2048)):
+            self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts)
 
     def test_median_and_range_over_repetitions(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
-            for rep, growth in ((1, 1024), (2, 3072), (3, 2048)):
-                self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth)
+            self.write_reps(root)
             text = memory_diag.summary(root)
         self.assertIn("| structural n=100 bridge on plain | 3 | structural | structuralAfterGc | 2.0 (2.0–2.0) | 2.0 (1.0–3.0) |", text)
         self.assertIn("| structural n=100 bridge on plain | structuralBefore | 0.01 (0.01–0.01) | 309 (309–309) |", text)
         self.assertNotIn("--secret-path", text)
+
+    def test_a_missing_artifact_rejects_the_collection_and_names_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root)
+            (root / "structural-n100-on-plain-r2" / "structuralAfterGc.malloc.txt").unlink()
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structural-n100-on-plain-r2/structuralAfterGc.malloc.txt is missing", str(raised.exception))
+
+    def test_a_run_without_its_artifact_directory_rejects_the_collection(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root)
+            self.write_cell(root, "structural-n100-on-plain-r4", 100_000, 101_000, artifacts=False)
+            with self.assertRaises(SystemExit) as raised:
+                memory_diag.summary(root)
+        self.assertIn("structural-n100-on-plain-r4/structuralBefore.histo.txt is missing", str(raised.exception))
+
+    def test_json_only_directory_reports_only_json_tables(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False)
+            text = memory_diag.summary(root)
+        self.assertIn("| 2.0 (1.0–3.0) |", text)
+        self.assertIn("No raw artifacts in this directory (JSON only)", text)
+        self.assertNotIn("## glibc malloc", text)
+
+    def test_expected_artifacts_follow_variant_and_checkpoint(self):
+        run = {"installChurnAfterTrimSmapsRssKb": 1, "installChurnCheckpointSmapsRssKb": 1, "installChurnAfterGcSmapsRssKb": 1}
+        expected = memory_diag.expected_artifacts(run, "nmt")
+        self.assertIn(("installChurnAfterTrim", "trim"), expected)
+        self.assertIn(("installChurnCheckpoint", "nmt"), expected)
+        self.assertIn(("installChurnAfterGc", "histo"), expected)
+        self.assertNotIn(("installChurnCheckpoint", "histo"), expected)
+        self.assertNotIn(("installChurnAfterGc", "nmt"), memory_diag.expected_artifacts(run, "plain"))
 
     def test_empty_directory_is_refused(self):
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):

@@ -28,7 +28,7 @@ Spec: [`docs/specs/issue-17.md`](../specs/issue-17.md). Data: `docs/verification
 
 ```bash
 ./gradlew check --no-daemon                                              # Passed (JDK 27)
-python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # Passed (76 tests, 1 skipped as before)
+python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # Passed (80 tests, 1 skipped as before)
 examples/fx-lab/scripts/run-baseline.sh <tmp> smoke                      # Passed: install churn completes again (see Harness fix)
 examples/fx-lab/scripts/run-memory-diag.sh <tmp> smoke                   # Passed: all artifacts per checkpoint, ~2.5 min
 examples/fx-lab/scripts/run-memory-diag.sh <out> diag                    # The collection below, ~23 min
@@ -129,3 +129,4 @@ Steady state before the phase: with the bridge on, glibc memory **in use** is 15
 | Commit | Change | Touches measured path? |
 | --- | --- | --- |
 | (this PR, after `87d8c94`) | `memory_diag.py`: JVM-low/native split of `pmap` anonymous RSS and its test; verification and spec docs; committed data | No: analysis and documentation only. The summary was regenerated from the same raw artifacts |
+| (review follow-up, Codex) | `BenchApp`: the install-churn FX dispatches (`close()`, `install()`) wait at most 30 s for the FX thread, after which the run is invalid (exit 3, retried once) instead of blocking until the wrapper's process timeout. `memory_diag.py`: a directory with artifact directories must have every expected artifact for every run (`smaps_rollup`, `malloc`, `pmap` at each checkpoint in the JSON, `nmt` in NMT cells, `histo` at histogram checkpoints, `trim` after trimming), otherwise the summary exits and names the missing files; a JSON-only directory (the committed data) prints only the JSON tables; ties in the per-class growth list are ordered by class name. | No: error path of the harness and validation/ordering in the analysis. The 21 raw runs pass validation; the regenerated `summary.md` differs only in the order of tied classes. Verified with the unit tests and the `smoke` profile; no re-collection. |

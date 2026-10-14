@@ -24,6 +24,10 @@ PHASES = {
     "install": ("installChurnBefore", ("installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterTrim")),
 }
 SMAPS = ("Rss", "Anonymous", "PssFile")
+# Checkpoints where BenchApp takes a class histogram (MemoryDiagnostics.snapshot(..., histogram=true)).
+HISTOGRAM_CHECKPOINTS = frozenset({"afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralAfterGc",
+                                   "installChurnBefore", "installChurnAfterGc"})
+MAX_REPORTED_PROBLEMS = 20
 # With compressed oops HotSpot reserves the Java heap and class space below this address, while glibc arenas, thread
 # stacks and other native mappings live near the top of the address space. A heuristic: memory_diag.py reports it as
 # "JVM low range" and the verification record cross-checks it against NMT's Java Heap category.
@@ -133,9 +137,65 @@ def fmt(values, scale=1.0, digits=1):
     return f"{st.median(values):.{digits}f} ({min(values):.{digits}f}–{max(values):.{digits}f})"
 
 
+def checkpoints(run):
+    """Checkpoints a run snapshotted: BenchApp writes <checkpoint>SmapsRssKb into the JSON for every snapshot."""
+    return {key[:-len("SmapsRssKb")] for key in run if key.endswith("SmapsRssKb")}
+
+
+def expected_artifacts(run, variant):
+    """(checkpoint, artifact) pairs MemoryDiagnostics writes for this run: smaps_rollup, malloc and pmap everywhere,
+    nmt in NMT runs, histo at histogram checkpoints, trim where the native heap was trimmed."""
+    expected = set()
+    for checkpoint in checkpoints(run):
+        expected |= {(checkpoint, kind) for kind in ("smaps_rollup", "malloc", "pmap")}
+        if variant == "nmt":
+            expected.add((checkpoint, "nmt"))
+        if checkpoint in HISTOGRAM_CHECKPOINTS:
+            expected.add((checkpoint, "histo"))
+        if checkpoint == "installChurnAfterTrim":
+            expected.add((checkpoint, "trim"))
+    return expected
+
+
+def validate(data, cells):
+    """True when the raw artifacts are present and complete for every run, False for a JSON-only directory (no run has
+    an artifact directory, e.g. the committed evidence). A partial collection exits: statistics computed from fewer
+    runs than the cell reports would silently understate the variance."""
+    names = [name for runs in cells.values() for name, _ in runs]
+    if not any((data / name).is_dir() for name in names):
+        return False
+    problems = []
+    for key, runs in sorted(cells.items()):
+        points = checkpoints(runs[0][1])
+        if key[0] in PHASES:
+            before, afters = PHASES[key[0]]
+            missing = {before, next(a for a in afters if a.endswith("AfterGc"))} - points
+            if missing:
+                problems.append(f"{runs[0][0]}.json: no snapshot of {', '.join(sorted(missing))}")
+        for name, run in runs:
+            if checkpoints(run) != points:
+                problems.append(f"{name}.json: checkpoints differ from {runs[0][0]}.json")
+            for checkpoint, kind in sorted(expected_artifacts(run, key[3])):
+                if not (data / name / f"{checkpoint}.{kind}.txt").is_file():
+                    problems.append(f"{name}/{checkpoint}.{kind}.txt is missing")
+    if problems:
+        shown = problems[:MAX_REPORTED_PROBLEMS]
+        more = len(problems) - len(shown)
+        sys.exit("incomplete diagnostic collection in " + str(data) + ":\n  " + "\n  ".join(shown)
+                 + (f"\n  ... and {more} more" if more else ""))
+    return True
+
+
 def read_artifact(data, cell, checkpoint, kind):
-    path = data / cell / f"{checkpoint}.{kind}.txt"
-    return path.read_text() if path.exists() else None
+    """Only called for artifacts validate() has required, so a missing file is a bug, not a gap to skip."""
+    return (data / cell / f"{checkpoint}.{kind}.txt").read_text()
+
+
+def phase_points(key, runs, histogram=False):
+    """The phase's checkpoints this cell snapshotted, in phase order."""
+    before, afters = PHASES.get(key[0], (None, ()))
+    points = checkpoints(runs[0][1])
+    return [c for c in (before, *afters) if c in points and (not histogram or c in HISTOGRAM_CHECKPOINTS)]
 
 
 def load(data):
@@ -157,6 +217,7 @@ def label(key):
 def summary(data):
     data = pathlib.Path(data)
     cells = load(data)
+    raw = validate(data, cells)
     out = [f"# Memory diagnostics summary\n\nSource: `{data}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
 
     out.append("## Phase deltas (MB, after − before)\n")
@@ -183,18 +244,21 @@ def summary(data):
             values = [fmt([r.get(f) for _, r in runs]) for f in ("installChurnCloseMsP50", "installChurnCloseMsMax", "installChurnReadyMsP50", "installChurnReadyMsMax", "installChurnProviderThreadsCheckpoint")]
             out.append(f"| {label(key)} | " + " | ".join(values) + " |")
 
+    if not raw:
+        out.append("\nNo raw artifacts in this directory (JSON only): allocator, NMT, histogram and pmap tables need the "
+                   "<cell>/ snapshot directories of the collection.")
+        return "\n".join(out) + "\n"
+
     out.append("\n## glibc malloc (MB) and arenas\n")
     out.append("| Cell | Checkpoint | Arenas | Held from OS | Free in allocator | In use | Direct mmap |")
     out.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for key, runs in sorted(cells.items()):
         if key[3] == "nmt":
             continue  # NMT adds its own malloc headers; read allocator state from the cells without it
-        before, afters = PHASES.get(key[0], (None, ()))
-        for checkpoint in (before, *afters):
-            parsed = [parse_malloc_info(t) for t in (read_artifact(data, n, checkpoint, "malloc") for n, _ in runs) if t]
-            if parsed:
-                out.append(f"| {label(key)} | {checkpoint} | {fmt([p['arenas'] for p in parsed], digits=0)} | "
-                           + " | ".join(fmt([p[f] for p in parsed], 1024 * 1024) for f in ("system", "free", "inUse", "mmap")) + " |")
+        for checkpoint in phase_points(key, runs):
+            parsed = [parse_malloc_info(read_artifact(data, n, checkpoint, "malloc")) for n, _ in runs]
+            out.append(f"| {label(key)} | {checkpoint} | {fmt([p['arenas'] for p in parsed], digits=0)} | "
+                       + " | ".join(fmt([p[f] for p in parsed], 1024 * 1024) for f in ("system", "free", "inUse", "mmap")) + " |")
 
     out.append("\n## NMT committed (MB): phase deltas per category\n")
     out.append("Only categories whose median delta is at least 1 MB in some cell, plus Total and malloc.\n")
@@ -203,15 +267,13 @@ def summary(data):
     for key, runs in sorted(cells.items()):
         if key[3] != "nmt" or key[0] not in PHASES:
             continue
-        before, afters = PHASES[key[0]]
+        before, *afters = phase_points(key, runs)
         for after in afters:
             deltas = collections.defaultdict(list)
             absolute = collections.defaultdict(list)
             for name, _ in runs:
-                start, end = read_artifact(data, name, before, "nmt"), read_artifact(data, name, after, "nmt")
-                if not (start and end):
-                    continue
-                start, end = parse_nmt(start), parse_nmt(end)
+                start = parse_nmt(read_artifact(data, name, before, "nmt"))
+                end = parse_nmt(read_artifact(data, name, after, "nmt"))
                 for category in end:
                     deltas[category].append(end[category] - start.get(category, 0))
                     absolute[category].append(end[category])
@@ -237,11 +299,8 @@ def summary(data):
     for key, runs in sorted(cells.items()):
         if key[0] not in PHASES:
             continue
-        before, afters = PHASES[key[0]]
-        for checkpoint in (before, *afters):
-            parsed = [parse_histogram(t) for t in (read_artifact(data, n, checkpoint, "histo") for n, _ in runs) if t]
-            if not parsed:
-                continue
+        for checkpoint in phase_points(key, runs, histogram=True):
+            parsed = [parse_histogram(read_artifact(data, n, checkpoint, "histo")) for n, _ in runs]
             groups = [histogram_groups(p) for p in parsed]
             row = [fmt([g["bridge"][1] for g in groups], 1024 * 1024, 2), fmt([g["bridge"][0] for g in groups], digits=0),
                    fmt([g["javafx"][1] for g in groups], 1024 * 1024, 2), fmt([g["javafx"][0] for g in groups], digits=0),
@@ -254,19 +313,16 @@ def summary(data):
         if key[2] != "on" or key[3] != "plain" or key[0] not in PHASES:
             continue
         before, afters = PHASES[key[0]]
-        after = next((a for a in afters if a.endswith("AfterGc")), None)
+        after = next(a for a in afters if a.endswith("AfterGc"))
         growth = collections.defaultdict(list)
         for name, _ in runs:
-            start, end = read_artifact(data, name, before, "histo"), read_artifact(data, name, after, "histo")
-            if not (start and end):
-                continue
-            start, end = parse_histogram(start), parse_histogram(end)
+            start = parse_histogram(read_artifact(data, name, before, "histo"))
+            end = parse_histogram(read_artifact(data, name, after, "histo"))
             for cls in set(start) | set(end):
                 s, e = start.get(cls, (0, 0, "")), end.get(cls, (0, 0, ""))
                 growth[(cls, e[2] or s[2])].append((e[0] - s[0], e[1] - s[1]))
-        if not growth:
-            continue
-        top = sorted(growth.items(), key=lambda item: -st.median(b for _, b in item[1]))[:15]
+        # Ties are ordered by class name so the summary is reproducible (set iteration order is not).
+        top = sorted(growth.items(), key=lambda item: (-st.median(b for _, b in item[1]), item[0]))[:15]
         out.append(f"\n{label(key)}:\n")
         out.append("| Class | Module | Δ instances | Δ KB |")
         out.append("| --- | --- | ---: | ---: |")
@@ -281,13 +337,11 @@ def summary(data):
     for key, runs in sorted(cells.items()):
         if key[3] == "nmt" or key[0] not in PHASES:
             continue
-        before, afters = PHASES[key[0]]
-        for checkpoint in (before, *afters):
-            parsed = [parse_pmap(t) for t in (read_artifact(data, n, checkpoint, "pmap") for n, _ in runs) if t]
-            if parsed:
-                out.append(f"| {label(key)} | {checkpoint} | "
-                           + " | ".join(fmt([p[f] for p in parsed], 1024) for f in ("anonRssKb", "lowAnonRssKb", "highAnonRssKb", "fileRssKb"))
-                           + f" | {fmt([p['anonMappings'] for p in parsed], digits=0)} |")
+        for checkpoint in phase_points(key, runs):
+            parsed = [parse_pmap(read_artifact(data, n, checkpoint, "pmap")) for n, _ in runs]
+            out.append(f"| {label(key)} | {checkpoint} | "
+                       + " | ".join(fmt([p[f] for p in parsed], 1024) for f in ("anonRssKb", "lowAnonRssKb", "highAnonRssKb", "fileRssKb"))
+                       + f" | {fmt([p['anonMappings'] for p in parsed], digits=0)} |")
     return "\n".join(out) + "\n"
 
 

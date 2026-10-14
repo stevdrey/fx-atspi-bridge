@@ -63,6 +63,8 @@ public final class BenchApp extends Application {
     private static final int BRIDGE_READY_SECONDS = 15;
     /** Bound for one provider's native teardown during install churn; a provider that does not terminate invalidates the run. */
     private static final int BRIDGE_CLOSED_SECONDS = 10;
+    /** Bound for the FX thread to run one install-churn task; like awaitPulse, an unresponsive FX thread invalidates the run. */
+    private static final int FX_DISPATCH_SECONDS = 30;
     private static final int STRUCTURAL_CONTROLS = 10;
     /** FxAtSpiBridge scans every 100 ms; holding each state 250 ms spans at least two scans plus provider reconcile. */
     private static final long HOLD_MS = 250;
@@ -475,8 +477,11 @@ public final class BenchApp extends Application {
         }
     }
 
-    /** Runs {@code action} on the FX thread and waits for its result; failures propagate to the bench thread. */
-    private static <T> T onFx(Callable<T> action) {
+    /**
+     * Runs {@code action} on the FX thread and waits for its result, bounded: an FX thread that does not run the task
+     * in time makes the run invalid (exit 3, retried once). Failures of the action propagate to the bench thread.
+     */
+    private static <T> T onFx(Callable<T> action) throws InterruptedException {
         var result = new CompletableFuture<T>();
         Platform.runLater(() -> {
             try {
@@ -485,7 +490,14 @@ public final class BenchApp extends Application {
                 result.completeExceptionally(e);
             }
         });
-        return result.join();
+        try {
+            return result.get(FX_DISPATCH_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            invalid("the FX thread did not run an install-churn task within " + FX_DISPATCH_SECONDS + " s");
+            throw new IllegalStateException("unreachable: invalid() halts", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("install-churn task failed on the FX thread", e.getCause());
+        }
     }
 
     private void snapshot(StringBuilder json, String checkpoint, boolean histogram) throws Exception {
