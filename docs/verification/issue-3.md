@@ -10,8 +10,8 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 10 tests (7 provider + 3 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 30 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 11 tests (8 provider + 3 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 31 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -21,6 +21,14 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 - The static install slot and provider snapshots outlived a closed bridge; both are released on termination (tests `terminatedBridgeReleasesTheSlotAndRetainedState`, `failedProviderDoesNotBlockReinstall`). The snapshot-empty assertion uses a bridge without JavaFX windows, so it checks the reset path but not a populated tree.
 - `reinstallIsRejectedUntilProviderTerminates` now takes the provider lock before calling `close()` (removes the race).
 - `./gradlew cleanTest test --tests '*LifecycleTest'` run 5 consecutive times: 10 tests each, 0 failures.
+
+## Code-review follow-up 2 (Codex, PR #19, commit 6d0340a)
+
+- `refresh()` could republish the tree after disposal if termination happened during traversal; publication and disposal now share a `publication` lock. `refreshDuringTerminationDoesNotRepublishTheTree` blocks the scene supplier mid-refresh, terminates the provider, then releases it. Mutation check: with the guard removed the test fails (assertion at the final `snapshotIsEmpty`), restored afterwards.
+- Slot-release tests poll for the condition (`awaitSlotReleased`) instead of assuming FX queue order.
+- The pending-invocation test now injects an FX executor that queues tasks, requires 4 invocations outstanding (`pendingCount()`) before `stop()`, asserts acquired = released = 4 afterwards, and runs the held FX tasks to show a late task releases nothing again.
+- Fully qualified `java.util.ArrayList`/`Arrays` replaced by imports.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 11 tests each, 0 failures.
 
 ## Defect found and fixed while testing
 

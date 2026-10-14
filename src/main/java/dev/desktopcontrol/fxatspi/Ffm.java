@@ -18,6 +18,7 @@ package dev.desktopcontrol.fxatspi;
 import dev.desktopcontrol.fxatspi.protocol.VariantText;
 import java.lang.foreign.*;
 import java.lang.invoke.*;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import static java.lang.foreign.ValueLayout.*;
 
@@ -46,8 +47,8 @@ final class Ffm implements AutoCloseable {
     MemorySegment checked(String name, MemoryLayout[] signature, Object... args) {
         try (Arena temporary = Arena.ofConfined()) {
             var error = temporary.allocate(ADDRESS);
-            var fullSignature = java.util.Arrays.copyOf(signature, signature.length + 1); fullSignature[signature.length] = ADDRESS;
-            var fullArgs = java.util.Arrays.copyOf(args, args.length + 1); fullArgs[args.length] = error;
+            var fullSignature = Arrays.copyOf(signature, signature.length + 1); fullSignature[signature.length] = ADDRESS;
+            var fullArgs = Arrays.copyOf(args, args.length + 1); fullArgs[args.length] = error;
             var result = (MemorySegment) call(name, ADDRESS, fullSignature, fullArgs);
             check(error);
             return result;

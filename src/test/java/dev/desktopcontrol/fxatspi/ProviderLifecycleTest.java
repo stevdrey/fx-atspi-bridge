@@ -30,6 +30,7 @@ import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,6 +39,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -144,29 +146,62 @@ class ProviderLifecycleTest {
             assertTrue(provider.state() == State.CLOSED || provider.state() == State.FAILED);
         }
     }
+    @Test void refreshDuringTerminationDoesNotRepublishTheTree() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var root = new AccessibleNode(Snapshot.ROOT_ID, "app", Role.APPLICATION, "typed text", false, true, true, false, false, 0, "",
+                List.of(), Set.of());
+        var armed = new AtomicBoolean();
+        var provider = new AtSpiProvider(statuses::add, () -> {
+            if (!armed.get()) return Snapshot.EMPTY; // the constructor traverses once before the test arms the latch
+            entered.countDown();
+            try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            return new Snapshot(Map.of(Snapshot.ROOT_ID, root));
+        }, new ActionExecutor(new TargetRegistry()), ffi -> address, false, Runnable::run);
+        providers.add(provider);
+        armed.set(true);
+        var refresher = Executors.newSingleThreadExecutor();
+        try {
+            var refresh = refresher.submit(provider::refresh);
+            assertTrue(entered.await(WAIT_SECONDS, TimeUnit.SECONDS), "refresh never reached the scene traversal");
+            provider.stop(); // NEW → CLOSED: clears state and terminates while the traversal is still running
+            awaitTermination(provider);
+            release.countDown();
+            refresh.get(WAIT_SECONDS, TimeUnit.SECONDS);
+        } finally { refresher.shutdownNow(); }
+        assertTrue(provider.snapshotIsEmpty(), "a traversal finishing after termination must not republish field text");
+    }
     @Test void pendingInvocationsAreReleasedExactlyOnceAcrossShutdown() throws Exception {
         var button = new AccessibleNode("button1", "Go", Role.PUSH_BUTTON, "", false, true, true, false, true, 0, Snapshot.ROOT_ID,
                 List.of(), Set.of(Capability.ACTION));
         var root = new AccessibleNode(Snapshot.ROOT_ID, "app", Role.APPLICATION, "", false, true, true, false, false, 0, "",
                 List.of("button1"), Set.of());
-        var provider = provider(new Snapshot(Map.of(Snapshot.ROOT_ID, root, "button1", button)), ffi -> address);
+        var snapshot = new Snapshot(Map.of(Snapshot.ROOT_ID, root, "button1", button));
+        var heldTasks = new CopyOnWriteArrayList<Runnable>();
+        // Tasks are captured, not run, so every accepted DoAction stays pending until shutdown drains it.
+        var provider = new AtSpiProvider(statuses::add, () -> snapshot, new ActionExecutor(new TargetRegistry()), ffi -> address, false, heldTasks::add);
+        providers.add(provider);
         provider.start();
         await(provider, State.RUNNING);
-        var calls = new java.util.ArrayList<Process>();
+        var calls = new ArrayList<Process>();
         for (int i = 0; i < 4; i++) {
             calls.add(new ProcessBuilder("gdbus", "call", "--address", address, "--dest", provider.busName(),
                     "--object-path", "/org/a11y/atspi/accessible/button1", "--method", "org.a11y.atspi.Action.DoAction", "0")
                     .redirectErrorStream(true).start());
         }
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (provider.pendingAcquired() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
-        assertTrue(provider.pendingAcquired() > 0, "no mutation reached the provider");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (provider.pendingCount() < 4 && System.nanoTime() < deadline) Thread.sleep(10);
+        assertEquals(4, provider.pendingCount(), "invocations must be outstanding when shutdown starts");
+        assertEquals(0, provider.pendingReleased(), "nothing may be released before shutdown");
         provider.stop();
         awaitTermination(provider);
         for (var call : calls) {
             if (!call.waitFor(WAIT_SECONDS, TimeUnit.SECONDS)) { call.destroyForcibly(); fail("client call never completed"); }
         }
-        assertEquals(provider.pendingAcquired(), provider.pendingReleased());
-        assertFalse(provider.state() == State.RUNNING);
+        assertEquals(4, provider.pendingAcquired());
+        assertEquals(4, provider.pendingReleased(), "shutdown must release each pending invocation once");
+        assertEquals(0, provider.pendingCount());
+        heldTasks.forEach(Runnable::run); // late FX tasks find nothing to release
+        assertEquals(4, provider.pendingReleased(), "a task running after shutdown must not release again");
     }
 }

@@ -73,6 +73,13 @@ class BridgeLifecycleTest {
         return result.get(20, TimeUnit.SECONDS);
     }
 
+    /** The release hop runs on the FX thread after termination, so poll instead of assuming queue order. */
+    private static void awaitSlotReleased() throws Exception {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (onFx(FxAtSpiBridge::slotHeld) && System.nanoTime() < deadline) Thread.sleep(10);
+        assertFalse(onFx(FxAtSpiBridge::slotHeld), "the install slot was not released after termination");
+    }
+
     @Test void reinstallIsRejectedUntilProviderTerminates() throws Exception {
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
         var first = last;
@@ -104,15 +111,13 @@ class BridgeLifecycleTest {
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
         onFx(() -> { last.close(); return null; });
         last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
-        onFx(() -> null); // the release hop was queued before this task
-        assertFalse(onFx(FxAtSpiBridge::slotHeld));
+        awaitSlotReleased();
         assertTrue(last.provider.snapshotIsEmpty());
     }
     @Test void failedProviderDoesNotBlockReinstall() throws Exception {
         var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false));
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
-        onFx(() -> null);
-        assertFalse(onFx(FxAtSpiBridge::slotHeld), "a self-failed provider must release the slot without close()");
+        awaitSlotReleased(); // no close() was called: the provider failed by itself
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
     }
 }

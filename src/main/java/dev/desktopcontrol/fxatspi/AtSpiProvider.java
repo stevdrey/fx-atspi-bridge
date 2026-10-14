@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -75,6 +76,10 @@ final class AtSpiProvider {
     private final Supplier<Snapshot> scene;
     private final BusAddress bus;
     private final boolean embed;
+    private final Executor fxExecutor;
+    /** Guards publication of {@code desired} against disposal; never held during scene traversal or callbacks. */
+    private final Object publication = new Object();
+    private volatile boolean disposed;
     private volatile Throwable registrationFailure;
     private final AtomicReference<State> state = new AtomicReference<>(State.NEW);
     private final CompletableFuture<Void> terminated = new CompletableFuture<>();
@@ -91,12 +96,21 @@ final class AtSpiProvider {
 
     /** @param embed false skips the registry Embed call, for tests that run on a private bus without a registry */
     AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionExecutor actions, BusAddress bus, boolean embed) {
+        this(status, scene, actions, bus, embed, Platform::runLater);
+    }
+    /** @param fxExecutor runs mutations on the FX thread; tests substitute a queue to hold invocations pending */
+    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionExecutor actions, BusAddress bus, boolean embed, Executor fxExecutor) {
+        this.fxExecutor = fxExecutor;
         this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
         this.bus = bus != null ? bus : this::sessionAccessibilityAddress;
         refresh(); snapshot.set(desired.get());
     }
     // Called only on the FX application thread.
-    void refresh() { if (!terminated.isDone()) desired.set(scene.get()); }
+    void refresh() {
+        if (disposed) return;
+        var built = scene.get();
+        synchronized (publication) { if (!disposed) desired.set(built); }
+    }
     State state() { return state.get(); }
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
     CompletionStage<Void> terminated() { return terminated.minimalCompletionStage(); }
@@ -105,6 +119,7 @@ final class AtSpiProvider {
     String busName() { return busName; }
     long pendingAcquired() { return pendingAcquired.get(); }
     long pendingReleased() { return pendingReleased.get(); }
+    synchronized int pendingCount() { return pending.size(); }
     /** Starts the provider thread once; later calls and calls after stop are ignored. */
     void start() {
         if (!state.compareAndSet(State.NEW, State.STARTING)) return;
@@ -180,7 +195,7 @@ final class AtSpiProvider {
     }
     /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
     private void complete() {
-        snapshot.set(Snapshot.EMPTY); desired.set(Snapshot.EMPTY);
+        synchronized (publication) { disposed = true; snapshot.set(Snapshot.EMPTY); desired.set(Snapshot.EMPTY); }
         terminated.complete(null);
     }
     private boolean busClosed() {
@@ -391,7 +406,7 @@ final class AtSpiProvider {
         pendingAcquired.incrementAndGet();
         pending.put(invocation.address(), invocation);
         try {
-            Platform.runLater(() -> {
+            fxExecutor.execute(() -> {
                 synchronized (this) {
                     if (pending.remove(invocation.address()) == null) return; // Shutdown already replied and freed it.
                     try {
