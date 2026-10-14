@@ -41,12 +41,16 @@ public final class FxAtSpiBridge implements AutoCloseable {
         this.fxExecutor = fxExecutor;
         registry = new TargetRegistry();
         provider = new AtSpiProvider(status, new SceneModelBuilder(registry)::build, new ActionExecutor(registry), bus, embed);
-        observer = new AnimationTimer() {
-            private long previous;
-            @Override public void handle(long now) {
-                if (now-previous>=100_000_000L) { previous=now; provider.refresh(); }
-            }
-        };
+        observer = new Observer(provider);
+    }
+    /** Refreshes the provider snapshot every 100 ms. Holds only the provider, so a timer that outlives a discarded disposal never keeps the bridge reachable. */
+    private static final class Observer extends AnimationTimer {
+        private final AtSpiProvider provider;
+        private long previous;
+        Observer(AtSpiProvider provider) { this.provider = provider; }
+        @Override public void handle(long now) {
+            if (now-previous>=100_000_000L) { previous=now; provider.refresh(); }
+        }
     }
     /** Called after the bridge owns the install slot, so a fast termination cannot clear the slot before it is set. */
     private void begin() {
@@ -97,8 +101,9 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     public static FxAtSpiBridge install() { return install(message -> System.err.println(message)); }
     /**
-     * Requests shutdown without blocking the FX thread; safe to call more than once.
-     * A new bridge can be installed only after {@link #closed()} completes.
+     * Requests shutdown without blocking the FX thread; safe to call more than once. This call itself stops the
+     * refresh observer and clears the target registry, synchronously on the FX thread. Native cleanup then happens
+     * on the provider thread; a new bridge can be installed only after {@link #closed()} completes.
      */
     @Override public void close() {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Close on the FX application thread");
@@ -110,10 +115,14 @@ public final class FxAtSpiBridge implements AutoCloseable {
     }
     boolean closeRequested() { return closed; }
     /**
-     * Completes after the provider thread has released all native resources, whether it stopped
-     * normally or failed (for example no accessibility bus, or bus loss). Never completes exceptionally;
-     * do not block the FX thread on it.
-     * @return the termination stage
+     * Completes after the provider thread has released all native resources, whether it stopped normally or
+     * failed (for example no accessibility bus, or bus loss). Never completes exceptionally; do not block the FX
+     * thread on it. It confirms native provider termination, not FX-side disposal: when the provider fails by
+     * itself, the observer and registry are released by a task posted to the JavaFX thread after termination, which
+     * runs later than this stage completes and is skipped if the toolkit has already exited. A new bridge may be
+     * installed as soon as this stage completes. If you call {@link #close()} yourself, the FX-side disposal has
+     * already happened before this stage can complete.
+     * @return the native termination stage
      */
     public CompletionStage<Void> closed() { return provider.terminated(); }
 }

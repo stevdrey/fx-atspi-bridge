@@ -16,13 +16,17 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.lang.ref.WeakReference;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
@@ -122,6 +126,25 @@ class BridgeLifecycleTest {
         onFx(() -> { last.close(); return null; });
         last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
         awaitSlotReleased();
+    }
+    @Test void deferredFxCleanupDoesNotBlockReinstallAndRunsWhenTheFxThreadGetsToIt() throws Exception {
+        var deferred = new CopyOnWriteArrayList<Runnable>();
+        var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false, deferred::add));
+        failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        awaitSlotReleased();
+        assertFalse(onFx(failing::closeRequested), "closed() confirms native termination, not FX-side disposal");
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)); // reinstall does not wait for the FX cleanup
+        assertEquals(1, deferred.size(), "the provider asked the FX executor for exactly one disposal task");
+        onFx(() -> { deferred.get(0).run(); return null; });
+        assertTrue(onFx(failing::closeRequested), "the deferred disposal runs when the FX thread gets to it");
+    }
+    @Test void discardedFxCleanupLeavesNoStaticReferenceToTheBridge() throws Exception {
+        var reference = onFx(() -> new WeakReference<>(
+                FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false, task -> {})));
+        awaitSlotReleased();
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (reference.get() != null && System.nanoTime() < deadline) { System.gc(); Thread.sleep(50); }
+        assertNull(reference.get(), "nothing static (install slot, running observer) may keep a terminated bridge reachable");
     }
     @Test void rejectedFxReleaseStillReleasesTheSlotAndNeverDisturbsTheProvider() throws Exception {
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false, task -> { throw new RejectedExecutionException("toolkit stopped"); }));

@@ -1,0 +1,57 @@
+{
+ "steps": [
+  "app started pid=1277392",
+  "registered with the real registry as [':1.10355'] after 0.52s",
+  "actions: {'do_action_go': True, 'set_text_field_unicode': True, 'pw_set_text': 'error: Error', 'pw_get_text': 'error: Error', 'after': [('field', 'new🧪')]}",
+  "immediate reinstall attempt: REINSTALL_REJECTED:The previous bridge is still terminating",
+  "old provider :1.10355 no longer listed by the registry after 0.26s",
+  "CLOSED_COMPLETED",
+  "REINSTALLED",
+  "second provider [':1.10357'] registered after 0.0s; node counts 9 -> 9",
+  "EXIT_CLOSED_COMPLETED"
+ ],
+ "checks": {
+  "registered_unique_names": [
+   ":1.10355"
+  ],
+  "registration_seconds": 0.52,
+  "node_count": 9,
+  "password_secret_in_tree": false,
+  "password_interfaces": [
+   "Accessible"
+  ],
+  "actions": {
+   "do_action_go": true,
+   "set_text_field_unicode": true,
+   "pw_set_text": "error: Error",
+   "pw_get_text": "error: Error",
+   "after": [
+    [
+     "field",
+     "new🧪"
+    ]
+   ]
+  },
+  "immediate_reinstall": "REINSTALL_REJECTED:The previous bridge is still terminating",
+  "provider_removed_from_registry_seconds": 0.26,
+  "old_provider_still_answers": false,
+  "old_provider_error": "GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name is not activatable",
+  "second_provider_unique_names": [
+   ":1.10357"
+  ],
+  "second_registration_seconds": 0.0,
+  "reinstalled_tree_matches_original_shape": true,
+  "app_exit_code": 0,
+  "registry_clean_after_exit_seconds": 0.0
+ },
+ "a11y_bus": "unix:path=/run/user/1000/at-spi/bus",
+ "app_pid": 1277392,
+ "result": "completed",
+ "app_stdout": [
+  "PID=1277392",
+  "REINSTALL_REJECTED:The previous bridge is still terminating",
+  "CLOSED_COMPLETED",
+  "REINSTALLED",
+  "EXIT_CLOSED_COMPLETED"
+ ]
+}
