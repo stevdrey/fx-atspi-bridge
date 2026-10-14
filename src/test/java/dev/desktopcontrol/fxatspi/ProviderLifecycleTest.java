@@ -25,12 +25,15 @@ import dev.desktopcontrol.fxatspi.AtSpiProvider.State;
 import dev.desktopcontrol.fxatspi.fx.ActionExecutor;
 import dev.desktopcontrol.fxatspi.fx.TargetRegistry;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -68,7 +72,6 @@ class ProviderLifecycleTest {
         address = bus.address();
     }
     @AfterEach void cleanUp() {
-        Ffm.resetAbandonedForTesting();
         providers.forEach(AtSpiProvider::stop);
         if (bus != null) bus.stop();
     }
@@ -92,24 +95,69 @@ class ProviderLifecycleTest {
         provider.terminated().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
-    @Test void nativeTeardownDoesNotHoldTheProviderLock() throws Exception {
-        var inTeardown = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        var provider = provider();
-        provider.beforeNativeTeardown(() -> {
-            inTeardown.countDown();
+    private static AccessibleNode node(String id, String name, String ancestor, List<String> children, Set<Capability> capabilities) {
+        return new AccessibleNode(id, name, id.equals(Snapshot.ROOT_ID) ? Role.APPLICATION : Role.PUSH_BUTTON, "", false, true, true, false,
+                !id.equals(Snapshot.ROOT_ID), 0, ancestor, children, capabilities);
+    }
+    private static Snapshot buttons(String... ids) {
+        var nodes = new LinkedHashMap<String, AccessibleNode>();
+        nodes.put(Snapshot.ROOT_ID, node(Snapshot.ROOT_ID, "app", "", List.of(ids), Set.of()));
+        for (var id : ids) nodes.put(id, node(id, id, Snapshot.ROOT_ID, List.of(), Set.of(Capability.ACTION)));
+        return new Snapshot(nodes);
+    }
+    /** A port whose press blocks until released, like a handler that opens a modal dialog. */
+    private static final class BlockingPort implements ActionPort {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        @Override public boolean press(String id) {
+            entered.countDown();
             try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-        });
+            return true;
+        }
+        @Override public boolean setText(String id, String value) { return false; }
+    }
+    @Test void blockedFxActionDoesNotDelayTermination() throws Exception {
+        var port = new BlockingPort();
+        var fx = Executors.newSingleThreadExecutor();
+        try {
+            var provider = new AtSpiProvider(statuses::add, () -> buttons("button1"), port, ffi -> address, false, fx);
+            providers.add(provider);
+            provider.start();
+            await(provider, State.RUNNING);
+            var client = new ProcessBuilder("gdbus", "call", "--address", address, "--dest", provider.busName(),
+                    "--object-path", "/org/a11y/atspi/accessible/button1", "--method", "org.a11y.atspi.Action.DoAction", "0")
+                    .redirectErrorStream(true).start();
+            assertTrue(port.entered.await(WAIT_SECONDS, TimeUnit.SECONDS), "the action never reached the FX side");
+            provider.stop();
+            awaitTermination(provider); // the action is still running (like a modal dialog); shutdown must not wait for it
+            assertEquals(State.CLOSED, provider.state());
+            assertEquals(1, provider.pendingAcquired());
+            assertEquals(1, provider.pendingReleased(), "shutdown must answer and release the invocation itself");
+            port.release.countDown();
+            assertTrue(client.waitFor(WAIT_SECONDS, TimeUnit.SECONDS), "the D-Bus client should have received a reply");
+            fx.shutdown();
+            assertTrue(fx.awaitTermination(WAIT_SECONDS, TimeUnit.SECONDS));
+            assertEquals(1, provider.pendingReleased(), "the late FX result must not release a second time");
+        } finally { port.release.countDown(); fx.shutdownNow(); }
+    }
+    @Test void everyExportedNodeInfoIsReleasedExactlyOnce() throws Exception {
+        var current = new AtomicReference<>(buttons("button1", "button2"));
+        var provider = new AtSpiProvider(statuses::add, current::get, new ActionExecutor(new TargetRegistry()), ffi -> address, false, Runnable::run);
+        providers.add(provider);
         provider.start();
         await(provider, State.RUNNING);
+        current.set(buttons("button2", "button3")); // button1 leaves, button3 arrives
+        provider.refresh();
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (provider.exportsReleased() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(provider.exportsReleased() > 0, "the departed node must be unexported while running");
         provider.stop();
-        assertTrue(inTeardown.await(WAIT_SECONDS, TimeUnit.SECONDS), "teardown never started");
-        try {
-            // An FX task takes this same monitor; it must not wait for native cleanup.
-            CompletableFuture.runAsync(() -> { synchronized (provider) { provider.pendingCount(); } }).get(2, TimeUnit.SECONDS);
-        } finally { release.countDown(); }
         awaitTermination(provider);
-        assertEquals(State.CLOSED, provider.state());
+        assertTrue(provider.exportsAcquired() > 0);
+        assertEquals(provider.exportsAcquired(), provider.exportsReleased(), "every node info must be released exactly once");
+    }
+    @Test void lateEmbedCallbackForAnUnknownProviderIsIgnored() {
+        AtSpiProvider.embeddedCallback(Ffm.NIL, Ffm.NIL, MemorySegment.ofAddress(Long.MAX_VALUE)); // must neither throw nor touch native state
     }
     @Test void terminationStageIsOneSharedReadOnlyView() {
         var provider = provider();
@@ -312,56 +360,7 @@ class ProviderLifecycleTest {
             awaitTermination(provider);
             assertEquals(State.CLOSED, provider.state());
             assertFalse(provider.embedOutstanding(), "the Embed callback must have run before teardown finished");
-            assertFalse(provider.embedAbandoned(), "draining must not need the retain-memory fallback");
             assertTrue(statuses.stream().noneMatch(s -> s.contains("registrar")), statuses.toString());
         } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
-    }
-    @Test void abandonNoticeFromAFailingConsumerCannotBreakCleanup() throws Exception {
-        var script = Files.createTempFile("stalled-registry", ".py");
-        var registry = startStalledRegistry(script);
-        try {
-            var notices = new CopyOnWriteArrayList<Boolean>();
-            var holder = new AtSpiProvider[1];
-            holder[0] = new AtSpiProvider(message -> {
-                if (message.contains("did not complete")) notices.add(holder[0].isTerminated());
-                throw new IllegalStateException("consumer failure");
-            }, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
-            var provider = holder[0];
-            providers.add(provider);
-            provider.embedDrainNanos(0); // forces the abandon path: the cancelled callback is not awaited
-            provider.start();
-            await(provider, State.RUNNING);
-            awaitEmbedOutstanding(provider);
-            provider.stop();
-            awaitTermination(provider);
-            assertEquals(State.CLOSED, provider.state());
-            assertTrue(provider.embedAbandoned());
-            assertEquals(0, provider.pendingCount());
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (notices.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
-            assertEquals(List.of(true), notices, "the notice must be delivered once, after termination was published");
-        } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
-    }
-    @Test void abandonNoticeFromABlockingConsumerCannotDelayTermination() throws Exception {
-        var script = Files.createTempFile("stalled-registry", ".py");
-        var registry = startStalledRegistry(script);
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        try {
-            var provider = new AtSpiProvider(message -> {
-                if (!message.contains("did not complete")) return;
-                entered.countDown();
-                try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-            }, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, true, Runnable::run);
-            providers.add(provider);
-            provider.embedDrainNanos(0);
-            provider.start();
-            await(provider, State.RUNNING);
-            awaitEmbedOutstanding(provider);
-            provider.stop();
-            awaitTermination(provider); // must complete while the consumer is (or will be) blocked
-            assertEquals(State.CLOSED, provider.state());
-            assertTrue(entered.await(WAIT_SECONDS, TimeUnit.SECONDS), "the notice should still be delivered");
-        } finally { release.countDown(); PrivateBus.terminate(registry); Files.deleteIfExists(script); }
     }
 }

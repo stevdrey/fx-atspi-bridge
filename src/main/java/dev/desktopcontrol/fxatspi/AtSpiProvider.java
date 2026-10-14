@@ -15,8 +15,8 @@
  */
 package dev.desktopcontrol.fxatspi;
 
-import dev.desktopcontrol.fxatspi.fx.ActionExecutor;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import javafx.application.Platform;
@@ -29,19 +29,18 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
+import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
@@ -60,11 +59,12 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /** Experimental dynamic AT-SPI2 provider: Application/Accessible/Action/Text/EditableText.
  * The bus thread owns GDBus registrations; immutable UI snapshots avoid blocking JavaFX.
- * Mutations retain their invocation and reply asynchronously after executing on the FX thread.
+ * Mutations retain their invocation on the provider thread; the FX thread only runs the action and posts a
+ * completion, and the provider thread replies and releases the invocation. No provider lock exists.
  */
 final class AtSpiProvider {
     private final Consumer<String> status;
-    private final ActionExecutor actions;
+    private final ActionPort actions;
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(Snapshot.EMPTY);
     private final AtomicReference<Snapshot> desired = new AtomicReference<>(Snapshot.EMPTY);
     private volatile boolean running = true, registered;
@@ -73,7 +73,11 @@ final class AtSpiProvider {
     private volatile String busName = "";
     private String busAddress = "", parent = "('', objectpath '/org/a11y/atspi/null')";
     private int applicationId;
-    private final Map<Long, MemorySegment> pending = new HashMap<>();
+    /** Invocations accepted but not yet answered. Owned by the provider thread; concurrent only so tests can read the size. */
+    private final Map<Long, MemorySegment> pending = new ConcurrentHashMap<>();
+    /** Results posted by FX tasks; the provider thread turns each into exactly one reply and release. */
+    private record Completion(long address, boolean accepted, Throwable failure) {}
+    private final Queue<Completion> completions = new ConcurrentLinkedQueue<>();
     private record Export(List<Integer> registrations, MemorySegment info) {}
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
@@ -89,18 +93,11 @@ final class AtSpiProvider {
     private final CompletableFuture<Void> terminated = new CompletableFuture<>();
     /** One shared read-only view: each minimalCompletionStage() call would add a dependent to the pending future. */
     private final CompletionStage<Void> terminatedView = terminated.minimalCompletionStage();
-    private volatile boolean embedOutstanding, embedAbandoned;
-    private volatile String deferredNotice;
-    private static final int MAX_PENDING_NOTICES = 32;
-    private static final String END_OF_NOTICES = new String("end-of-notices"); // compared by identity
-    private final BlockingQueue<String> notices = new ArrayBlockingQueue<>(MAX_PENDING_NOTICES + 1);
-    private final Object noticeLock = new Object();
-    private Thread noticeThread;
-    private boolean noticesClosed;
-    private volatile long embedDrainNanos = DEFAULT_EMBED_DRAIN_NANOS;
-    private volatile Runnable beforeNativeTeardown = () -> {};
+    private volatile boolean embedOutstanding;
+    private long embedId;
     private MemorySegment embedCancellable = Ffm.NIL;
     private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
+    private final AtomicLong exportsAcquired = new AtomicLong(), exportsReleased = new AtomicLong();
 
     /** Provider lifecycle: NEW → STARTING → RUNNING → STOPPING → CLOSED, or FAILED after cleanup. */
     enum State { NEW, STARTING, RUNNING, STOPPING, CLOSED, FAILED }
@@ -112,11 +109,11 @@ final class AtSpiProvider {
     }
 
     /** @param embed false skips the registry Embed call, for tests that run on a private bus without a registry */
-    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionExecutor actions, BusAddress bus, boolean embed) {
+    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed) {
         this(status, scene, actions, bus, embed, Platform::runLater);
     }
     /** @param fxExecutor runs mutations on the FX thread; tests substitute a queue to hold invocations pending */
-    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionExecutor actions, BusAddress bus, boolean embed, Executor fxExecutor) {
+    AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed, Executor fxExecutor) {
         this.fxExecutor = fxExecutor;
         this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
         this.bus = bus != null ? bus : this::sessionAccessibilityAddress;
@@ -132,17 +129,14 @@ final class AtSpiProvider {
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
     CompletionStage<Void> terminated() { return terminatedView; }
     boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
-    /** Test seam: runs on the provider thread when native teardown starts, to observe that no lock is held. */
-    void beforeNativeTeardown(Runnable hook) { beforeNativeTeardown = hook; }
-    /** Test seam: how long teardown waits for the cancelled Embed callback. */
-    void embedDrainNanos(long nanos) { embedDrainNanos = nanos; }
     boolean embedOutstanding() { return embedOutstanding; }
-    boolean embedAbandoned() { return embedAbandoned; }
     boolean isTerminated() { return terminated.isDone(); }
     String busName() { return busName; }
     long pendingAcquired() { return pendingAcquired.get(); }
     long pendingReleased() { return pendingReleased.get(); }
-    synchronized int pendingCount() { return pending.size(); }
+    int pendingCount() { return pending.size(); }
+    long exportsAcquired() { return exportsAcquired.get(); }
+    long exportsReleased() { return exportsReleased.get(); }
     /** Starts the provider thread once; later calls and calls after stop are ignored. */
     void start() {
         if (!state.compareAndSet(State.NEW, State.STARTING)) return;
@@ -185,37 +179,60 @@ final class AtSpiProvider {
                 if (embed) embedWithRegistry();
                 state.compareAndSet(State.STARTING, State.RUNNING);
                 while (running) {
-                    if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost"); break; }
+                    if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
+                    drainCompletions();
                     reconcile();
                     while ((int) ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0) != 0) {}
                     Thread.sleep(5);
                 }
             } finally {
-                teardown(context, pushed, beginShutdown());
+                teardown(context, pushed);
             }
         } catch (Throwable error) {
             failure = error;
-            report("Error AT-SPI2: " + code(error));
+            report("Error AT-SPI2: " + code(error), true);
             if (error instanceof InterruptedException) Thread.currentThread().interrupt();
         } finally {
             if (failure == null) failure = registrationFailure;
             state.set(failure == null ? State.CLOSED : State.FAILED);
             complete();
-            var notice = deferredNotice;
-            if (notice != null) report(notice);
-            finishNotices();
         }
     }
-    private void embedWithRegistry() throws ReflectiveOperationException {
+    /**
+     * The Embed completion callback is one process-wide upcall stub in the global arena, so it never points into a
+     * provider arena that has been closed. {@code user_data} carries a provider id; a completion that arrives
+     * after teardown finds no provider and does nothing.
+     */
+    private static final AtomicLong NEXT_EMBED_ID = new AtomicLong(1);
+    private static final Map<Long, AtSpiProvider> EMBED_TARGETS = new ConcurrentHashMap<>();
+    private static final class EmbedStub {
+        static final MemorySegment POINTER = create();
+        private static MemorySegment create() {
+            try {
+                var handle = MethodHandles.lookup().findStatic(AtSpiProvider.class, "embeddedCallback",
+                        MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class));
+                return Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS), Arena.global());
+            } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
+        }
+    }
+    static void embeddedCallback(MemorySegment source, MemorySegment result, MemorySegment data) {
+        try {
+            var provider = EMBED_TARGETS.get(data.address());
+            if (provider != null) provider.embedded(source, result);
+        } catch (Throwable ignored) { /* Nothing may escape an upcall. */ }
+    }
+    private void embedWithRegistry() {
         var request = ffi.variant("((" + Ffm.quote(busName) + ", objectpath '" + ROOT_PATH + "'),)");
         embedCancellable = (MemorySegment) ffi.call("g_cancellable_new", ADDRESS, new MemoryLayout[]{});
+        embedId = NEXT_EMBED_ID.getAndIncrement();
+        EMBED_TARGETS.put(embedId, this);
         embedOutstanding = true;
         try {
             ffi.call("g_dbus_connection_call", null,
                     new MemoryLayout[]{ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS},
                     connection, ffi.arena.allocateFrom("org.a11y.atspi.Registry"), ffi.arena.allocateFrom(ROOT_PATH),
                     ffi.arena.allocateFrom(PREFIX + "Socket"), ffi.arena.allocateFrom("Embed"), request,
-                    Ffm.NIL, 0, 5000, embedCancellable, stub("embedded", null, 3), Ffm.NIL);
+                    Ffm.NIL, 0, 5000, embedCancellable, EmbedStub.POINTER, MemorySegment.ofAddress(embedId));
         } catch (Throwable failure) { embedOutstanding = false; throw failure; }
         finally { ffi.release(request); }
     }
@@ -228,42 +245,43 @@ final class AtSpiProvider {
         return (int) ffi.call("g_dbus_connection_is_closed", JAVA_INT, new MemoryLayout[]{ADDRESS}, connection) != 0;
     }
     /**
-     * The only part of shutdown that needs the provider lock: stop accepting mutations and take ownership of the
-     * pending invocations. Native work happens afterwards without the lock, so an FX task waiting for it is never
-     * held up behind a blocking native call; a task that already removed its entry finishes before this returns.
+     * The Embed completion is delivered through the main context, so cancel it and iterate the context briefly so the
+     * callback runs before the context is released. If GLib never delivers it, teardown continues: the callback is
+     * a global stub that ignores completions for unknown providers.
      */
-    private synchronized List<MemorySegment> beginShutdown() {
-        running = false; registered = false;
-        var drained = List.copyOf(pending.values());
-        pending.clear();
-        return drained;
-    }
-    /**
-     * The Embed completion is delivered through the main context and calls an upcall stub from the provider
-     * arena, so cancel it and let the callback run before either is released. Returns false if it never ran.
-     */
-    private boolean drainEmbed(MemorySegment context) {
-        if (!embedOutstanding) return true;
+    private void drainEmbed(MemorySegment context) {
+        if (!embedOutstanding) return;
         guarded(() -> ffi.call("g_cancellable_cancel", null, new MemoryLayout[]{ADDRESS}, embedCancellable));
-        var deadline = System.nanoTime() + embedDrainNanos;
+        var deadline = System.nanoTime() + EMBED_DRAIN_NANOS;
         while (embedOutstanding && System.nanoTime() < deadline) {
             guarded(() -> ffi.call("g_main_context_iteration", JAVA_INT, new MemoryLayout[]{ADDRESS, JAVA_INT}, context, 0));
             if (embedOutstanding) LockSupport.parkNanos(5_000_000L);
         }
-        return !embedOutstanding;
     }
-    /** Runs on the provider thread without the provider lock; every step is independent so one failure cannot skip the rest. */
-    private void teardown(MemorySegment context, boolean pushed, List<MemorySegment> drained) {
-        beforeNativeTeardown.run();
-        if (!drainEmbed(context)) {
-            embedAbandoned = true; ffi.detach();
-            deferredNotice = "Error AT-SPI2: registry call did not complete; native memory retained"; // delivered after cleanup, outside the lock
+    /** Replies to FX results already posted. Provider thread only: it owns every invocation reference. */
+    private void drainCompletions() {
+        for (var completion = completions.poll(); completion != null; completion = completions.poll()) {
+            var invocation = pending.remove(completion.address());
+            if (invocation == null) continue; // Shutdown already replied and released it.
+            try {
+                if (completion.failure() == null) reply(invocation, "(" + completion.accepted() + ",)");
+                else error(invocation, completion.failure());
+            } catch (Throwable failure) { fail(invocation, failure); }
+            finally { guarded(() -> releaseInvocation(invocation)); }
         }
+    }
+    /** Runs on the provider thread; every step is independent so one failure cannot skip the rest. */
+    private void teardown(MemorySegment context, boolean pushed) {
+        running = false; registered = false; // from here on mutate() rejects new work
+        drainEmbed(context);
+        EMBED_TARGETS.remove(embedId);
         if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
-        for (var invocation : drained) {
+        guarded(this::drainCompletions);
+        for (var invocation : List.copyOf(pending.values())) {
             guarded(() -> error(invocation, new Rejected("Provider stopped")));
             guarded(() -> releaseInvocation(invocation));
         }
+        pending.clear();
         for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
         if (connection.address() != 0) {
             var closing = connection;
@@ -284,44 +302,12 @@ final class AtSpiProvider {
         pendingReleased.incrementAndGet();
         ffi.unref(invocation);
     }
-    private static final long DEFAULT_EMBED_DRAIN_NANOS = 1_000_000_000L;
+    private static final long EMBED_DRAIN_NANOS = 1_000_000_000L;
     /**
-     * Queues a status message for the dedicated delivery thread and returns immediately, so a slow or blocked
-     * consumer can never hold the provider thread or delay teardown and {@code closed()}. The queue is bounded:
-     * when it is saturated the newest message is dropped.
+     * Hands a status message to the shared dispatcher and returns immediately, so a slow or blocked consumer can
+     * never hold the provider thread or delay teardown and {@code closed()}.
      */
-    private void report(String message) {
-        if (notices.size() >= MAX_PENDING_NOTICES || !notices.offer(message)) return;
-        synchronized (noticeLock) {
-            if (noticeThread == null && !noticesClosed) {
-                LIVE_STATUS_THREADS.incrementAndGet();
-                try {
-                    noticeThread = new Thread(this::deliverNotices, "fx-atspi-status");
-                    noticeThread.setDaemon(true);
-                    noticeThread.start();
-                } catch (Throwable startFailure) { LIVE_STATUS_THREADS.decrementAndGet(); noticeThread = null; }
-            }
-        }
-    }
-    /** Ends the delivery thread once queued messages are delivered; called after termination is published. */
-    private void finishNotices() {
-        synchronized (noticeLock) { noticesClosed = true; }
-        notices.offer(END_OF_NOTICES); // capacity reserves one slot for this marker
-    }
-    private void deliverNotices() {
-        try {
-            for (String message = notices.take(); message != END_OF_NOTICES; message = notices.take()) {
-                try { status.accept(message); } catch (Throwable ignored) { /* A failing consumer must not affect delivery of later messages. */ }
-            }
-        } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-        finally { LIVE_STATUS_THREADS.decrementAndGet(); }
-    }
-    /** Delivery threads still alive process-wide; one that never returns from the consumer stays counted. */
-    static final int MAX_LIVE_STATUS_THREADS = 4;
-    private static final AtomicInteger LIVE_STATUS_THREADS = new AtomicInteger();
-    static int liveStatusThreads() { return LIVE_STATUS_THREADS.get(); }
-    /** True when installing another bridge could strand yet another thread behind a consumer that does not return. */
-    static boolean statusThreadLimitReached() { return LIVE_STATUS_THREADS.get() >= MAX_LIVE_STATUS_THREADS; }
+    private void report(String message, boolean terminal) { StatusDispatcher.shared().post(status, message, terminal); }
     private static void guarded(Runnable step) {
         try { step.run(); } catch (Throwable ignored) { /* Cleanup continues; details may contain peer data. */ }
     }
@@ -341,6 +327,7 @@ final class AtSpiProvider {
             var text = temporary.allocateFrom(xml(id));
             info = ffi.checked("g_dbus_node_info_new_for_xml", new MemoryLayout[]{ADDRESS}, text);
         }
+        exportsAcquired.incrementAndGet();
         var registrations = new ArrayList<Integer>();
         exports.put(id,new Export(registrations,info));
         var vector = info.reinterpret(40).get(ADDRESS,16).reinterpret(64);
@@ -360,9 +347,9 @@ final class AtSpiProvider {
         Export exported = exports.remove(id); if (exported==null) return;
         try {
             for (int registration : exported.registrations()) ffi.call("g_dbus_connection_unregister_object",JAVA_INT,new MemoryLayout[]{ADDRESS,JAVA_INT},connection,registration);
-        } finally { ffi.call("g_dbus_node_info_unref",null,new MemoryLayout[]{ADDRESS},exported.info()); }
+        } finally { exportsReleased.incrementAndGet(); ffi.call("g_dbus_node_info_unref",null,new MemoryLayout[]{ADDRESS},exported.info()); }
     }
-    private synchronized void reconcile() {
+    private void reconcile() {
         var before=snapshot.get();
         var after=desired.get();
         if (before.equals(after)) return;
@@ -392,7 +379,7 @@ final class AtSpiProvider {
     private void childEvent(String id,String type,int index,String child) {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
     }
-    private void embedded(MemorySegment source, MemorySegment result, MemorySegment data) {
+    private void embedded(MemorySegment source, MemorySegment result) {
         embedOutstanding = false;
         try {
             var reply = ffi.checked("g_dbus_connection_call_finish", new MemoryLayout[]{ADDRESS, ADDRESS}, source, result);
@@ -403,11 +390,11 @@ final class AtSpiProvider {
             } finally { ffi.release(reply); }
             if (!running) return; // completed while shutting down
             registered = true;
-            report("AT-SPI2 listo: controles publicados sin sudo ni capturas.");
+            report("AT-SPI2 listo: controles publicados sin sudo ni capturas.", false);
             System.err.println("FX AT-SPI Lab ready: " + busName + " " + ROOT_PATH);
         } catch (Throwable error) {
             if (!running) return; // a cancelled or failed completion during shutdown is expected
-            registrationFailure = error; running = false; report("Error al registrar AT-SPI2: " + code(error));
+            registrationFailure = error; running = false; report("Error al registrar AT-SPI2: " + code(error), true);
         }
     }
     private MemorySegment sync(MemorySegment bus, String destination, String path, String iface, String method, String parameters) {
@@ -499,26 +486,26 @@ final class AtSpiProvider {
         } catch (Throwable failure) { fail(invocation, failure); }
     }
     private interface Mutation { boolean apply(); }
-    private synchronized void mutate(MemorySegment invocation, Mutation operation) {
+    private void mutate(MemorySegment invocation, Mutation operation) {
         if (!running) { fail(invocation, new Rejected("Provider stopped")); return; }
         ffi.call("g_object_ref", ADDRESS, new MemoryLayout[]{ADDRESS}, invocation);
         pendingAcquired.incrementAndGet();
-        pending.put(invocation.address(), invocation);
+        var address = invocation.address();
+        pending.put(address, invocation);
         try {
-            fxExecutor.execute(() -> {
-                synchronized (this) {
-                    if (pending.remove(invocation.address()) == null) return; // Shutdown already replied and freed it.
-                    try {
-                        if (!running) throw new Rejected("Provider stopped");
-                        refresh(); boolean accepted = operation.apply(); refresh(); reply(invocation, "(" + accepted + ",)");
-                    } catch (Throwable failure) { fail(invocation, failure); }
-                    finally { guarded(() -> releaseInvocation(invocation)); }
-                }
-            });
+            fxExecutor.execute(() -> completions.add(runOnFx(address, operation)));
         } catch (Throwable schedulingFailure) {
             // The task never ran (for example no FX toolkit): this call still owns the reference.
-            if (pending.remove(invocation.address()) != null) { fail(invocation, schedulingFailure); guarded(() -> releaseInvocation(invocation)); }
+            if (pending.remove(address) != null) { fail(invocation, schedulingFailure); guarded(() -> releaseInvocation(invocation)); }
         }
+    }
+    /** Runs on the FX thread. Touches no native object: it only produces a result for the provider thread to deliver. */
+    private Completion runOnFx(long address, Mutation operation) {
+        try {
+            if (!running) return new Completion(address, false, new Rejected("Provider stopped"));
+            refresh(); var accepted = operation.apply(); refresh();
+            return new Completion(address, accepted, null);
+        } catch (Throwable failure) { return new Completion(address, false, failure); }
     }
     private void reply(MemorySegment invocation, String value) {
         var tuple = ffi.variant(value);
@@ -538,7 +525,7 @@ final class AtSpiProvider {
     }
     private void stateEvent(String id, String state, boolean value) { event(id, "StateChanged", "(" + Ffm.quote(state) + ", " + (value ? 1 : 0) + ", 0, <0>, @a{sv} {})"); }
     private void event(String id, String member, String value) { signal(id,PREFIX+"Event.Object",member,value); }
-    private synchronized void signal(String id, String iface, String member, String value) {
+    private void signal(String id, String iface, String member, String value) {
         if (!registered || !running) return;
         try (Arena temporary = Arena.ofConfined()) {
             var parameters = ffi.variant(value);

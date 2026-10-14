@@ -21,8 +21,8 @@ def bench_constant(name):
 
 
 def provider_status_literals():
-    """Leading string literal of every provider status message: report("..."), status.accept("...") or a deferred notice."""
-    return re.findall(r'(?:status\.accept\(|report\(|deferredNotice\s*=\s*)"([^"]*)"', PROVIDER.read_text())
+    """Leading string literal of every provider status message: report("...", terminal) or status.accept("...")."""
+    return re.findall(r'(?:status\.accept\(|report\()"([^"]*)"', PROVIDER.read_text())
 
 
 class StatusContractTest(unittest.TestCase):

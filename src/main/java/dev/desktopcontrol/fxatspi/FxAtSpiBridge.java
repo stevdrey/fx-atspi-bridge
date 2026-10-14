@@ -64,14 +64,15 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     private void released() {
         ACTIVE.compareAndSet(this, null);
-        try { fxExecutor.execute(this::close); } // a provider that failed on its own still holds the observer and registry
-        catch (IllegalStateException toolkitNotRunning) { /* No FX thread to close on. */ }
+        // A provider that failed on its own still holds the observer and registry; the FX executor releases them.
+        try { fxExecutor.execute(this::closeOnFx); }
+        catch (RuntimeException rejected) { /* The executor refused the task; nothing static keeps this bridge reachable. */ }
     }
     static boolean slotHeld() { return ACTIVE.get() != null; }
     /**
      * Installs one bridge for all showing JavaFX windows in this JVM.
      * Call on the FX application thread.
-     * @param status receives provider status on a dedicated daemon thread, never on the FX or provider thread; messages are queued (bounded, newest dropped when saturated) so a slow consumer cannot delay shutdown
+     * @param status receives provider status on a shared daemon thread, never on the FX or provider thread; messages are queued (bounded; failure notices are kept in preference to informational ones) so a slow consumer cannot delay shutdown
      * @return the bridge to close on the FX application thread at application shutdown
      */
     public static FxAtSpiBridge install(Consumer<String> status) { return install(status, null, true, Platform::runLater); }
@@ -83,12 +84,6 @@ public final class FxAtSpiBridge implements AutoCloseable {
         var previous = ACTIVE.get();
         if (previous != null && !previous.provider.isTerminated()) {
             throw new IllegalStateException(previous.closed ? "The previous bridge is still terminating" : "A bridge is already installed");
-        }
-        if (Ffm.abandonedLimitReached()) {
-            throw new IllegalStateException("Too many native provider resources could not be released; restart the JVM");
-        }
-        if (AtSpiProvider.statusThreadLimitReached()) {
-            throw new IllegalStateException("Too many status consumers have not returned; make the status callback return");
         }
         if (previous != null) previous.close(); // The provider failed on its own; release its observer and registry.
         var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor);
@@ -107,8 +102,13 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     @Override public void close() {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Close on the FX application thread");
+        closeOnFx();
+    }
+    /** FX-confined disposal; callers guarantee they run on the FX thread (public close checks, released() uses the FX executor). */
+    private void closeOnFx() {
         if (!closed) { closed=true; observer.stop(); provider.stop(); registry.clear(); }
     }
+    boolean closeRequested() { return closed; }
     /**
      * Completes after the provider thread has released all native resources, whether it stopped
      * normally or failed (for example no accessibility bus, or bus loss). Never completes exceptionally;
