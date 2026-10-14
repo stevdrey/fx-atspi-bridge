@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 public final class FxAtSpiBridge implements AutoCloseable {
     final AtSpiProvider provider;
     private final TargetRegistry registry;
-    private final AnimationTimer observer;
+    private final Observer observer;
     /**
      * The bridge whose provider has not yet confirmed termination. Written on the FX thread at install and
      * cleared on the provider thread at termination, so releasing it does not depend on a live FX thread.
@@ -41,14 +41,24 @@ public final class FxAtSpiBridge implements AutoCloseable {
         this.fxExecutor = fxExecutor;
         registry = new TargetRegistry();
         provider = new AtSpiProvider(status, new SceneModelBuilder(registry)::build, new ActionExecutor(registry), bus, embed);
-        observer = new Observer(provider);
+        observer = new Observer(provider, registry);
     }
-    /** Refreshes the provider snapshot every 100 ms. Holds only the provider, so a timer that outlives a discarded disposal never keeps the bridge reachable. */
+    /**
+     * Refreshes the provider snapshot every 100 ms. It holds the provider and the registry but not the bridge, and
+     * it disposes itself on the FX thread once the provider has terminated: if the posted {@code closeOnFx()} is
+     * dropped while the FX runtime is alive, the next pulse still stops the timer and releases the registry, so a
+     * terminated provider is never kept rooted by a running timer.
+     */
     private static final class Observer extends AnimationTimer {
         private final AtSpiProvider provider;
+        private final TargetRegistry registry;
+        private volatile boolean active;
         private long previous;
-        Observer(AtSpiProvider provider) { this.provider = provider; }
+        Observer(AtSpiProvider provider, TargetRegistry registry) { this.provider = provider; this.registry = registry; }
+        @Override public void start() { active = true; super.start(); }
+        @Override public void stop() { active = false; super.stop(); }
         @Override public void handle(long now) {
+            if (provider.isTerminated()) { stop(); registry.clear(); return; }
             if (now-previous>=100_000_000L) { previous=now; provider.refresh(); }
         }
     }
@@ -114,6 +124,8 @@ public final class FxAtSpiBridge implements AutoCloseable {
         if (!closed) { closed=true; observer.stop(); provider.stop(); registry.clear(); }
     }
     boolean closeRequested() { return closed; }
+    boolean observerActive() { return observer.active; }
+    int trackedTargets() { return registry.size(); }
     /**
      * Completes after the provider thread has released all native resources, whether it stopped normally or
      * failed (for example no accessibility bus, or bus loss). Never completes exceptionally; do not block the FX

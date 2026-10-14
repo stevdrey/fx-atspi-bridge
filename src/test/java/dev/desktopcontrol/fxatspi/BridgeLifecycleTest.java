@@ -32,6 +32,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import javafx.application.Platform;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -145,6 +149,31 @@ class BridgeLifecycleTest {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         while (reference.get() != null && System.nanoTime() < deadline) { System.gc(); Thread.sleep(50); }
         assertNull(reference.get(), "nothing static (install slot, running observer) may keep a terminated bridge reachable");
+    }
+    private record Fixture(FxAtSpiBridge bridge, Stage stage, WeakReference<Button> button, int trackedAtInstall) {}
+
+    @Test void aTerminatedProviderDoesNotKeepATimerOrTheTargetRegistryWhenTheFxDisposalIsDropped() throws Exception {
+        // The FX runtime stays alive; only the posted disposal task is discarded, as a rejecting executor would.
+        var fixture = onFx(() -> {
+            var button = new Button("probe");
+            var stage = new Stage();
+            stage.setScene(new Scene(new VBox(button), 200, 100));
+            stage.show();
+            var bridge = FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false, task -> {});
+            return new Fixture(bridge, stage, new WeakReference<>(button), bridge.trackedTargets());
+        });
+        assertTrue(fixture.trackedAtInstall() > 0, "installing must register the visible controls, otherwise this test proves nothing");
+        fixture.bridge().closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        awaitSlotReleased();
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while ((onFx(fixture.bridge()::observerActive) || onFx(fixture.bridge()::trackedTargets) > 0) && System.nanoTime() < deadline) Thread.sleep(20);
+        assertFalse(onFx(fixture.bridge()::observerActive), "a terminated provider must not stay rooted by a running timer");
+        assertEquals(0, onFx(fixture.bridge()::trackedTargets), "the registry must not keep controls after the provider terminated");
+        // Once the application drops the control and its scene, nothing in the bridge may keep it alive.
+        onFx(() -> { fixture.stage().hide(); fixture.stage().setScene(null); return null; });
+        var collected = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (fixture.button().get() != null && System.nanoTime() < collected) { System.gc(); Thread.sleep(50); }
+        assertNull(fixture.button().get(), "the control is only reachable through the bridge once the application released it");
     }
     @Test void rejectedFxReleaseStillReleasesTheSlotAndNeverDisturbsTheProvider() throws Exception {
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false, task -> { throw new RejectedExecutionException("toolkit stopped"); }));

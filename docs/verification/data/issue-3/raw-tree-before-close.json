@@ -5,12 +5,24 @@
   "org.a11y.atspi.Accessible",
   "org.a11y.atspi.Application"
  ],
+ "states": [
+  8,
+  24,
+  25,
+  30
+ ],
  "children": [
   {
    "name": "SmokeApp",
    "role": "frame",
    "interfaces": [
     "org.a11y.atspi.Accessible"
+   ],
+   "states": [
+    8,
+    24,
+    25,
+    30
    ],
    "children": [
     {
@@ -19,12 +31,24 @@
      "interfaces": [
       "org.a11y.atspi.Accessible"
      ],
+     "states": [
+      8,
+      24,
+      25,
+      30
+     ],
      "children": [
       {
        "name": "fired",
        "role": "label",
        "interfaces": [
         "org.a11y.atspi.Accessible"
+       ],
+       "states": [
+        8,
+        24,
+        25,
+        30
        ],
        "children": []
       },
@@ -35,6 +59,13 @@
         "org.a11y.atspi.Accessible",
         "org.a11y.atspi.Action"
        ],
+       "states": [
+        8,
+        11,
+        24,
+        25,
+        30
+       ],
        "children": []
       },
       {
@@ -43,6 +74,11 @@
        "interfaces": [
         "org.a11y.atspi.Accessible",
         "org.a11y.atspi.Action"
+       ],
+       "states": [
+        11,
+        25,
+        30
        ],
        "children": []
       },
@@ -54,7 +90,20 @@
         "org.a11y.atspi.EditableText",
         "org.a11y.atspi.Text"
        ],
-       "children": []
+       "states": [
+        7,
+        8,
+        11,
+        24,
+        25,
+        26,
+        30
+       ],
+       "children": [],
+       "text": {
+        "count": 4,
+        "text": "new🧪"
+       }
       },
       {
        "name": "",
@@ -64,13 +113,34 @@
         "org.a11y.atspi.EditableText",
         "org.a11y.atspi.Text"
        ],
-       "children": []
+       "states": [
+        7,
+        8,
+        11,
+        17,
+        24,
+        25,
+        30
+       ],
+       "children": [],
+       "text": {
+        "count": 11,
+        "text": "line1\nline2"
+       }
       },
       {
        "name": "pw",
        "role": "entry",
        "interfaces": [
         "org.a11y.atspi.Accessible"
+       ],
+       "states": [
+        8,
+        11,
+        24,
+        25,
+        26,
+        30
        ],
        "children": []
       }

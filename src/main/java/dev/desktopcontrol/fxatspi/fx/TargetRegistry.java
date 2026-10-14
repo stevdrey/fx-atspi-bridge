@@ -78,5 +78,6 @@ public final class TargetRegistry {
         return entry == null ? null : entry.id;
     }
 
-    int size() { return byTarget.size(); }
+    /** Number of live targets currently held. FX thread only. */
+    public int size() { return byTarget.size(); }
 }
