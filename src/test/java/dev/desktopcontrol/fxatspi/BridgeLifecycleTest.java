@@ -114,6 +114,13 @@ class BridgeLifecycleTest {
         awaitSlotReleased();
         assertTrue(last.provider.snapshotIsEmpty());
     }
+    @Test void slotIsReleasedEvenWhenTheFxReleaseTaskIsDropped() throws Exception {
+        // A shut-down toolkit silently drops Platform.runLater tasks; model that with an executor that discards them.
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false, task -> {}));
+        onFx(() -> { last.close(); return null; });
+        last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        awaitSlotReleased();
+    }
     @Test void failedProviderDoesNotBlockReinstall() throws Exception {
         var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false));
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);

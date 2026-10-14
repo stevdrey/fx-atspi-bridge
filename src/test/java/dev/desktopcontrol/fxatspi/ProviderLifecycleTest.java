@@ -36,7 +36,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -132,7 +131,7 @@ class ProviderLifecycleTest {
         for (int round = 0; round < 5; round++) {
             var provider = provider();
             var go = new CountDownLatch(1);
-            ExecutorService pool = Executors.newFixedThreadPool(6);
+            var pool = Executors.newFixedThreadPool(6);
             try {
                 for (int worker = 0; worker < 6; worker++) {
                     boolean starter = worker % 2 == 0;

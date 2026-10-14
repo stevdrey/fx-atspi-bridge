@@ -10,8 +10,8 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 11 tests (8 provider + 3 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 31 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 12 tests (8 provider + 4 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 32 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -29,6 +29,12 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 - The pending-invocation test now injects an FX executor that queues tasks, requires 4 invocations outstanding (`pendingCount()`) before `stop()`, asserts acquired = released = 4 afterwards, and runs the held FX tasks to show a late task releases nothing again.
 - Fully qualified `java.util.ArrayList`/`Arrays` replaced by imports.
 - `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 11 tests each, 0 failures.
+
+## Code-review follow-up 3 (Codex, PR #19, commit 47789a4)
+
+- `Platform.runLater` after toolkit shutdown drops tasks silently, so the FX release hop could not be the only way to free the install slot. The slot is now an `AtomicReference` cleared on the provider thread at termination (the bridge owns the slot before the provider starts, so a fast termination cannot race ahead of `install`). `slotIsReleasedEvenWhenTheFxReleaseTaskIsDropped` models the dropped task with a discarding executor; a real `Platform.exit()` was not exercised because the toolkit cannot be restarted in the same JVM.
+- `ExecutorService pool` → `var pool`.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 12 tests each, 0 failures.
 
 ## Defect found and fixed while testing
 

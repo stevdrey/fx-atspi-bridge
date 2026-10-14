@@ -21,6 +21,8 @@ import dev.desktopcontrol.fxatspi.fx.TargetRegistry;
 import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /** Opt-in experimental accessibility bridge for the current JavaFX process. */
@@ -28,10 +30,15 @@ public final class FxAtSpiBridge implements AutoCloseable {
     final AtSpiProvider provider;
     private final TargetRegistry registry;
     private final AnimationTimer observer;
-    /** The bridge whose provider has not yet confirmed termination; touched only on the FX thread. */
-    private static FxAtSpiBridge active;
+    /**
+     * The bridge whose provider has not yet confirmed termination. Written on the FX thread at install and
+     * cleared on the provider thread at termination, so releasing it does not depend on a live FX thread.
+     */
+    private static final AtomicReference<FxAtSpiBridge> ACTIVE = new AtomicReference<>();
+    private final Executor fxExecutor;
     private boolean closed;
-    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed) {
+    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor) {
+        this.fxExecutor = fxExecutor;
         registry = new TargetRegistry();
         provider = new AtSpiProvider(status, new SceneModelBuilder(registry)::build, new ActionExecutor(registry), bus, embed);
         observer = new AnimationTimer() {
@@ -40,35 +47,48 @@ public final class FxAtSpiBridge implements AutoCloseable {
                 if (now-previous>=100_000_000L) { previous=now; provider.refresh(); }
             }
         };
+    }
+    /** Called after the bridge owns the install slot, so a fast termination cannot clear the slot before it is set. */
+    private void begin() {
         observer.start();
         provider.terminated().thenRun(this::released);
         try { provider.start(); }
-        catch (RuntimeException | Error failure) { observer.stop(); registry.clear(); provider.stop(); throw failure; }
+        catch (RuntimeException | Error failure) {
+            observer.stop(); registry.clear(); provider.stop(); ACTIVE.compareAndSet(this, null); throw failure;
+        }
     }
-    /** Runs on the provider thread after termination; releases the static slot and observer on the FX thread. */
+    /**
+     * Runs on the provider thread after termination. The static slot is released here, independent of the FX
+     * thread; the FX-confined observer and registry are closed through the FX executor. If the toolkit has shut
+     * down, that task may be dropped, and those objects stay reachable only through this bridge instance.
+     */
     private void released() {
-        try {
-            Platform.runLater(() -> {
-                close(); // a provider that failed on its own still holds the observer and registry
-                if (active == this) active = null;
-            });
-        } catch (IllegalStateException toolkitGone) { /* No FX thread left to release; nothing else keeps the bridge reachable. */ }
+        ACTIVE.compareAndSet(this, null);
+        try { fxExecutor.execute(this::close); } // a provider that failed on its own still holds the observer and registry
+        catch (IllegalStateException toolkitNotRunning) { /* No FX thread to close on. */ }
     }
-    static boolean slotHeld() { return active != null; }
+    static boolean slotHeld() { return ACTIVE.get() != null; }
     /**
      * Installs one bridge for all showing JavaFX windows in this JVM.
      * Call on the FX application thread.
      * @param status receives provider status on the provider thread
      * @return the bridge to close on the FX application thread at application shutdown
      */
-    public static FxAtSpiBridge install(Consumer<String> status) { return install(status, null, true); }
+    public static FxAtSpiBridge install(Consumer<String> status) { return install(status, null, true, Platform::runLater); }
     static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed) {
+        return install(status, bus, embed, Platform::runLater);
+    }
+    static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor) {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Install on the FX application thread");
-        if (active != null && !active.provider.isTerminated()) {
-            throw new IllegalStateException(active.closed ? "The previous bridge is still terminating" : "A bridge is already installed");
+        var previous = ACTIVE.get();
+        if (previous != null && !previous.provider.isTerminated()) {
+            throw new IllegalStateException(previous.closed ? "The previous bridge is still terminating" : "A bridge is already installed");
         }
-        if (active != null) active.close(); // The provider failed on its own; release its observer and registry.
-        var bridge = new FxAtSpiBridge(status, bus, embed); active = bridge; return bridge;
+        if (previous != null) previous.close(); // The provider failed on its own; release its observer and registry.
+        var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor);
+        ACTIVE.set(bridge);
+        bridge.begin();
+        return bridge;
     }
     /**
      * Installs the bridge with status messages written to standard error.
