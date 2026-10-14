@@ -71,7 +71,7 @@ public final class FxAtSpiBridge implements AutoCloseable {
     /**
      * Installs one bridge for all showing JavaFX windows in this JVM.
      * Call on the FX application thread.
-     * @param status receives provider status on the provider thread
+     * @param status receives provider status on a dedicated daemon thread, never on the FX or provider thread; messages are queued (bounded, newest dropped when saturated) so a slow consumer cannot delay shutdown
      * @return the bridge to close on the FX application thread at application shutdown
      */
     public static FxAtSpiBridge install(Consumer<String> status) { return install(status, null, true, Platform::runLater); }

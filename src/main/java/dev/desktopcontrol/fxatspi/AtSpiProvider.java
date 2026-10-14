@@ -33,6 +33,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
@@ -88,6 +90,12 @@ final class AtSpiProvider {
     private final CompletionStage<Void> terminatedView = terminated.minimalCompletionStage();
     private volatile boolean embedOutstanding, embedAbandoned;
     private volatile String deferredNotice;
+    private static final int MAX_PENDING_NOTICES = 32;
+    private static final String END_OF_NOTICES = new String("end-of-notices"); // compared by identity
+    private final BlockingQueue<String> notices = new ArrayBlockingQueue<>(MAX_PENDING_NOTICES + 1);
+    private final Object noticeLock = new Object();
+    private Thread noticeThread;
+    private boolean noticesClosed;
     private volatile long embedDrainNanos = DEFAULT_EMBED_DRAIN_NANOS;
     private MemorySegment embedCancellable = Ffm.NIL;
     private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
@@ -194,6 +202,7 @@ final class AtSpiProvider {
             complete();
             var notice = deferredNotice;
             if (notice != null) report(notice);
+            finishNotices();
         }
     }
     private void embedWithRegistry() throws ReflectiveOperationException {
@@ -265,8 +274,32 @@ final class AtSpiProvider {
     }
     private static final long DEFAULT_EMBED_DRAIN_NANOS = 1_000_000_000L;
     /** Application callbacks must never break cleanup or run under the provider lock; failures are contained here. */
+    /**
+     * Queues a status message for the dedicated delivery thread and returns immediately, so a slow or blocked
+     * consumer can never hold the provider thread or delay teardown and {@code closed()}. The queue is bounded:
+     * when it is saturated the newest message is dropped.
+     */
     private void report(String message) {
-        try { status.accept(message); } catch (Throwable ignored) { /* A failing consumer must not affect the provider. */ }
+        if (notices.size() >= MAX_PENDING_NOTICES || !notices.offer(message)) return;
+        synchronized (noticeLock) {
+            if (noticeThread == null && !noticesClosed) {
+                noticeThread = new Thread(this::deliverNotices, "fx-atspi-status");
+                noticeThread.setDaemon(true);
+                noticeThread.start();
+            }
+        }
+    }
+    /** Ends the delivery thread once queued messages are delivered; called after termination is published. */
+    private void finishNotices() {
+        synchronized (noticeLock) { noticesClosed = true; }
+        notices.offer(END_OF_NOTICES); // capacity reserves one slot for this marker
+    }
+    private void deliverNotices() {
+        try {
+            for (String message = notices.take(); message != END_OF_NOTICES; message = notices.take()) {
+                try { status.accept(message); } catch (Throwable ignored) { /* A failing consumer must not affect delivery of later messages. */ }
+            }
+        } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
     }
     private static void guarded(Runnable step) {
         try { step.run(); } catch (Throwable ignored) { /* Cleanup continues; details may contain peer data. */ }

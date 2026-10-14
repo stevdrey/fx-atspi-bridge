@@ -42,6 +42,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,6 +86,10 @@ class ProviderLifecycleTest {
         while (provider.state() != expected && System.nanoTime() < deadline) Thread.sleep(10);
         assertEquals(expected, provider.state());
     }
+    private void awaitStatus(String fragment) throws InterruptedException {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (statuses.stream().noneMatch(s -> s.contains(fragment)) && System.nanoTime() < deadline) Thread.sleep(10);
+    }
     private static void awaitTermination(AtSpiProvider provider) throws Exception {
         provider.terminated().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
@@ -101,6 +106,30 @@ class ProviderLifecycleTest {
         assertEquals(State.CLOSED, provider.state());
         assertTrue(provider.isTerminated());
     }
+    @Test void blockedStatusConsumerCannotDelayStartFailureOrBusLossTermination() throws Exception {
+        var release = new CountDownLatch(1);
+        var threads = new CopyOnWriteArrayList<String>();
+        Consumer<String> blocking = message -> {
+            threads.add(Thread.currentThread().getName());
+            try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        };
+        try {
+            var failing = new AtSpiProvider(blocking, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()),
+                    ffi -> { throw new IllegalStateException("no bus"); }, false, Runnable::run);
+            providers.add(failing);
+            failing.start();
+            awaitTermination(failing); // would hang if the failure report blocked the provider thread
+            assertEquals(State.FAILED, failing.state());
+            var lost = new AtSpiProvider(blocking, () -> Snapshot.EMPTY, new ActionExecutor(new TargetRegistry()), ffi -> address, false, Runnable::run);
+            providers.add(lost);
+            lost.start();
+            await(lost, State.RUNNING);
+            daemon.destroyForcibly().waitFor();
+            awaitTermination(lost);
+            assertEquals(State.FAILED, lost.state());
+            assertTrue(threads.stream().allMatch("fx-atspi-status"::equals), "status must not be delivered on the provider thread: " + threads);
+        } finally { release.countDown(); }
+    }
     @Test void closeTwiceIsSafeAndTerminationIsObservable() throws Exception {
         var provider = provider();
         provider.start(); provider.start();
@@ -116,6 +145,7 @@ class ProviderLifecycleTest {
         provider.start();
         awaitTermination(provider);
         assertEquals(State.FAILED, provider.state());
+        awaitStatus("IllegalStateException");
         assertTrue(statuses.stream().anyMatch(s -> s.contains("IllegalStateException")));
         assertTrue(statuses.stream().noneMatch(s -> s.contains("secret-bus-address")), statuses.toString());
     }
@@ -124,6 +154,8 @@ class ProviderLifecycleTest {
         provider.start();
         awaitTermination(provider);
         assertEquals(State.FAILED, provider.state());
+        awaitStatus("Error AT-SPI2");
+        assertTrue(statuses.stream().anyMatch(s -> s.contains("Error AT-SPI2")), "a failure status must be delivered");
         assertTrue(statuses.stream().noneMatch(s -> s.contains("nonexistent-socket-for-test")), statuses.toString());
     }
     @Test void busLossTearsDownWithoutReconnect() throws Exception {
@@ -133,6 +165,7 @@ class ProviderLifecycleTest {
         daemon.destroyForcibly().waitFor();
         awaitTermination(provider);
         assertEquals(State.FAILED, provider.state());
+        awaitStatus("bus connection lost");
         assertTrue(statuses.stream().anyMatch(s -> s.contains("bus connection lost")), statuses.toString());
     }
     @Test void concurrentStartAndStopAlwaysTerminate() throws Exception {
