@@ -36,6 +36,25 @@ class AllowlistTest(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
 
 
+class AllocatorEnvironmentTest(unittest.TestCase):
+    def test_default_allocator_environment_is_accepted(self):
+        env = {k: v for k, v in os.environ.items() if k not in ("GLIBC_TUNABLES", "LD_PRELOAD") and not k.startswith("MALLOC_")}
+        out = subprocess.run(["bash", "-c", f"set -uo pipefail\nsource {LIB}\nrequire_default_allocator"],
+                             capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_inherited_tunables_are_refused_by_name_without_values(self):
+        for name, value in (("GLIBC_TUNABLES", "glibc.malloc.arena_max=2:hunter2"), ("MALLOC_ARENA_MAX", "2"),
+                            ("MALLOC_TRIM_THRESHOLD_", "131072"), ("LD_PRELOAD", "/usr/lib64/libjemalloc.so.2")):
+            with self.subTest(name=name):
+                out = bash("require_default_allocator", env={name: value})
+                self.assertEqual(out.returncode, 1)
+                # ld.so itself may echo an invalid tunable or a missing preload; only our own message is checked.
+                refusal = next(line for line in out.stderr.splitlines() if line.startswith("Refusing to run"))
+                self.assertIn(name, refusal)
+                self.assertNotIn(value, refusal + out.stdout)
+
+
 class RedactionTest(unittest.TestCase):
     def test_picked_up_lines_are_redacted_in_both_launcher_forms(self):
         out = bash("""printf 'NOTE: Picked up JDK_JAVA_OPTIONS: -Dproxy.password=zzTop\\nPicked up _JAVA_OPTIONS: -Dk=v\\nother\\n' | redact_picked_up""")

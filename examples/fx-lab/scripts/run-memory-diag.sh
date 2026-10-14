@@ -45,7 +45,7 @@ for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LA
   # The variants decide NMT per cell; an inherited setting would silently put it in every cell.
   case "${!opts_var:-}" in *NativeMemoryTracking*) echo "Refusing to run: $opts_var sets NativeMemoryTracking; the script sets it per cell." >&2; exit 1 ;; esac
 done
-if [ -n "${MALLOC_ARENA_MAX:-}" ]; then echo "Refusing to run: MALLOC_ARENA_MAX is set; the script sets it per cell." >&2; exit 1; fi
+require_default_allocator || exit 1
 command -v pmap >/dev/null || { echo "Refusing to run: pmap (procps-ng) is required." >&2; exit 1; }
 
 mkdir -p "$out"
@@ -87,6 +87,7 @@ else
     done
     "$java_bin" -version 2>&1 | redact_picked_up | head -3
     echo "glibc=$(ldd --version 2>&1 | head -1)"
+    echo "allocator_env=default (GLIBC_TUNABLES, LD_PRELOAD and MALLOC_* unset; variants are set per cell)"
     echo "glib2=$(rpm -q glib2 2>/dev/null || echo unknown)"
     echo "pmap=$(pmap -V 2>&1 | head -1)"
     echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"

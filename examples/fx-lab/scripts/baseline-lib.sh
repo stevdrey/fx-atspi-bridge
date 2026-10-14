@@ -39,6 +39,21 @@ require_allowed_opts() {
   fi
 }
 
+# --- allocator environment -----------------------------------------------------------------------------------------
+# glibc reads GLIBC_TUNABLES (e.g. glibc.malloc.arena_max) and the MALLOC_* variables in every child process, and
+# LD_PRELOAD can replace the allocator altogether. Memory evidence compares allocator variants per cell, so an inherited
+# setting would silently apply to every cell. require_default_allocator -> returns 1 naming (never printing) the variables.
+require_default_allocator() {
+  local name set=()
+  for name in GLIBC_TUNABLES LD_PRELOAD $(compgen -e | grep -E '^MALLOC_' || true); do
+    [ -n "${!name:-}" ] && set+=("$name")
+  done
+  if [ "${#set[@]}" -ne 0 ]; then
+    echo "Refusing to run: ${set[*]} set in the environment (values not printed); they change the glibc allocator of every cell. Unset them; the script sets allocator variants per cell." >&2
+    return 1
+  fi
+}
+
 # The JVM echoes "[NOTE: ]Picked up <VAR>: <value>"; never let that value reach a retained file.
 redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 
