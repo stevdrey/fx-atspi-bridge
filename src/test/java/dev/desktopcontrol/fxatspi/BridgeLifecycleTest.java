@@ -79,27 +79,31 @@ class BridgeLifecycleTest {
     }
 
     @Test void reinstallIsRejectedUntilProviderTerminates() throws Exception {
-        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+        var release = new CountDownLatch(1);
+        // The provider cannot finish starting (and so cannot terminate) until the bus resolver is released.
+        AtSpiProvider.BusAddress gate = ffi -> {
+            try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            return address;
+        };
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, gate, false));
         var first = last;
-        var running = assertThrows(ExecutionException.class,
-                () -> onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)));
-        assertTrue(running.getCause() instanceof IllegalStateException, "second install while installed must be rejected");
-        onFx(() -> {
-            // Take the lock before requesting shutdown so native cleanup cannot finish: closed but not terminated.
-            synchronized (first.provider) {
+        try {
+            var running = assertThrows(ExecutionException.class,
+                    () -> onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)));
+            assertTrue(running.getCause() instanceof IllegalStateException, "second install while installed must be rejected");
+            onFx(() -> {
                 first.close();
                 var rejected = assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
                 assertTrue(rejected.getMessage().contains("terminating"), rejected.getMessage());
                 // Completing or cancelling a caller's copy must not make the provider look terminated.
-                var copy = first.closed().toCompletableFuture();
-                copy.complete(null);
+                first.closed().toCompletableFuture().complete(null);
                 assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
                 first.closed().toCompletableFuture().cancel(true);
                 assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
                 first.close(); // closing twice stays safe
-            }
-            return null;
-        });
+                return null;
+            });
+        } finally { release.countDown(); }
         first.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
         assertTrue(first.provider.isTerminated());
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
