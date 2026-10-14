@@ -20,18 +20,23 @@ def bench_constant(name):
     return match.group(1)
 
 
+def provider_status_literals():
+    """Leading string literal of every provider status message: report("..."), status.accept("...") or a deferred notice."""
+    return re.findall(r'(?:status\.accept\(|report\(|deferredNotice\s*=\s*)"([^"]*)"', PROVIDER.read_text())
+
+
 class StatusContractTest(unittest.TestCase):
     def test_every_provider_status_message_is_classified_by_the_harness(self):
         ready, error = bench_constant("PROVIDER_READY_PREFIX"), bench_constant("PROVIDER_ERROR_PREFIX")
-        literals = re.findall(r'status\.accept\("([^"]*)"', PROVIDER.read_text())
-        self.assertTrue(literals, "AtSpiProvider no longer reports status through status.accept(\"...\")")
+        literals = provider_status_literals()
+        self.assertTrue(literals, "AtSpiProvider no longer reports status through report(\"...\") or status.accept(\"...\")")
         for literal in literals:
             self.assertTrue(literal.startswith((ready, error)),
                             f"status message {literal!r} is neither a ready ({ready!r}) nor an error ({error!r}) prefix for BenchApp")
 
     def test_the_ready_message_exists_in_the_provider(self):
         ready = bench_constant("PROVIDER_READY_PREFIX")
-        literals = re.findall(r'status\.accept\("([^"]*)"', PROVIDER.read_text())
+        literals = provider_status_literals()
         self.assertTrue(any(l.startswith(ready) for l in literals), f"AtSpiProvider never reports {ready!r}")
 
 
