@@ -44,10 +44,10 @@ Changed: `examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/BenchApp.java`.
 
 ## Acceptance and verification
 
-- [ ] NMT summary bridge off and on at the existing checkpoints, separate runs.
-- [ ] Anonymous/file RSS split from `smaps_rollup` at the checkpoints; `pmap` and malloc-arena evidence for install/close churn.
-- [ ] Retained-object evidence for the 10,000-node structural churn difference, bridge state versus JavaFX.
-- [ ] Written diagnosis with measured numbers and a recommendation; fixes proposed as separate issues.
+- [x] NMT summary bridge off and on at the existing checkpoints, separate runs.
+- [x] Anonymous/file RSS split from `smaps_rollup` at the checkpoints; `pmap` and malloc-arena evidence for install/close churn (no per-call-site GLib attribution; see the verification record).
+- [x] Retained-object evidence for the 10,000-node structural churn difference, bridge state versus JavaFX.
+- [x] Written diagnosis with measured numbers and a recommendation; fixes proposed as separate issues.
 
 Checks: `./gradlew check`, Python unit tests, `run-baseline.sh … smoke` (install churn no longer fails), `run-memory-diag.sh … smoke`, then the `diag` collection. Results in [`docs/verification/issue-17.md`](../verification/issue-17.md).
 

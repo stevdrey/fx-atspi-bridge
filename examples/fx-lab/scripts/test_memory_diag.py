@@ -100,7 +100,8 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(groups["other"], (22437, 2684920))
 
     def test_pmap_split_ignores_header_and_total(self):
-        self.assertEqual(memory_diag.parse_pmap(PMAP), {"anonRssKb": 16, "fileRssKb": 13884, "anonMappings": 2})
+        self.assertEqual(memory_diag.parse_pmap(PMAP), {"anonRssKb": 16, "fileRssKb": 13884, "anonMappings": 2,
+                                                         "lowAnonRssKb": 4, "highAnonRssKb": 12})
 
     def test_cell_names(self):
         self.assertEqual(memory_diag.cell_key("structural-n10000-off-nmt-r3"), (("structural", 10000, "off", "nmt"), 3))

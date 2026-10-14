@@ -24,6 +24,10 @@ PHASES = {
     "install": ("installChurnBefore", ("installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterTrim")),
 }
 SMAPS = ("Rss", "Anonymous", "PssFile")
+# With compressed oops HotSpot reserves the Java heap and class space below this address, while glibc arenas, thread
+# stacks and other native mappings live near the top of the address space. A heuristic: memory_diag.py reports it as
+# "JVM low range" and the verification record cross-checks it against NMT's Java Heap category.
+LOW_RANGE_LIMIT = 0x1000_0000_0000
 
 
 # --- parsers (pure; covered by test_memory_diag.py) ---------------------------------------------------------------
@@ -92,8 +96,9 @@ def histogram_groups(classes):
 
 
 def parse_pmap(text):
-    """RSS kB of anonymous versus file-backed mappings and the anonymous mapping count from `pmap -x`."""
-    anon = file_backed = anon_count = 0
+    """RSS kB of anonymous versus file-backed mappings, the anonymous RSS below LOW_RANGE_LIMIT (Java heap and class
+    space with compressed oops) and the anonymous mapping count from `pmap -x`."""
+    anon = file_backed = anon_count = low = 0
     for line in text.splitlines():
         match = re.match(r"^[0-9a-f]{8,16}\s+\d+\s+(\d+)\s+\d+\s+\S+\s+(.*)$", line)
         if not match:
@@ -102,9 +107,12 @@ def parse_pmap(text):
         if mapping.startswith("[") and mapping.endswith("]"):
             anon += rss
             anon_count += 1
+            if int(line.split()[0], 16) < LOW_RANGE_LIMIT:
+                low += rss
         else:
             file_backed += rss
-    return {"anonRssKb": anon, "fileRssKb": file_backed, "anonMappings": anon_count}
+    return {"anonRssKb": anon, "fileRssKb": file_backed, "anonMappings": anon_count, "lowAnonRssKb": low,
+            "highAnonRssKb": anon - low}
 
 
 def cell_key(name):
@@ -266,8 +274,10 @@ def summary(data):
             out.append(f"| `{cls}` | {module} | {fmt([i for i, _ in values], digits=0)} | {fmt([b for _, b in values], 1024)} |")
 
     out.append("\n## pmap: anonymous versus file-backed RSS (MB)\n")
-    out.append("| Cell | Checkpoint | Anonymous RSS | File RSS | Anonymous mappings |")
-    out.append("| --- | --- | ---: | ---: | ---: |")
+    out.append("JVM low range: anonymous mappings below 0x100000000000 (Java heap and class space with compressed oops); "
+               "native range: everything above (malloc arenas, thread stacks, other native mappings).\n")
+    out.append("| Cell | Checkpoint | Anonymous RSS | JVM low range | Native range | File RSS | Anonymous mappings |")
+    out.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for key, runs in sorted(cells.items()):
         if key[3] == "nmt" or key[0] not in PHASES:
             continue
@@ -275,8 +285,9 @@ def summary(data):
         for checkpoint in (before, *afters):
             parsed = [parse_pmap(t) for t in (read_artifact(data, n, checkpoint, "pmap") for n, _ in runs) if t]
             if parsed:
-                out.append(f"| {label(key)} | {checkpoint} | {fmt([p['anonRssKb'] for p in parsed], 1024)} | "
-                           f"{fmt([p['fileRssKb'] for p in parsed], 1024)} | {fmt([p['anonMappings'] for p in parsed], digits=0)} |")
+                out.append(f"| {label(key)} | {checkpoint} | "
+                           + " | ".join(fmt([p[f] for p in parsed], 1024) for f in ("anonRssKb", "lowAnonRssKb", "highAnonRssKb", "fileRssKb"))
+                           + f" | {fmt([p['anonMappings'] for p in parsed], digits=0)} |")
     return "\n".join(out) + "\n"
 
 
