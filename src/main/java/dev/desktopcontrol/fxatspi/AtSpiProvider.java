@@ -98,6 +98,7 @@ final class AtSpiProvider {
     private Thread noticeThread;
     private boolean noticesClosed;
     private volatile long embedDrainNanos = DEFAULT_EMBED_DRAIN_NANOS;
+    private volatile Runnable beforeNativeTeardown = () -> {};
     private MemorySegment embedCancellable = Ffm.NIL;
     private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
 
@@ -131,6 +132,8 @@ final class AtSpiProvider {
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
     CompletionStage<Void> terminated() { return terminatedView; }
     boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
+    /** Test seam: runs on the provider thread when native teardown starts, to observe that no lock is held. */
+    void beforeNativeTeardown(Runnable hook) { beforeNativeTeardown = hook; }
     /** Test seam: how long teardown waits for the cancelled Embed callback. */
     void embedDrainNanos(long nanos) { embedDrainNanos = nanos; }
     boolean embedOutstanding() { return embedOutstanding; }
@@ -188,10 +191,7 @@ final class AtSpiProvider {
                     Thread.sleep(5);
                 }
             } finally {
-                synchronized (this) {
-                    running = false; registered = false;
-                    teardown(context, pushed);
-                }
+                teardown(context, pushed, beginShutdown());
             }
         } catch (Throwable error) {
             failure = error;
@@ -227,7 +227,17 @@ final class AtSpiProvider {
     private boolean busClosed() {
         return (int) ffi.call("g_dbus_connection_is_closed", JAVA_INT, new MemoryLayout[]{ADDRESS}, connection) != 0;
     }
-    /** Runs on the provider thread under the provider lock; every step is independent so one failure cannot skip the rest. */
+    /**
+     * The only part of shutdown that needs the provider lock: stop accepting mutations and take ownership of the
+     * pending invocations. Native work happens afterwards without the lock, so an FX task waiting for it is never
+     * held up behind a blocking native call; a task that already removed its entry finishes before this returns.
+     */
+    private synchronized List<MemorySegment> beginShutdown() {
+        running = false; registered = false;
+        var drained = List.copyOf(pending.values());
+        pending.clear();
+        return drained;
+    }
     /**
      * The Embed completion is delivered through the main context and calls an upcall stub from the provider
      * arena, so cancel it and let the callback run before either is released. Returns false if it never ran.
@@ -242,17 +252,18 @@ final class AtSpiProvider {
         }
         return !embedOutstanding;
     }
-    private void teardown(MemorySegment context, boolean pushed) {
+    /** Runs on the provider thread without the provider lock; every step is independent so one failure cannot skip the rest. */
+    private void teardown(MemorySegment context, boolean pushed, List<MemorySegment> drained) {
+        beforeNativeTeardown.run();
         if (!drainEmbed(context)) {
             embedAbandoned = true; ffi.detach();
             deferredNotice = "Error AT-SPI2: registry call did not complete; native memory retained"; // delivered after cleanup, outside the lock
         }
         if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
-        for (var invocation : List.copyOf(pending.values())) {
+        for (var invocation : drained) {
             guarded(() -> error(invocation, new Rejected("Provider stopped")));
             guarded(() -> releaseInvocation(invocation));
         }
-        pending.clear();
         for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
         if (connection.address() != 0) {
             var closing = connection;
@@ -274,7 +285,6 @@ final class AtSpiProvider {
         ffi.unref(invocation);
     }
     private static final long DEFAULT_EMBED_DRAIN_NANOS = 1_000_000_000L;
-    /** Application callbacks must never break cleanup or run under the provider lock; failures are contained here. */
     /**
      * Queues a status message for the dedicated delivery thread and returns immediately, so a slow or blocked
      * consumer can never hold the provider thread or delay teardown and {@code closed()}. The queue is bounded:

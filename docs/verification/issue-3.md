@@ -11,7 +11,7 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 | Command | Result |
 |---|---|
 | `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 19 tests (13 provider + 6 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 39 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew check` | BUILD SUCCESSFUL; 40 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -62,6 +62,14 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 - Stuck status consumers could strand one daemon thread (plus provider, consumer and queue) per reinstall. Live delivery threads are now counted process-wide and `install` is refused while `AtSpiProvider.MAX_LIVE_STATUS_THREADS` (4) are blocked; it works again once they return. `installIsRefusedWhileTooManyStatusConsumersAreBlocked` blocks four consumers, checks the fifth install is refused without taking the slot, then releases them and installs again. Mutation check: without the install check the test fails.
 - Not verified: behavior with a consumer that is stuck forever beyond the test's 30 s latch timeout; threads are never interrupted (non-goal: no unsafe interruption). The limit of 4 is a chosen constant, not derived from a measurement.
 - `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 19 tests each (13 provider + 6 bridge), 0 failures, 0 skipped.
+
+## Hardening pass (self-review, no Codex comment)
+
+- **Lock across native calls:** teardown ran under the provider lock, so a queued FX mutation task could block behind `drainEmbed` (up to 1 s) or `close_sync`. Only the flag change and the hand-over of pending invocations stay under the lock now. `nativeTeardownDoesNotHoldTheProviderLock` blocks inside native teardown via a test hook and requires another thread to take the provider monitor within 2 s; running teardown under the lock again makes it time out.
+- **`Ffm.call` cost:** the signature guard built a `FunctionDescriptor` on every call. It now compares the stored layouts and builds the descriptor only on first use. One local smoke (1M calls of `g_get_monotonic_time`, best of 5, JIT warmed, this machine only): about 114 ns/call before and 82 ns/call after. A single run, not a benchmark collection; no wider claim.
+- **Test hygiene:** tests killed `dbus-daemon` with SIGKILL, leaving `/tmp/dbus-*` sockets (816 accumulated on the development machine over the session). `PrivateBus` stops it with SIGTERM and waits; three further runs added no new entries. The 816 earlier entries were not removed. Both lifecycle classes now have `@Timeout`, and reads of the daemon address and the Python helper's `ready` line are bounded (no more indefinite `readLine()`).
+- Removed two orphaned stacked Javadoc comments in `AtSpiProvider`.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×3: 20 tests each (14 provider + 6 bridge), 0 failures, 0 skipped.
 
 ## Defect found and fixed while testing
 

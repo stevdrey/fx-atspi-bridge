@@ -21,9 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -35,11 +32,13 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** Install/close protocol on the FX thread against a private dbus-daemon; skipped when either is unavailable. */
+@Timeout(120)
 class BridgeLifecycleTest {
     private static boolean toolkit;
-    private Process daemon;
+    private PrivateBus bus;
     private String address;
     private FxAtSpiBridge last;
 
@@ -54,18 +53,16 @@ class BridgeLifecycleTest {
     @BeforeEach void startDaemon() throws Exception {
         var required = "1".equals(System.getenv("REQUIRE_FX_TOOLKIT")) || "1".equals(System.getenv("REQUIRE_NATIVE_BUS"));
         if (!toolkit) { if (required) fail("JavaFX toolkit unavailable"); Assumptions.abort("JavaFX toolkit unavailable"); }
-        try {
-            daemon = new ProcessBuilder("dbus-daemon", "--session", "--nofork", "--print-address=1").start();
-            address = new BufferedReader(new InputStreamReader(daemon.getInputStream())).readLine();
-        } catch (IOException unavailable) { address = null; }
-        if (address == null || address.isBlank()) { if (required) fail("dbus-daemon unavailable"); Assumptions.abort("dbus-daemon unavailable"); }
+        bus = PrivateBus.start();
+        if (bus == null) { if (required) fail("dbus-daemon unavailable"); Assumptions.abort("dbus-daemon unavailable"); }
+        address = bus.address();
     }
     @AfterEach void cleanUp() throws Exception {
         if (last != null) {
             onFx(() -> { last.close(); return null; });
             last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
         }
-        if (daemon != null) daemon.destroyForcibly();
+        if (bus != null) bus.stop();
     }
     private static <T> T onFx(Callable<T> work) throws Exception {
         var result = new CompletableFuture<T>();

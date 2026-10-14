@@ -28,15 +28,13 @@ import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
-import java.io.BufferedReader;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -47,32 +45,32 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Provider lifecycle against a private dbus-daemon (not the desktop accessibility bus).
  * Skipped when dbus-daemon or the GIO libraries are unavailable, unless REQUIRE_NATIVE_BUS=1.
  */
+@Timeout(90)
 class ProviderLifecycleTest {
     private static final long WAIT_SECONDS = 15;
-    private Process daemon;
+    private PrivateBus bus;
     private String address;
     private final List<String> statuses = new CopyOnWriteArrayList<>();
     private final List<AtSpiProvider> providers = new CopyOnWriteArrayList<>();
 
     @BeforeEach void startDaemon() throws Exception {
-        try {
-            daemon = new ProcessBuilder("dbus-daemon", "--session", "--nofork", "--print-address=1").redirectErrorStream(false).start();
-            address = new BufferedReader(new InputStreamReader(daemon.getInputStream())).readLine();
-        } catch (IOException unavailable) { address = null; }
-        if (address == null || address.isBlank()) {
+        bus = PrivateBus.start();
+        if (bus == null) {
             if ("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("dbus-daemon unavailable");
             Assumptions.abort("dbus-daemon unavailable");
         }
+        address = bus.address();
     }
     @AfterEach void cleanUp() {
         Ffm.resetAbandonedForTesting();
         providers.forEach(AtSpiProvider::stop);
-        if (daemon != null) daemon.destroyForcibly();
+        if (bus != null) bus.stop();
     }
 
     private AtSpiProvider provider(Snapshot snapshot, AtSpiProvider.BusAddress bus) {
@@ -94,6 +92,25 @@ class ProviderLifecycleTest {
         provider.terminated().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
+    @Test void nativeTeardownDoesNotHoldTheProviderLock() throws Exception {
+        var inTeardown = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var provider = provider();
+        provider.beforeNativeTeardown(() -> {
+            inTeardown.countDown();
+            try { release.await(WAIT_SECONDS, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        });
+        provider.start();
+        await(provider, State.RUNNING);
+        provider.stop();
+        assertTrue(inTeardown.await(WAIT_SECONDS, TimeUnit.SECONDS), "teardown never started");
+        try {
+            // An FX task takes this same monitor; it must not wait for native cleanup.
+            CompletableFuture.runAsync(() -> { synchronized (provider) { provider.pendingCount(); } }).get(2, TimeUnit.SECONDS);
+        } finally { release.countDown(); }
+        awaitTermination(provider);
+        assertEquals(State.CLOSED, provider.state());
+    }
     @Test void terminationStageIsOneSharedReadOnlyView() {
         var provider = provider();
         assertSame(provider.terminated(), provider.terminated());
@@ -124,7 +141,7 @@ class ProviderLifecycleTest {
             providers.add(lost);
             lost.start();
             await(lost, State.RUNNING);
-            daemon.destroyForcibly().waitFor();
+            bus.stop();
             awaitTermination(lost);
             assertEquals(State.FAILED, lost.state());
             assertTrue(threads.stream().allMatch("fx-atspi-status"::equals), "status must not be delivered on the provider thread: " + threads);
@@ -162,7 +179,7 @@ class ProviderLifecycleTest {
         var provider = provider();
         provider.start();
         await(provider, State.RUNNING);
-        daemon.destroyForcibly().waitFor();
+        bus.stop();
         awaitTermination(provider);
         assertEquals(State.FAILED, provider.state());
         awaitStatus("bus connection lost");
@@ -269,9 +286,9 @@ class ProviderLifecycleTest {
     private Process startStalledRegistry(Path script) throws Exception {
         Files.writeString(script, STALLED_REGISTRY);
         var registry = new ProcessBuilder("python3", "-I", "-W", "ignore", script.toString(), address).redirectErrorStream(true).start();
-        var ready = new BufferedReader(new InputStreamReader(registry.getInputStream())).readLine(); // null when the helper exits early
+        var ready = PrivateBus.firstLine(registry, 15); // null when the helper exits early or never reports
         if (!"ready".equals(ready)) {
-            registry.destroyForcibly();
+            PrivateBus.terminate(registry);
             if ("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("stalled registry helper unavailable: " + ready);
             Assumptions.abort("python3 with PyGObject Gio unavailable");
         }
@@ -297,7 +314,7 @@ class ProviderLifecycleTest {
             assertFalse(provider.embedOutstanding(), "the Embed callback must have run before teardown finished");
             assertFalse(provider.embedAbandoned(), "draining must not need the retain-memory fallback");
             assertTrue(statuses.stream().noneMatch(s -> s.contains("registrar")), statuses.toString());
-        } finally { registry.destroyForcibly(); Files.deleteIfExists(script); }
+        } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
     }
     @Test void abandonNoticeFromAFailingConsumerCannotBreakCleanup() throws Exception {
         var script = Files.createTempFile("stalled-registry", ".py");
@@ -323,7 +340,7 @@ class ProviderLifecycleTest {
             var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             while (notices.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
             assertEquals(List.of(true), notices, "the notice must be delivered once, after termination was published");
-        } finally { registry.destroyForcibly(); Files.deleteIfExists(script); }
+        } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
     }
     @Test void abandonNoticeFromABlockingConsumerCannotDelayTermination() throws Exception {
         var script = Files.createTempFile("stalled-registry", ".py");
@@ -345,6 +362,6 @@ class ProviderLifecycleTest {
             awaitTermination(provider); // must complete while the consumer is (or will be) blocked
             assertEquals(State.CLOSED, provider.state());
             assertTrue(entered.await(WAIT_SECONDS, TimeUnit.SECONDS), "the notice should still be delivered");
-        } finally { release.countDown(); registry.destroyForcibly(); Files.deleteIfExists(script); }
+        } finally { release.countDown(); PrivateBus.terminate(registry); Files.deleteIfExists(script); }
     }
 }

@@ -19,6 +19,7 @@ import dev.desktopcontrol.fxatspi.protocol.VariantText;
 import java.lang.foreign.*;
 import java.lang.invoke.*;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,8 +32,12 @@ final class Ffm implements AutoCloseable {
     private final SymbolLookup gio = SymbolLookup.libraryLookup("libgio-2.0.so.0", arena);
     private final SymbolLookup glib = SymbolLookup.libraryLookup("libglib-2.0.so.0", arena);
     private final SymbolLookup objects = SymbolLookup.libraryLookup("libgobject-2.0.so.0", arena);
-    /** A resolved downcall together with the descriptor it was linked with. */
-    private record Binding(FunctionDescriptor descriptor, MethodHandle handle) {}
+    /** A resolved downcall with the layouts it was linked with, so later calls compare without building a descriptor. */
+    private record Binding(MemoryLayout result, MemoryLayout[] signature, MethodHandle handle) {
+        boolean matches(MemoryLayout otherResult, MemoryLayout[] otherSignature) {
+            return Objects.equals(result, otherResult) && Arrays.equals(signature, otherSignature);
+        }
+    }
     private final ConcurrentHashMap<String, Binding> bindings = new ConcurrentHashMap<>();
     /** Arenas intentionally retained process-wide; installs are refused once this many providers could not release one. */
     static final int MAX_ABANDONED = 3;
@@ -41,11 +46,13 @@ final class Ffm implements AutoCloseable {
     private final AtomicBoolean detached = new AtomicBoolean();
     Object call(String name, MemoryLayout result, MemoryLayout[] signature, Object... args) {
         if (closed) throw new IllegalStateException("Native API closed");
-        var descriptor = result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature);
-        var binding = bindings.computeIfAbsent(name, key -> new Binding(descriptor, Linker.nativeLinker().downcallHandle(
-                gio.find(key).or(() -> glib.find(key)).or(() -> objects.find(key))
-                        .orElseThrow(() -> new IllegalStateException("Missing native symbol: " + key)), descriptor)));
-        if (!binding.descriptor().equals(descriptor)) throw new IllegalStateException("Conflicting native signature: " + name);
+        var binding = bindings.computeIfAbsent(name, key -> {
+            var descriptor = result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature);
+            return new Binding(result, signature.clone(), Linker.nativeLinker().downcallHandle(
+                    gio.find(key).or(() -> glib.find(key)).or(() -> objects.find(key))
+                            .orElseThrow(() -> new IllegalStateException("Missing native symbol: " + key)), descriptor));
+        });
+        if (!binding.matches(result, signature)) throw new IllegalStateException("Conflicting native signature: " + name);
         if (args.length != signature.length) throw new IllegalArgumentException("Argument count mismatch: " + name);
         try { return binding.handle().invokeWithArguments(args); }
         catch (Throwable error) { throw new IllegalStateException(name, error); }
