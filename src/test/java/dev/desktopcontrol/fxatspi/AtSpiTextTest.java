@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 package dev.desktopcontrol.fxatspi;
+import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.Role;
+import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import org.junit.jupiter.api.Test;
 import java.util.List;
+import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 class AtSpiTextTest {
     @Test void atspiOffsetsCountUnicodeCodePointsInsteadOfUtf16Units() {
         String text = "A🧪é\n";
-        assertEquals("🧪", AtSpiProvider.textRange(text, 1, 2));
-        assertEquals("é\n", AtSpiProvider.textRange(text, 2, -1));
-        assertEquals("", AtSpiProvider.textRange(text, 4, 4));
-        assertThrows(IllegalArgumentException.class, () -> AtSpiProvider.textRange(text, -1, 2));
-        assertThrows(IllegalArgumentException.class, () -> AtSpiProvider.textRange(text, 3, 2));
-        assertThrows(IllegalArgumentException.class, () -> AtSpiProvider.textRange(text, 0, 5));
+        assertEquals("🧪", AtSpiObjects.textRange(text, 1, 2));
+        assertEquals("é\n", AtSpiObjects.textRange(text, 2, -1));
+        assertEquals("", AtSpiObjects.textRange(text, 4, 4));
+        assertThrows(IllegalArgumentException.class, () -> AtSpiObjects.textRange(text, -1, 2));
+        assertThrows(IllegalArgumentException.class, () -> AtSpiObjects.textRange(text, 3, 2));
+        assertThrows(IllegalArgumentException.class, () -> AtSpiObjects.textRange(text, 0, 5));
     }
     @Test void ffiVariantsRoundTripUserTextAndRejectInvalidInputWithoutAUserSession() {
         try (var nativeApi = new Ffm()) {
@@ -37,8 +41,8 @@ class AtSpiTextTest {
             assertThrows(IllegalStateException.class, () -> nativeApi.variant("not valid variant syntax!"));
         }
     }
-    private static AtSpiProvider.Item item(String name, String text) {
-        return new AtSpiProvider.Item("id", name, 23, text, false, true, true, false, 0, "root", List.of(), null);
+    private static AccessibleNode item(String name, String text) {
+        return new AccessibleNode("id", name, Role.FRAME, text, false, true, true, false, false, 0, "root", List.of(), Set.of());
     }
     @Test void untitledStageNamesNormalizeToEmptyAndCompareWithoutFailing() {
         var untitled = item(null, null);
@@ -53,6 +57,6 @@ class AtSpiTextTest {
         assertEquals("'a\uFFFDb'", Ffm.quote(published.name()));
         assertEquals("x🧪\uFFFDy".codePointCount(0, 4), published.text().codePointCount(0, 4));
         assertEquals(4, published.text().codePointCount(0, published.text().length()));
-        assertEquals("\uFFFD", AtSpiProvider.textRange(published.text(), 2, 3));
+        assertEquals("\uFFFD", AtSpiObjects.textRange(published.text(), 2, 3));
     }
 }

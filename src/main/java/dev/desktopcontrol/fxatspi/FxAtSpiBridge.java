@@ -15,6 +15,9 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import dev.desktopcontrol.fxatspi.fx.ActionExecutor;
+import dev.desktopcontrol.fxatspi.fx.SceneModelBuilder;
+import dev.desktopcontrol.fxatspi.fx.TargetRegistry;
 import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import java.util.function.Consumer;
@@ -26,7 +29,8 @@ public final class FxAtSpiBridge implements AutoCloseable {
     private static boolean installed;
     private boolean closed;
     private FxAtSpiBridge(Consumer<String> status) {
-        provider = new AtSpiProvider(status);
+        var registry = new TargetRegistry();
+        provider = new AtSpiProvider(status, new SceneModelBuilder(registry), new ActionExecutor(registry));
         observer = new AnimationTimer() {
             private long previous;
             @Override public void handle(long now) {
