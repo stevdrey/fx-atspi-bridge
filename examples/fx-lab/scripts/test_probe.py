@@ -222,6 +222,24 @@ class WalkTest(unittest.TestCase):
 
         self.assertIsNone(probe.find_applications(Desktop(), "x", time.monotonic() + 0.1))
 
+    def test_remote_glib_errors_become_a_deterministic_message(self):
+        probe = self.load()
+        from gi.repository import GLib
+
+        class Broken(FakeNode):
+            def get_name(self):
+                raise GLib.Error("Timeout was reached")
+
+        with self.assertRaises(probe.RemoteError):
+            probe.walk(Broken(0), 0, [])
+
+        class Desktop:
+            def get_child_count(self): raise GLib.Error("x" * 5000)
+
+        with self.assertRaises(probe.RemoteError) as caught:
+            probe.find_applications(Desktop(), "x", time.monotonic() + 5)
+        self.assertLess(len(str(caught.exception)), probe.MAX_NAME_CHARS + 2)
+
     def test_small_tree_is_fully_walked(self):
         probe = self.load()
         node = FakeNode(children=3)

@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -61,13 +62,18 @@ public final class BenchApp extends Application {
     private static final int STRUCTURAL_CONTROLS = 10;
     /** FxAtSpiBridge scans every 100 ms; holding each state 250 ms spans at least two scans plus provider reconcile. */
     private static final long HOLD_MS = 250;
-    /** Idle pulses well above one frame mean a blanked/locked/occluded display; the run is not valid evidence. */
     private static final int CADENCE_SAMPLES = 30;
-    private static final double MAX_CADENCE_MS = 50;
-    /** A ~1 Hz throttled display yields ~1000 ms samples; any sample at or above this invalidates the run. */
-    private static final double MAX_VALID_PULSE_MS = 900;
+    /**
+     * Status messages that AtSpiProvider hands to its status callback; the harness depends on these prefixes.
+     * test_contract.py fails when AtSpiProvider or these constants drift apart.
+     */
+    static final String PROVIDER_READY_PREFIX = "AT-SPI2 listo";
+    static final String PROVIDER_ERROR_PREFIX = "Error";
 
     private final Map<String, String> options = new HashMap<>();
+    /** Limits shared with budgets.py (baseline.conf, passed with --limits=): a throttled display yields ~1000 ms pulses. */
+    private double maxValidPulseMs;
+    private double maxCadenceMs;
     private final ThreadMXBean threads = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private Stage stage;
     private Scene originalScene;
@@ -80,8 +86,8 @@ public final class BenchApp extends Application {
         volatile Thread providerThread;
 
         void onStatus(String message) {
-            if (message.startsWith("Error")) errors.incrementAndGet();
-            else if (message.startsWith("AT-SPI2 listo")) ready.countDown();
+            if (message.startsWith(PROVIDER_ERROR_PREFIX)) errors.incrementAndGet();
+            else if (message.startsWith(PROVIDER_READY_PREFIX)) ready.countDown();
         }
     }
 
@@ -94,6 +100,7 @@ public final class BenchApp extends Application {
         stage = primary;
         parse(getParameters().getRaw());
         var nodes = bounded("nodes", 100, 1, MAX_NODES);
+        loadLimits();
         var bridgeMode = options.getOrDefault("bridge", "off");
         if (!bridgeMode.equals("on") && !bridgeMode.equals("off")) {
             throw new IllegalArgumentException("--bridge must be 'on' or 'off', got '" + bridgeMode + "'");
@@ -141,11 +148,30 @@ public final class BenchApp extends Application {
         });
     }
 
-    /** Five no-op pulses; any pulse of {@code MAX_VALID_PULSE_MS} or more means a throttled display. Returns the slowest in ms. */
+    private void loadLimits() {
+        var path = options.get("limits");
+        if (path == null) throw new IllegalArgumentException("--limits=<baseline.conf> is required (run through run-baseline.sh)");
+        var properties = new Properties();
+        try (var reader = Files.newBufferedReader(Path.of(path))) {
+            properties.load(reader);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("cannot read limits file " + path, e);
+        }
+        maxValidPulseMs = Double.parseDouble(required(properties, "MAX_VALID_PULSE_MS"));
+        maxCadenceMs = Double.parseDouble(required(properties, "MAX_CADENCE_MS"));
+    }
+
+    private static String required(Properties properties, String key) {
+        var value = properties.getProperty(key);
+        if (value == null) throw new IllegalArgumentException("limits file lacks " + key);
+        return value.trim();
+    }
+
+    /** Five no-op pulses; any pulse of the configured pulse limit or more means a throttled display. Returns the slowest in ms. */
     private double requirePulsesNotThrottled(String when) {
         var worst = 0.0;
         for (var i = 0; i < 5; i++) worst = Math.max(worst, awaitPulse(() -> { }) / 1e6);
-        if (worst >= MAX_VALID_PULSE_MS) invalid("a pulse took " + worst + " ms " + when + "; display throttled (screen blanked, locked or hidden)");
+        if (worst >= maxValidPulseMs) invalid("a pulse took " + worst + " ms " + when + "; display throttled (screen blanked, locked or hidden)");
         return worst;
     }
 
@@ -163,7 +189,7 @@ public final class BenchApp extends Application {
         for (var i = 0; i < CADENCE_SAMPLES; i++) cadence[i] = awaitPulse(() -> { }) / 1e6;
         Arrays.sort(cadence);
         var p50 = percentile(cadence, 0.50);
-        if (p50 > MAX_CADENCE_MS) {
+        if (p50 > maxCadenceMs) {
             System.err.println("bench invalid: idle pulse p50 " + p50 + " ms; display is throttled (screen blanked, locked or window hidden)");
             Runtime.getRuntime().halt(3);
         }
@@ -196,16 +222,14 @@ public final class BenchApp extends Application {
 
         requireAllocationTracking();
         var allocBefore = totalAllocatedBytes();
-        var threadSumBefore = allocatedBytes();
         var latenciesMs = new double[samples];
         for (var i = 0; i < samples; i++) latenciesMs[i] = mutateAndWait(dirty, warmup + i) / 1e6;
         var allocated = totalAllocatedBytes() - allocBefore;
-        var threadSumDelta = allocatedBytes() - threadSumBefore;
         if (allocated <= 0) invalid("thread allocation counters reported no allocation during the sampled phase");
         if (bridgeOn) requireProviderAlive("after the sampled phase");
         Arrays.sort(latenciesMs);
         var latencyMax = latenciesMs[latenciesMs.length - 1];
-        if (latencyMax >= MAX_VALID_PULSE_MS) {
+        if (latencyMax >= maxValidPulseMs) {
             System.err.println("bench invalid: a measured pulse took " + latencyMax + " ms; display throttled or process stalled during the measured phase");
             Runtime.getRuntime().halt(3);
         }
@@ -213,11 +237,9 @@ public final class BenchApp extends Application {
         field(json, "latencyP50Ms", percentile(latenciesMs, 0.50));
         field(json, "latencyP95Ms", percentile(latenciesMs, 0.95));
         field(json, "latencyP99Ms", percentile(latenciesMs, 0.99));
-        // Monotonic total (includes threads that terminated during the phase); the per-thread sum is kept only as a
-        // cross-check because threads that exit between the two snapshots make it undercount.
+        // Monotonic total, includes threads that terminated during the phase (a per-thread sum would undercount).
         field(json, "allocationMethod", "\"total\"");
         field(json, "allocatedBytesPerSample", allocated / samples);
-        field(json, "allocatedBytesPerSampleThreadSum", threadSumDelta / samples);
 
         if (idleSeconds > 0) idle(json, idleSeconds);
         if (bridgeOn) requireProviderAlive("after the idle phase");
@@ -255,7 +277,6 @@ public final class BenchApp extends Application {
         field(json, "rssAfterIdleKb", status("VmRSS"));
     }
 
-    /** Installs a bridge on the FX thread and tracks its readiness in a fresh generation. */
     /**
      * Installs a bridge and tracks it as the current generation. The provider thread is identified (thread set before
      * and after) only when {@code identifyThread} is set: for the initial install and the last churn cycle, so the
@@ -459,11 +480,6 @@ public final class BenchApp extends Application {
         var total = threads.getTotalThreadAllocatedBytes();
         if (total < 0) invalid("total thread allocation counter is unavailable");
         return total;
-    }
-
-    /** Sum over the threads alive right now: loses the history of threads that exited since the previous call. */
-    private long allocatedBytes() {
-        return Arrays.stream(threads.getThreadAllocatedBytes(threads.getAllThreadIds())).filter(v -> v > 0).sum();
     }
 
     private static void gc() throws InterruptedException {

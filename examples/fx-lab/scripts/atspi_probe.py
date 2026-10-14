@@ -15,7 +15,7 @@ import sys
 import gi
 
 gi.require_version("Atspi", "2.0")
-from gi.repository import Atspi  # noqa: E402
+from gi.repository import Atspi, GLib  # noqa: E402
 
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--pid=")]
 APP = ARGS[0] if ARGS else "JavaFX AT-SPI Lab"
@@ -37,7 +37,7 @@ def libatspi_version():
                 ["pkg-config", "--modversion", "atspi-2"]):
         if shutil.which(cmd[0]):
             try:
-                out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
                 if out.returncode == 0 and out.stdout.strip():
                     return out.stdout.strip()
             except (OSError, subprocess.SubprocessError):
@@ -82,16 +82,16 @@ def walk(root, depth, out, lookups=None, deadline=None, text=None):
         """Reads the node's metadata; None when the deadline expires before, between or after the remote calls."""
         if expired():
             return None
-        role_name = clip(node.get_role_name() or "")
+        role_name = clip(remote(node.get_role_name) or "")
         if expired():
             return None
-        name = clip(node.get_name() or "")
+        name = clip(remote(node.get_name) or "")
         if expired():
             return None
-        role = node.get_role()
+        role = remote(node.get_role)
         if expired():
             return None
-        count = node.get_child_count()
+        count = remote(node.get_child_count)
         if expired():
             return None
         text[0] += len(render_line(node_depth, role_name, name, count).encode()) + 1  # + newline
@@ -115,7 +115,7 @@ def walk(root, depth, out, lookups=None, deadline=None, text=None):
             return False
         frame[3] = index + 1
         lookups[0] += 1
-        child = node.get_child_at_index(index)
+        child = remote(node.get_child_at_index, index)
         if child is not None:
             frame_for_child = visit(child, node_depth + 1)
             if frame_for_child is None:
@@ -145,8 +145,20 @@ def process_ids(apps, deadline):
     for app in apps:
         if time.monotonic() >= deadline:
             return None
-        pids.append(app.get_process_id())
+        pids.append(remote(app.get_process_id))
     return None if time.monotonic() >= deadline else pids
+
+
+class RemoteError(Exception):
+    """A remote AT-SPI call failed (timeout, vanished application, protocol error)."""
+
+
+def remote(call, *args):
+    """Run one blocking AT-SPI call; GLib errors become a RemoteError with a clipped message."""
+    try:
+        return call(*args)
+    except GLib.Error as error:
+        raise RemoteError(clip(str(error))) from error
 
 
 class DiscoveryTruncated(Exception):
@@ -160,7 +172,7 @@ def find_applications(desktop, name, deadline):
     cannot turn into a plain "not found".
     """
     matches = []
-    total = desktop.get_child_count()
+    total = remote(desktop.get_child_count)
     if time.monotonic() >= deadline:
         return None
     if total > MAX_DESKTOP_APPS:
@@ -168,12 +180,12 @@ def find_applications(desktop, name, deadline):
     for i in range(total):
         if time.monotonic() >= deadline:
             return None
-        app = desktop.get_child_at_index(i)
+        app = remote(desktop.get_child_at_index, i)
         if time.monotonic() >= deadline:
             return None
         if app is None:
             continue
-        app_name = app.get_name()
+        app_name = remote(app.get_name)
         if time.monotonic() >= deadline:
             return None
         if app_name == name:
@@ -182,6 +194,14 @@ def find_applications(desktop, name, deadline):
 
 
 def main():
+    try:
+        return probe()
+    except RemoteError as error:
+        print(f"ERROR: AT-SPI call failed ({error}); the application may be stalled or may have exited")
+        return 1
+
+
+def probe():
     deadline = time.monotonic() + PROBE_DEADLINE_S  # one deadline for discovery and traversal
     print_client_versions()
     Atspi.set_timeout(CALL_TIMEOUT_MS, 15000)  # per-call and app-startup D-Bus timeouts (ms)

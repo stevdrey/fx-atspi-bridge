@@ -8,7 +8,8 @@ A display throttled to ~1 Hz would have shown ~1000 ms in the p50/p99 of every a
 NOT excluded: one or two isolated pulses of 900 ms or more per run (with 200 samples the nearest-rank p99 is the
 198th value). The budgets use p99, which already ignores the two largest samples, so such stalls would not change them.
 
-This waiver applies only to this collection. Any new collection (quick or full) records latencyMaxMs and must not use
+This waiver applies only to this collection and is enforced byte for byte by legacy-waiver.sha256 (SHA-256 of each of the 44 files and the
+collection commit); budgets.py rejects any other file that lacks latencyMaxMs. Any new collection (quick or full) records latencyMaxMs and must not use
 a waiver; the dedicated QA sessions listed in docs/verification/issue-1.md will replace this data.
 
 Provider liveness: these files predate `providerAliveAtEnd`. For dirty=10 bridge-on runs a live provider is evidenced by the
@@ -18,7 +19,7 @@ end-of-run liveness was recorded; a provider that died silently after reporting 
 Idle-window display state: these files predate `idleEdgePulseMaxMs` (pulse checks before and after the idle window).
 The idle window itself is evidenced only indirectly: the structural phase directly follows it in every dirty=10 run and is made of
 about five pulse waits per cycle, so a display throttled to ~1 Hz would need at least 3.75 s per cycle; the retained runs take
-0.8-0.93 s per cycle (100/1,000 nodes) and 1.7-2.4 s per cycle (10,000 nodes). `budgets.py` enforces a limit of 3.0 s per cycle.
+0.8-0.93 s per cycle (100/1,000 nodes) and 1.7-2.4 s per cycle (10,000 nodes). `budgets.py` enforces the limit of baseline.conf (3.5 s per cycle).
 A display that was blanked and un-blanked entirely inside the 10 s idle window is NOT excluded for these files.
 
 Allocation method: these files predate `allocationMethod`. Their `allocatedBytesPerSample` is the delta of the sum of

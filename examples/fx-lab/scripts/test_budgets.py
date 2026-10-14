@@ -3,6 +3,7 @@
 
 Run: python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'
 """
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -41,17 +42,28 @@ def run_json(bridge, p99, heap_delta_bytes, with_max=True):
 
 
 class BudgetsTest(unittest.TestCase):
-    def collect(self, runs, plan="profile=quick\nplan=100:2:10:10\n", drop=None, waiver=False):
+    ENV = "git=abc123\nprofile=quick\nworkload=warmup:50,samples:200,idle:10,installChurn:100\nplan=100:2:10:10\n"
+
+    def collect(self, runs, plan=ENV, drop=None, waiver=None):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         d = pathlib.Path(tmp.name)
         (d / "environment.txt").write_text(plan)
-        if waiver:
-            (d / "VALIDATION-NOTE.txt").write_text("legacy collection, see evidence")
         for bridge in ("off", "on"):
             for rep, run in enumerate(runs[bridge], start=1):
                 if (bridge, rep) != drop:
                     (d / f"n100-d10-{bridge}-r{rep}.json").write_text(json.dumps(run))
+        if waiver:
+            git = "other" if waiver == "other-commit" else "abc123"
+            lines = [f"# git={git}"]
+            for f in sorted(d.glob("n*-d*-*-r*.json")):
+                if waiver == "partial" and f.name.endswith("on-r2.json"):
+                    continue  # one legacy-looking file the manifest does not cover
+                lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}")
+            (d / "legacy-waiver.sha256").write_text("\n".join(lines) + "\n")
+            if waiver == "tampered":
+                target = d / "n100-d10-on-r1.json"
+                target.write_text(target.read_text().replace('"latencyP50Ms": 16.0', '"latencyP50Ms": 15.0'))
         return subprocess.run([sys.executable, str(SCRIPT), str(d)], capture_output=True, text=True)
 
     def runs(self, p99s, heap):
@@ -93,9 +105,34 @@ class BudgetsTest(unittest.TestCase):
         self.assertIn("latencyMaxMs", out.stderr + out.stdout)
 
     def test_run_without_latency_max_needs_explicit_waiver_and_warns(self):
-        out = self.collect(self.legacy(), waiver=True)
+        out = self.collect(self.legacy(), waiver="ok")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("WARNING: legacy validation", out.stdout)
+
+    def test_waiver_does_not_cover_tampered_copied_or_foreign_files(self):
+        for waiver, expected in (("tampered", "byte for byte"), ("partial", "byte for byte"), ("other-commit", "another commit")):
+            with self.subTest(waiver=waiver):
+                out = self.collect(self.legacy(), waiver=waiver)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn(expected, out.stderr + out.stdout)
+
+    def test_current_run_cannot_become_legacy_by_deleting_latency_max(self):
+        runs = self.runs([20.0, 20.0], 0)
+        stripped = {k: v for k, v in runs["on"][1].items() if k != "latencyMaxMs"}
+        runs["on"][1] = stripped  # looks legacy, but is not in the manifest written for the genuine files
+        # the manifest is written after the files, so build it from the untouched runs and then swap the file
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = pathlib.Path(tmp.name)
+        (d / "environment.txt").write_text(self.ENV)
+        for bridge in ("off", "on"):
+            for rep, run in enumerate(self.runs([20.0, 20.0], 0)[bridge], start=1):
+                (d / f"n100-d10-{bridge}-r{rep}.json").write_text(json.dumps(run))
+        (d / "legacy-waiver.sha256").write_text("# git=abc123\n")
+        (d / "n100-d10-on-r2.json").write_text(json.dumps(stripped))
+        out = subprocess.run([sys.executable, str(SCRIPT), str(d)], capture_output=True, text=True)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("byte for byte", out.stderr + out.stdout)
 
     def test_latency_max_at_limit_is_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
@@ -129,9 +166,9 @@ class BudgetsTest(unittest.TestCase):
         self.assertIn("differs from the recorded profile", out.stderr + out.stdout)
 
     def test_unknown_profile_is_rejected(self):
-        out = self.collect(self.runs([20.0, 20.0], 0), plan="profile=adhoc\nplan=100:2:10:10\n")
+        out = self.collect(self.runs([20.0, 20.0], 0), plan="git=abc123\nprofile=adhoc\nplan=100:2:10:10\n")
         self.assertNotEqual(out.returncode, 0)
-        self.assertIn("unknown profile", out.stderr + out.stdout)
+        self.assertIn("workload", out.stderr + out.stdout)
 
     def test_slow_structural_phase_after_idle_is_rejected(self):
         runs = self.runs([20.0, 20.0], 0)
@@ -184,13 +221,32 @@ class BudgetsTest(unittest.TestCase):
         out = self.collect(self.runs([20.0, 20.0], 0))
         self.assertIn("Bridge install/close churn (100 cycles, bridge on)", out.stdout)
 
+    def test_malformed_workload_line_is_rejected(self):
+        out = self.collect(self.runs([20.0, 20.0], 0), plan="git=abc123\nworkload=warmup:50\nplan=100:2:10:10\n")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("malformed workload", out.stderr + out.stdout)
+
+    def test_structural_elapsed_is_mandatory_for_current_runs(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["off"][1] = {k: v for k, v in runs["off"][1].items() if k != "structuralElapsedSeconds"}
+        out = self.collect(runs)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("structuralElapsedSeconds", out.stderr + out.stdout)
+
+    def test_structural_rate_limit_comes_from_the_shared_config(self):
+        runs = self.runs([20.0, 20.0], 0)
+        runs["on"][1] = dict(runs["on"][1], structuralElapsedSeconds=34.0)  # 3.4 s per cycle: under the 3.5 s limit
+        self.assertEqual(self.collect(runs).returncode, 0)
+        runs["on"][1] = dict(runs["on"][1], structuralElapsedSeconds=36.0)  # 3.6 s per cycle: over it
+        self.assertNotEqual(self.collect(runs).returncode, 0)
+
     def test_missing_run_file_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), drop=("on", 2))
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("mixed collection", out.stderr + out.stdout)
 
     def test_directory_without_plan_is_rejected(self):
-        out = self.collect(self.runs([20.0, 20.0], 0), plan="profile=quick\nreps=2\n")
+        out = self.collect(self.runs([20.0, 20.0], 0), plan="git=abc123\nprofile=quick\nreps=2\n")
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("plan=", out.stderr + out.stdout)
 
