@@ -18,9 +18,18 @@ source "$script_dir/baseline-lib.sh"
 limits="$script_dir/baseline.conf"
 
 out="${1:?output directory}"
-profile="${2:-diag}"
+shift
+profile=diag
 resume=0
-[ "${3:-}" = "--resume" ] && resume=1
+profile_given=0
+# The profile is optional, so --resume may come second (default profile) or third.
+for arg in "$@"; do
+  case "$arg" in
+    --resume) resume=1 ;;
+    *) if [ "$profile_given" -eq 1 ]; then echo "Unexpected argument '$arg'" >&2; exit 1; fi
+       profile="$arg"; profile_given=1 ;;
+  esac
+done
 warmup=50; samples=200; idle_seconds=10; max_attempts=2
 # kind:nodes:reps:bridges:variants:structural:install
 case "$profile" in

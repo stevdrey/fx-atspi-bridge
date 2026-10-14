@@ -113,9 +113,10 @@ ARTIFACTS = {"smaps_rollup": SMAPS, "nmt": NMT, "malloc": MALLOC, "histo": HISTO
 
 
 class SummaryTest(unittest.TestCase):
-    def write_cell(self, root, name, rss_before, rss_after, artifacts=True):
+    def write_cell(self, root, name, rss_before, rss_after, artifacts=True, extra_checkpoints=()):
         run = {"structuralHeapDeltaBytesAfterGc": 2 * 1024 * 1024}
-        for checkpoint, rss in (("structuralBefore", rss_before), ("structuralAfterGc", rss_after)):
+        points = [(c, rss_before) for c in extra_checkpoints] + [("structuralBefore", rss_before), ("structuralAfterGc", rss_after)]
+        for checkpoint, rss in points:
             for key, value in (("Rss", rss), ("Anonymous", rss // 2), ("PssFile", 1024)):
                 run[f"{checkpoint}Smaps{key}Kb"] = value
         if artifacts:
@@ -125,9 +126,9 @@ class SummaryTest(unittest.TestCase):
                 (cell / f"{checkpoint}.{kind}.txt").write_text(ARTIFACTS[kind])
         (root / f"{name}.json").write_text(json.dumps(run))
 
-    def write_reps(self, root, artifacts=True):
+    def write_reps(self, root, artifacts=True, extra_checkpoints=()):
         for rep, growth in ((1, 1024), (2, 3072), (3, 2048)):
-            self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts)
+            self.write_cell(root, f"structural-n100-on-plain-r{rep}", 100_000, 100_000 + growth, artifacts, extra_checkpoints)
 
     def test_median_and_range_over_repetitions(self):
         with tempfile.TemporaryDirectory() as d:
@@ -164,6 +165,48 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| 2.0 (1.0–3.0) |", text)
         self.assertIn("No raw artifacts in this directory (JSON only)", text)
         self.assertNotIn("## glibc malloc", text)
+
+    def test_empty_or_truncated_artifacts_reject_the_collection(self):
+        cases = {"structuralAfterGc.malloc.txt": "", "structuralBefore.histo.txt": HISTO.rsplit("Total", 1)[0],
+                 "structuralAfterGc.pmap.txt": PMAP.split("----", 1)[0], "structuralBefore.smaps_rollup.txt": "Rss: 1 kB\n"}
+        for artifact, text in cases.items():
+            with self.subTest(artifact=artifact), tempfile.TemporaryDirectory() as d:
+                root = pathlib.Path(d)
+                self.write_reps(root)
+                (root / "structural-n100-on-plain-r1" / artifact).write_text(text)
+                with self.assertRaises(SystemExit) as raised:
+                    memory_diag.summary(root)
+                self.assertIn(f"structural-n100-on-plain-r1/{artifact} ", str(raised.exception))
+
+    def test_artifact_checks_accept_the_fixtures(self):
+        for kind, text in ARTIFACTS.items():
+            with self.subTest(kind=kind):
+                self.assertIsNone(memory_diag.artifact_problem(kind, text))
+        self.assertIsNotNone(memory_diag.artifact_problem("nmt", "Native Memory Tracking:\n"))
+        self.assertIsNotNone(memory_diag.artifact_problem("trim", ""))
+
+    def test_absolute_tables_include_every_recorded_checkpoint(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, extra_checkpoints=("afterWarmupGc",))
+            text = memory_diag.summary(root)
+        for section in ("malloc", "histogram", "pmap"):
+            with self.subTest(section=section):
+                self.assertGreaterEqual(text.count("| structural n=100 bridge on plain | afterWarmupGc |"), 3)
+
+    def test_class_growth_counts_runs_where_the_class_is_absent_as_zero(self):
+        grown = HISTO.replace("10           2000  javafx.scene.control.TextField", "40           8000  javafx.scene.control.TextField")
+        without = "\n".join(line for line in HISTO.splitlines() if "TextField" not in line) + "\n"
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root)
+            (root / "structural-n100-on-plain-r1" / "structuralAfterGc.histo.txt").write_text(grown)
+            for rep in (2, 3):
+                for checkpoint in ("structuralBefore", "structuralAfterGc"):
+                    (root / f"structural-n100-on-plain-r{rep}" / f"{checkpoint}.histo.txt").write_text(without)
+            text = memory_diag.summary(root)
+        # +30 instances in one run and 0 in the two runs without the class: median 0, not 30.
+        self.assertIn("| `javafx.scene.control.TextField` | javafx.controls | 0 (0–30) | 0.0 (0.0–5.9) |", text)
 
     def test_expected_artifacts_follow_variant_and_checkpoint(self):
         run = {"installChurnAfterTrimSmapsRssKb": 1, "installChurnCheckpointSmapsRssKb": 1, "installChurnAfterGcSmapsRssKb": 1}

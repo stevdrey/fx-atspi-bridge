@@ -28,7 +28,7 @@ Spec: [`docs/specs/issue-17.md`](../specs/issue-17.md). Data: `docs/verification
 
 ```bash
 ./gradlew check --no-daemon                                              # Passed (JDK 27)
-python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # Passed (80 tests, 1 skipped as before)
+python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # Passed (84 tests, 1 skipped as before)
 examples/fx-lab/scripts/run-baseline.sh <tmp> smoke                      # Passed: install churn completes again (see Harness fix)
 examples/fx-lab/scripts/run-memory-diag.sh <tmp> smoke                   # Passed: all artifacts per checkpoint, ~2.5 min
 examples/fx-lab/scripts/run-memory-diag.sh <out> diag                    # The collection below, ~23 min
@@ -97,7 +97,7 @@ The low-range heuristic is cross-checked: in the install `nmt` cells NMT reports
 | `String` instances Δ | +1,350 (≈ 32 KB) | **+11,440** (≈ 270 KB, plus ≈ 345 KB of `byte[]`) |
 | G1 filler arrays Δ (`jdk.internal.vm.FillerElement[]`, not objects) | ≈ 0.8–2.2 MB | ≈ 1.4–1.8 MB |
 
-Steady state before the phase: with the bridge on, glibc memory **in use** is 151.3 MB versus 48.8 MB without it, about **+102 MB for 10,000 exported nodes (≈ 10.5 KB per node)**, and the bridge module holds 50,052 heap objects (≈ 5 per node, 1.76 MB). All tables, the NMT categories and the per-class growth lists are in `data/issue-17/summary.md`.
+Steady state before the phase: with the bridge on, glibc memory **in use** is 151.3 MB versus 48.8 MB without it, about **+102 MB for 10,000 exported nodes (≈ 10.5 KB per node)**, and the bridge module holds 50,052 heap objects (≈ 5 per node, 1.76 MB). All tables (with every checkpoint), the NMT categories and the per-class growth lists are in `data/issue-17/summary.md`.
 
 ## Diagnosis
 
@@ -130,3 +130,4 @@ Steady state before the phase: with the bridge on, glibc memory **in use** is 15
 | --- | --- | --- |
 | (this PR, after `87d8c94`) | `memory_diag.py`: JVM-low/native split of `pmap` anonymous RSS and its test; verification and spec docs; committed data | No: analysis and documentation only. The summary was regenerated from the same raw artifacts |
 | (review follow-up, Codex) | `BenchApp`: the install-churn FX dispatches (`close()`, `install()`) wait at most 30 s for the FX thread, after which the run is invalid (exit 3, retried once) instead of blocking until the wrapper's process timeout. `memory_diag.py`: a directory with artifact directories must have every expected artifact for every run (`smaps_rollup`, `malloc`, `pmap` at each checkpoint in the JSON, `nmt` in NMT cells, `histo` at histogram checkpoints, `trim` after trimming), otherwise the summary exits and names the missing files; a JSON-only directory (the committed data) prints only the JSON tables; ties in the per-class growth list are ordered by class name. | No: error path of the harness and validation/ordering in the analysis. The 21 raw runs pass validation; the regenerated `summary.md` differs only in the order of tied classes. Verified with the unit tests and the `smoke` profile; no re-collection. |
+| (second review follow-up, Codex) | `memory_diag.py`: every required artifact must also parse to the expected data (complete `malloc_info` document with arenas, NMT summary with Total/malloc/Java Heap, histogram and `pmap` with their total lines, `smaps_rollup` with the split fields), so an empty or truncated file is rejected instead of summarized as zeros; the absolute tables (allocator, NMT, histogram, `pmap`) list every recorded checkpoint, including `afterWarmupGc`, `afterIdleGc` and `installChurnAfterDrain`, and the delta tables add `installChurnAfterDrain`; per-class histogram and NMT deltas include a zero for runs where the class or category is absent, so medians cover all repetitions. `run-memory-diag.sh`: `--resume` is accepted with the default profile (`<out> --resume`). | No: analysis and argument parsing. The 21 raw runs pass the stricter validation; the regenerated `summary.md` only adds rows, every value quoted in this record is unchanged. Verified with the unit tests and the `smoke` profile. |
