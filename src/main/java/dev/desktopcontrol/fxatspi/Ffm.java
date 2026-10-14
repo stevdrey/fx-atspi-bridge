@@ -28,12 +28,19 @@ final class Ffm implements AutoCloseable {
     private final SymbolLookup gio = SymbolLookup.libraryLookup("libgio-2.0.so.0", arena);
     private final SymbolLookup glib = SymbolLookup.libraryLookup("libglib-2.0.so.0", arena);
     private final SymbolLookup objects = SymbolLookup.libraryLookup("libgobject-2.0.so.0", arena);
-    private final ConcurrentHashMap<String, MethodHandle> handles = new ConcurrentHashMap<>();
+    /** A resolved downcall together with the descriptor it was linked with. */
+    private record Binding(FunctionDescriptor descriptor, MethodHandle handle) {}
+    private final ConcurrentHashMap<String, Binding> bindings = new ConcurrentHashMap<>();
+    private volatile boolean closed;
     Object call(String name, MemoryLayout result, MemoryLayout[] signature, Object... args) {
-        var handle = handles.computeIfAbsent(name, key -> Linker.nativeLinker().downcallHandle(
-                gio.find(key).or(() -> glib.find(key)).or(() -> objects.find(key)).orElseThrow(),
-                result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature)));
-        try { return handle.invokeWithArguments(args); }
+        if (closed) throw new IllegalStateException("Native API closed");
+        var descriptor = result == null ? FunctionDescriptor.ofVoid(signature) : FunctionDescriptor.of(result, signature);
+        var binding = bindings.computeIfAbsent(name, key -> new Binding(descriptor, Linker.nativeLinker().downcallHandle(
+                gio.find(key).or(() -> glib.find(key)).or(() -> objects.find(key))
+                        .orElseThrow(() -> new IllegalStateException("Missing native symbol: " + key)), descriptor)));
+        if (!binding.descriptor().equals(descriptor)) throw new IllegalStateException("Conflicting native signature: " + name);
+        if (args.length != signature.length) throw new IllegalArgumentException("Argument count mismatch: " + name);
+        try { return binding.handle().invokeWithArguments(args); }
         catch (Throwable error) { throw new IllegalStateException(name, error); }
     }
     MemorySegment checked(String name, MemoryLayout[] signature, Object... args) {
@@ -49,9 +56,9 @@ final class Ffm implements AutoCloseable {
     void check(MemorySegment error) {
         var value = error.get(ADDRESS, 0);
         if (value.address() == 0) return;
-        String message = string(value.reinterpret(16).get(ADDRESS, 8));
         call("g_error_free", null, new MemoryLayout[]{ADDRESS}, value);
-        throw new IllegalStateException(message);
+        // The GError text may echo bus addresses or peer data; callers get a stable message only.
+        throw new IllegalStateException("Native call failed");
     }
     static String string(MemorySegment address) { return address.address() == 0 ? "" : address.reinterpret(1024 * 1024).getString(0); }
     static String quote(String value) { return VariantText.quote(value); }
@@ -73,5 +80,6 @@ final class Ffm implements AutoCloseable {
         finally { release(value); }
     }
     void unref(MemorySegment object) { if (object.address() != 0) call("g_object_unref", null, new MemoryLayout[]{ADDRESS}, object); }
-    @Override public void close() { arena.close(); }
+    /** Idempotent; later calls fail with a stable exception instead of entering unloaded libraries. */
+    @Override public void close() { if (!closed) { closed = true; arena.close(); } }
 }
