@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -51,7 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Headless-of-input benchmark for SC-01 baselines. One JVM run measures one cell:
  * {@code --bridge=on|off --nodes=N}. Emits a single JSON object without any UI text.
- * Options: --warmup, --samples, --dirty, --install-churn, --structural, --idle-seconds, --out.
+ * Options: --warmup, --samples, --dirty, --install-churn, --structural, --idle-seconds, --out; Issue 17 memory
+ * snapshots with --diagnostics=&lt;dir&gt; (see {@link MemoryDiagnostics}) and --trim-native-heap=true.
  */
 public final class BenchApp extends Application {
     private static final int MAX_NODES = 10_000;
@@ -59,6 +61,8 @@ public final class BenchApp extends Application {
     private static final int MAX_CHURN = 1_000;
     private static final long CLK_TCK = 100;
     private static final int BRIDGE_READY_SECONDS = 15;
+    /** Bound for one provider's native teardown during install churn; a provider that does not terminate invalidates the run. */
+    private static final int BRIDGE_CLOSED_SECONDS = 10;
     private static final int STRUCTURAL_CONTROLS = 10;
     /** FxAtSpiBridge scans every 100 ms; holding each state 250 ms spans at least two scans plus provider reconcile. */
     private static final long HOLD_MS = 250;
@@ -95,6 +99,7 @@ public final class BenchApp extends Application {
     private volatile Generation current;
     private volatile double cadenceP50;
     private FxAtSpiBridge bridge;
+    private MemoryDiagnostics diagnostics;
 
     @Override public void start(Stage primary) {
         stage = primary;
@@ -116,6 +121,8 @@ public final class BenchApp extends Application {
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
         CompletableFuture.runAsync(() -> {
             try {
+                diagnostics = MemoryDiagnostics.open(options.get("diagnostics"));
+                System.err.println("bench pid " + ProcessHandle.current().pid());
                 // Cadence is checked before the bridge exists, so its own scan cost can never look like a throttled display.
                 requireExplicitGcEnabled();
                 cadenceP50 = measureCadence();
@@ -196,7 +203,7 @@ public final class BenchApp extends Application {
         return p50;
     }
 
-    private String run(int nodes, boolean bridgeOn) throws InterruptedException {
+    private String run(int nodes, boolean bridgeOn) throws Exception {
         var warmup = bounded("warmup", 50, 0, MAX_SAMPLES);
         var samples = bounded("samples", 200, 1, MAX_SAMPLES);
         var dirty = bounded("dirty", 10, 1, nodes);
@@ -219,6 +226,7 @@ public final class BenchApp extends Application {
         gc();
         field(json, "heapAfterWarmupGcBytes", usedHeap());
         field(json, "rssAfterWarmupKb", status("VmRSS"));
+        snapshot(json, "afterWarmupGc", true);
 
         requireAllocationTracking();
         var allocBefore = totalAllocatedBytes();
@@ -260,7 +268,7 @@ public final class BenchApp extends Application {
      * The display is checked on both sides of the idle window, never inside it: a running AnimationTimer would make
      * JavaFX pulse at 60 Hz even without the bridge and corrupt the idle CPU/wakeup numbers being measured.
      */
-    private void idle(StringBuilder json, int idleSeconds) throws InterruptedException {
+    private void idle(StringBuilder json, int idleSeconds) throws Exception {
         var edgeBefore = requirePulsesNotThrottled("before the idle window");
         Thread.sleep(1_000);
         var cpuBefore = cpuTicks();
@@ -275,6 +283,7 @@ public final class BenchApp extends Application {
         gc();
         field(json, "heapAfterIdleGcBytes", usedHeap());
         field(json, "rssAfterIdleKb", status("VmRSS"));
+        snapshot(json, "afterIdleGc", true);
     }
 
     /**
@@ -353,8 +362,10 @@ public final class BenchApp extends Application {
     }
 
     /** Create/remove controls and swap scenes, paired for bridge off/on. Checkpoint values are read before GC. */
-    private void structuralChurn(StringBuilder json, int cycles) throws InterruptedException {
+    private void structuralChurn(StringBuilder json, int cycles) throws Exception {
         gc();
+        // Before the phase's own baseline readings, so the snapshot's allocations are not counted in the deltas.
+        snapshot(json, "structuralBefore", true);
         var heapBefore = usedHeap();
         var rssBefore = status("VmRSS");
         var threadsBefore = Thread.getAllStackTraces().size();
@@ -390,49 +401,95 @@ public final class BenchApp extends Application {
         field(json, "structuralRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
         field(json, "structuralThreadDeltaCheckpoint", Thread.getAllStackTraces().size() - threadsBefore);
         field(json, "structuralProviderThreadsCheckpoint", providerThreads());
+        snapshot(json, "structuralCheckpoint", false);
         gc();
         field(json, "structuralHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
         field(json, "structuralRssDeltaKbAfterGc", status("VmRSS") - rssBefore);
+        snapshot(json, "structuralAfterGc", true);
     }
 
-    /** Close+install cycles of the bridge itself. Thread/RSS checkpoint is read before GC; heap after GC. */
-    private void installChurn(StringBuilder json, int cycles) throws InterruptedException {
+    /**
+     * Close+install cycles of the bridge itself. Since Issue 3 a reinstall is rejected until the previous provider has
+     * terminated, so each cycle waits for {@code closed()} (on this thread, never on the FX thread) and then for the new
+     * provider's ready status: every cycle is a full native life (connection, registration, Embed, teardown).
+     * Thread/RSS checkpoint is read before GC; heap after GC.
+     */
+    private void installChurn(StringBuilder json, int cycles) throws Exception {
         gc();
+        snapshot(json, "installChurnBefore", true);
         var heapBefore = usedHeap();
         var rssBefore = status("VmRSS");
         var threadsBefore = Thread.getAllStackTraces().size();
+        var closeMs = new double[cycles];
+        var readyMs = new double[cycles];
         for (var i = 0; i < cycles; i++) {
-            var cycle = new CompletableFuture<Void>();
             var last = i == cycles - 1;
-            Platform.runLater(() -> {
-                try {
-                    bridge.close();
-                    bridge = installBridge(last);
-                    cycle.complete(null);
-                } catch (RuntimeException | Error e) {
-                    cycle.completeExceptionally(e);
-                }
+            var closing = System.nanoTime();
+            var closed = onFx(() -> {
+                bridge.close();
+                return bridge.closed();
             });
-            cycle.join();
+            try {
+                closed.toCompletableFuture().get(BRIDGE_CLOSED_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                invalid("a provider did not terminate within " + BRIDGE_CLOSED_SECONDS + " s of close()");
+            }
+            closeMs[i] = (System.nanoTime() - closing) / 1e6;
+            var installing = System.nanoTime();
+            onFx(() -> bridge = installBridge(last));
+            requireReady(current, "provider of churn cycle " + (i + 1));
+            readyMs[i] = (System.nanoTime() - installing) / 1e6;
         }
         var loopEnd = System.nanoTime();
-        requireReady(current, "final provider after churn");
-        var remainingMs = 2_000 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loopEnd);
-        if (remainingMs > 0) Thread.sleep(remainingMs);
+        Thread.sleep(2_000);
+        Arrays.sort(closeMs);
+        Arrays.sort(readyMs);
         field(json, "installChurnFinalGenerationReady", true);
         field(json, "installChurnCycles", cycles);
+        field(json, "installChurnMode", "\"awaitClosedAndReady\"");
+        field(json, "installChurnCloseMsP50", percentile(closeMs, 0.50));
+        field(json, "installChurnCloseMsMax", closeMs[cycles - 1]);
+        field(json, "installChurnReadyMsP50", percentile(readyMs, 0.50));
+        field(json, "installChurnReadyMsMax", readyMs[cycles - 1]);
         field(json, "installChurnCheckpointSeconds", (System.nanoTime() - loopEnd) / 1e9);
         field(json, "installChurnRssDeltaKbCheckpoint", status("VmRSS") - rssBefore);
         field(json, "installChurnThreadDeltaCheckpoint", Thread.getAllStackTraces().size() - threadsBefore);
         field(json, "installChurnProviderThreadsCheckpoint", providerThreads());
         field(json, "installChurnProviderErrors", totalErrors());
+        snapshot(json, "installChurnCheckpoint", false);
         gc();
         field(json, "installChurnHeapDeltaBytesAfterGc", usedHeap() - heapBefore);
+        field(json, "installChurnRssDeltaKbAfterGc", status("VmRSS") - rssBefore);
+        snapshot(json, "installChurnAfterGc", true);
         // Distinguish slow shutdown from a leak: wait up to 30 s for stopped providers to exit.
         var drainStart = System.nanoTime();
         while (providerThreads() > 1 && System.nanoTime() - drainStart < TimeUnit.SECONDS.toNanos(30)) Thread.sleep(250);
         field(json, "installChurnProviderThreadsAfterDrain", providerThreads());
         field(json, "installChurnDrainSeconds", (System.nanoTime() - drainStart) / 1e9);
+        snapshot(json, "installChurnAfterDrain", false);
+        if (diagnostics != null && "true".equals(options.get("trim-native-heap"))) {
+            // How much of the RSS growth is free memory the glibc allocator kept, rather than live allocations.
+            diagnostics.trimNativeHeap("installChurnAfterTrim");
+            field(json, "installChurnRssDeltaKbAfterTrim", status("VmRSS") - rssBefore);
+            snapshot(json, "installChurnAfterTrim", false);
+        }
+    }
+
+    /** Runs {@code action} on the FX thread and waits for its result; failures propagate to the bench thread. */
+    private static <T> T onFx(Callable<T> action) {
+        var result = new CompletableFuture<T>();
+        Platform.runLater(() -> {
+            try {
+                result.complete(action.call());
+            } catch (Throwable e) {
+                result.completeExceptionally(e);
+            }
+        });
+        return result.join();
+    }
+
+    private void snapshot(StringBuilder json, String checkpoint, boolean histogram) throws Exception {
+        if (diagnostics != null) diagnostics.snapshot(json, checkpoint, histogram);
     }
 
     private static long providerThreads() {
