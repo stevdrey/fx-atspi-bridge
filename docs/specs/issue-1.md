@@ -60,6 +60,10 @@ Scope note: for native memory this issue records the methodology and the RSS/hea
 
 Fast checks only: `./gradlew check`, `python3 -m unittest` for `budgets.py` (also in CI), and the `smoke` profile (~2 min) after harness/script changes. The long collections (`quick` ≈ 45 min, `full` ≈ 2 h) run once to produce the provisional baseline and again only in dedicated QA sessions; they are not repeated per review comment.
 
+## Follow-ups
+
+The baseline is provisional. Remaining work is tracked separately: fresh full collection (#15), desktop interoperability QA (#16), native and heap memory characterization (#17); performance topics belong to SC-03/SC-05/SC-06 (#3, #5, #6). Issue 1 stays open until those are scheduled; the PR uses `Refs #1`.
+
 ## Rollout and documentation
 
 README CI section updated. Later issues (SC-02…SC-10) compare against `docs/verification/issue-1.md`. Rollback: delete the workflow. No release-readiness claim.

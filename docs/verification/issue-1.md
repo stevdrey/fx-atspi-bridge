@@ -2,6 +2,23 @@
 
 Spec: [`docs/specs/issue-1.md`](../specs/issue-1.md). Raw data: `docs/verification/data/issue-1/` (one JSON per run, plus `environment.txt`).
 
+## Status and follow-ups
+
+**This evidence is a provisional initial baseline.** The 44 retained run files predate several validity markers (`latencyMaxMs`, `idleEdgePulseMaxMs`, `providerAliveAtEnd`) and the corrected monotonic allocation method; they are accepted only through the byte-for-byte manifest `data/issue-1/legacy-waiver.sha256`, which does not retrospectively prove every current validity condition. Budgets and tables below are provisional until [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) replaces them. Do not mix this collection with new data.
+
+| Acceptance criterion of Issue 1 | Status |
+| --- | --- |
+| Build library/example, run native Unicode/variant tests on JDK 27; record heap/native/FX latency and idle CPU methodology | Met for build, tests and methodology; **native memory only partially** (RSS and heap, no NMT/`smaps_rollup` breakdown) → [#17](https://github.com/stevdrey/fx-atspi-bridge/issues/17) |
+| Record Fedora/GNOME/Wayland and AT-SPI consumer results or explicitly missing evidence | Met: tree discovery recorded; everything else explicitly marked missing → [#16](https://github.com/stevdrey/fx-atspi-bridge/issues/16) |
+| Adopt initial measured budgets and exact compatibility matrix | Met **provisionally** (2–3 repetitions, quick profile) → [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) |
+| Do not infer desktop compatibility from Xvfb | Met (Xvfb not used) |
+
+Issue 1 therefore stays open until the follow-ups are scheduled or the maintainers accept closing it with them; the pull request uses `Refs #1`, not `Closes #1`.
+
+Follow-up issues: [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) fresh `full` collection with the final harness, as a separate evidence PR or artifact; [#16](https://github.com/stevdrey/fx-atspi-bridge/issues/16) desktop interoperability QA (Wayland vs XWayland, actions, text editing, events, second window, Orca, other distributions); [#17](https://github.com/stevdrey/fx-atspi-bridge/issues/17) native and heap memory characterization. The performance findings below are already covered by [#5](https://github.com/stevdrey/fx-atspi-bridge/issues/5) (full-tree polling, CPU and update latency), [#6](https://github.com/stevdrey/fx-atspi-bridge/issues/6) (5 ms GLib polling, wakeups) and [#3](https://github.com/stevdrey/fx-atspi-bridge/issues/3) (provider shutdown and native resource ownership). High RSS is an observed symptom here, not proof of a leak, and none of these performance topics is implemented in this PR.
+
+Evidence policy: future collections are delivered in a separate evidence PR or artifact so tooling reviews stay manageable (this PR carries 44 benchmark JSON files).
+
 ## Environment
 
 | Item | Value |
@@ -140,7 +157,7 @@ Not verified in this issue (**missing evidence**): action invocation, text editi
 | Ubuntu runner (`ubuntu-latest`), Zulu 27, GLib only | CI | Native unit tests only; first run recorded on the PR (see below). Not desktop QA. |
 | Other distros, GNOME versions, KDE, Orca, X11 sessions, Xvfb | — | **Not tested.** |
 
-## Initial budgets (provisional, derived from the tables above)
+## Initial budgets (provisional until #15, derived from the tables above)
 
 Single rule (with one stated floor for MB delta metrics): `ceil(worst observed bridge-on value across the recorded repetitions × 1.25)` (2–3 repetitions per cell in the `quick` profile), applied by `budgets.py` to every cell below, including counts. They detect regressions in later issues; they are not product promises or targets. The 10,000-node values and the 1,000-node thread rows document a known-bad baseline; with so few repetitions, latency budgets are loose and `n/a` marks cells that the profile did not run.
 
