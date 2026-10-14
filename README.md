@@ -68,7 +68,7 @@ public class MyApp extends Application {
 }
 ```
 
-Install and close the bridge on the JavaFX application thread. Only one bridge is allowed per process. `install(Consumer<String>)` delivers status messages on a dedicated daemon thread (queued and bounded, so a slow or blocking consumer cannot delay shutdown or `closed()`); use `Platform.runLater` to update a UI label from that callback.
+Install and close the bridge on the JavaFX application thread. Only one bridge is allowed per process. `install(Consumer<String>)` delivers status messages on a dedicated daemon thread (queued and bounded, so a slow or blocking consumer cannot delay shutdown or `closed()`; if four consumers never return, further installs are refused until they do); use `Platform.runLater` to update a UI label from that callback.
 
 No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object disappears, its reference is removed. If it returns after its absence has been observed, it receives a new reference.
 

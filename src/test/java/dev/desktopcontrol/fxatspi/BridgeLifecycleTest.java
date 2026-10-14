@@ -134,6 +134,31 @@ class BridgeLifecycleTest {
             assertFalse(onFx(FxAtSpiBridge::slotHeld), "a refused install must not take the slot");
         } finally { Ffm.resetAbandonedForTesting(); }
     }
+    @Test void installIsRefusedWhileTooManyStatusConsumersAreBlocked() throws Exception {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (AtSpiProvider.liveStatusThreads() > 0 && System.nanoTime() < deadline) Thread.sleep(10); // earlier tests' threads drain
+        var release = new CountDownLatch(1);
+        var entered = new CountDownLatch(AtSpiProvider.MAX_LIVE_STATUS_THREADS);
+        try {
+            for (int i = 0; i < AtSpiProvider.MAX_LIVE_STATUS_THREADS; i++) {
+                // A failing provider reports once; its consumer never returns until released.
+                var bridge = onFx(() -> FxAtSpiBridge.install(message -> {
+                    entered.countDown();
+                    try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                }, ffi -> { throw new IllegalStateException("no bus"); }, false));
+                bridge.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+                awaitSlotReleased();
+            }
+            assertTrue(entered.await(15, TimeUnit.SECONDS), "every consumer should be blocked inside the callback");
+            var refused = assertThrows(ExecutionException.class,
+                    () -> onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)));
+            assertTrue(refused.getCause().getMessage().contains("status callback"), refused.getCause().getMessage());
+            assertFalse(onFx(FxAtSpiBridge::slotHeld), "a refused install must not take the slot");
+        } finally { release.countDown(); }
+        var drained = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (AtSpiProvider.statusThreadLimitReached() && System.nanoTime() < drained) Thread.sleep(10);
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)); // allowed again once the callbacks returned
+    }
     @Test void failedProviderDoesNotBlockReinstall() throws Exception {
         var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false));
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);

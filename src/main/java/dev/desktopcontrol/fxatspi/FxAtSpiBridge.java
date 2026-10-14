@@ -87,6 +87,9 @@ public final class FxAtSpiBridge implements AutoCloseable {
         if (Ffm.abandonedLimitReached()) {
             throw new IllegalStateException("Too many native provider resources could not be released; restart the JVM");
         }
+        if (AtSpiProvider.statusThreadLimitReached()) {
+            throw new IllegalStateException("Too many status consumers have not returned; make the status callback return");
+        }
         if (previous != null) previous.close(); // The provider failed on its own; release its observer and registry.
         var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor);
         ACTIVE.set(bridge);

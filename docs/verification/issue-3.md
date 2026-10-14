@@ -10,8 +10,8 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 18 tests (13 provider + 5 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 38 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 19 tests (13 provider + 6 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 39 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
 
@@ -53,9 +53,15 @@ What this establishes: reinstall rejection until termination; idempotent close; 
 
 - A status consumer that blocked on the ready, bus-loss or start-failure message held the provider thread before teardown. Status delivery now goes through a bounded queue and a dedicated daemon thread (`fx-atspi-status`); `report` never waits. This changes the documented delivery thread of `install(Consumer)` (README and Javadoc updated); messages can now arrive after `closed()` completes, and the newest is dropped if 32 are pending.
 - `blockedStatusConsumerCannotDelayStartFailureOrBusLossTermination` blocks every status message, then checks that a start failure and a bus loss still terminate and that delivery never happens on the provider thread. Mutation check: delivering synchronously again makes it time out. Existing tests that read statuses now wait for delivery.
-- A consumer that never returns still keeps its own daemon thread alive; there is no cap on those across repeated installs (it is the application's callback that is stuck).
+- A consumer that never returns still keeps its own daemon thread alive; see follow-up 7 for the process-wide bound.
 - The CI status-contract Python test was updated separately (`2284e89`).
 - `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 18 tests each (13 provider + 5 bridge), 0 failures, 0 skipped.
+
+## Code-review follow-up 7 (Codex, PR #19, commit 9ccc408)
+
+- Stuck status consumers could strand one daemon thread (plus provider, consumer and queue) per reinstall. Live delivery threads are now counted process-wide and `install` is refused while `AtSpiProvider.MAX_LIVE_STATUS_THREADS` (4) are blocked; it works again once they return. `installIsRefusedWhileTooManyStatusConsumersAreBlocked` blocks four consumers, checks the fifth install is refused without taking the slot, then releases them and installs again. Mutation check: without the install check the test fails.
+- Not verified: behavior with a consumer that is stuck forever beyond the test's 30 s latch timeout; threads are never interrupted (non-goal: no unsafe interruption). The limit of 4 is a chosen constant, not derived from a measurement.
+- `./gradlew cleanTest test --tests '*LifecycleTest'` ×5: 19 tests each (13 provider + 6 bridge), 0 failures, 0 skipped.
 
 ## Defect found and fixed while testing
 

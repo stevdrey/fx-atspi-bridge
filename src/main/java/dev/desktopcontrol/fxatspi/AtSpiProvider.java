@@ -38,6 +38,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicReference;
@@ -283,9 +284,12 @@ final class AtSpiProvider {
         if (notices.size() >= MAX_PENDING_NOTICES || !notices.offer(message)) return;
         synchronized (noticeLock) {
             if (noticeThread == null && !noticesClosed) {
-                noticeThread = new Thread(this::deliverNotices, "fx-atspi-status");
-                noticeThread.setDaemon(true);
-                noticeThread.start();
+                LIVE_STATUS_THREADS.incrementAndGet();
+                try {
+                    noticeThread = new Thread(this::deliverNotices, "fx-atspi-status");
+                    noticeThread.setDaemon(true);
+                    noticeThread.start();
+                } catch (Throwable startFailure) { LIVE_STATUS_THREADS.decrementAndGet(); noticeThread = null; }
             }
         }
     }
@@ -300,7 +304,14 @@ final class AtSpiProvider {
                 try { status.accept(message); } catch (Throwable ignored) { /* A failing consumer must not affect delivery of later messages. */ }
             }
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        finally { LIVE_STATUS_THREADS.decrementAndGet(); }
     }
+    /** Delivery threads still alive process-wide; one that never returns from the consumer stays counted. */
+    static final int MAX_LIVE_STATUS_THREADS = 4;
+    private static final AtomicInteger LIVE_STATUS_THREADS = new AtomicInteger();
+    static int liveStatusThreads() { return LIVE_STATUS_THREADS.get(); }
+    /** True when installing another bridge could strand yet another thread behind a consumer that does not return. */
+    static boolean statusThreadLimitReached() { return LIVE_STATUS_THREADS.get() >= MAX_LIVE_STATUS_THREADS; }
     private static void guarded(Runnable step) {
         try { step.run(); } catch (Throwable ignored) { /* Cleanup continues; details may contain peer data. */ }
     }
