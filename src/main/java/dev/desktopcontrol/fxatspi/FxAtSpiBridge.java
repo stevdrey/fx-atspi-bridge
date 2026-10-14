@@ -41,9 +41,20 @@ public final class FxAtSpiBridge implements AutoCloseable {
             }
         };
         observer.start();
+        provider.terminated().thenRun(this::released);
         try { provider.start(); }
         catch (RuntimeException | Error failure) { observer.stop(); registry.clear(); provider.stop(); throw failure; }
     }
+    /** Runs on the provider thread after termination; releases the static slot and observer on the FX thread. */
+    private void released() {
+        try {
+            Platform.runLater(() -> {
+                close(); // a provider that failed on its own still holds the observer and registry
+                if (active == this) active = null;
+            });
+        } catch (IllegalStateException toolkitGone) { /* No FX thread left to release; nothing else keeps the bridge reachable. */ }
+    }
+    static boolean slotHeld() { return active != null; }
     /**
      * Installs one bridge for all showing JavaFX windows in this JVM.
      * Call on the FX application thread.

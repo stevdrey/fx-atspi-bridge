@@ -96,10 +96,11 @@ final class AtSpiProvider {
         refresh(); snapshot.set(desired.get());
     }
     // Called only on the FX application thread.
-    void refresh() { desired.set(scene.get()); }
+    void refresh() { if (!terminated.isDone()) desired.set(scene.get()); }
     State state() { return state.get(); }
-    /** Completes after native cleanup, normally or not; never completes exceptionally. */
-    CompletionStage<Void> terminated() { return terminated; }
+    /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
+    CompletionStage<Void> terminated() { return terminated.minimalCompletionStage(); }
+    boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
     boolean isTerminated() { return terminated.isDone(); }
     String busName() { return busName; }
     long pendingAcquired() { return pendingAcquired.get(); }
@@ -112,7 +113,7 @@ final class AtSpiProvider {
     /** Nonblocking and idempotent. Never touches GLib: the provider thread performs all native cleanup. */
     void stop() {
         running = false;
-        if (state.compareAndSet(State.NEW, State.CLOSED)) { terminated.complete(null); return; }
+        if (state.compareAndSet(State.NEW, State.CLOSED)) { complete(); return; }
         state.updateAndGet(current -> current == State.STARTING || current == State.RUNNING ? State.STOPPING : current);
     }
     private MemorySegment stub(String method, MemoryLayout result, int count) throws ReflectiveOperationException {
@@ -164,7 +165,7 @@ final class AtSpiProvider {
         } finally {
             if (failure == null) failure = registrationFailure;
             state.set(failure == null ? State.CLOSED : State.FAILED);
-            terminated.complete(null);
+            complete();
         }
     }
     private void embedWithRegistry() throws ReflectiveOperationException {
@@ -176,6 +177,11 @@ final class AtSpiProvider {
                     ffi.arena.allocateFrom(PREFIX + "Socket"), ffi.arena.allocateFrom("Embed"), request,
                     Ffm.NIL, 0, 5000, Ffm.NIL, stub("embedded", null, 3), Ffm.NIL);
         } finally { ffi.release(request); }
+    }
+    /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
+    private void complete() {
+        snapshot.set(Snapshot.EMPTY); desired.set(Snapshot.EMPTY);
+        terminated.complete(null);
     }
     private boolean busClosed() {
         return (int) ffi.call("g_dbus_connection_is_closed", JAVA_INT, new MemoryLayout[]{ADDRESS}, connection) != 0;

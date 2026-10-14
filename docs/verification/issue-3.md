@@ -10,10 +10,17 @@ Fedora 44, kernel 7.2.9, Zulu JDK 27 (27+35), JavaFX per Gradle, `dbus-daemon` a
 
 | Command | Result |
 |---|---|
-| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 9 tests (7 provider + 2 bridge), 0 failures, 0 skipped each run |
-| `./gradlew check` | BUILD SUCCESSFUL; 29 tests across the suite, 0 failures, 0 skipped |
+| `./gradlew cleanTest test --tests '*LifecycleTest'` (3 consecutive runs) | 10 tests (7 provider + 3 bridge), 0 failures, 0 skipped each run |
+| `./gradlew check` | BUILD SUCCESSFUL; 30 tests across the suite, 0 failures, 0 skipped |
 
 What this establishes: reinstall rejection until termination; idempotent close; sanitized start-failure status; bus loss ends `FAILED` without reconnect; concurrent start/stop always terminates; pending invocation references are released exactly as often as acquired when a DoAction call races shutdown. Tests skip (or fail with `REQUIRE_NATIVE_BUS=1` / `REQUIRE_FX_TOOLKIT=1`) when `dbus-daemon` or the toolkit is missing.
+
+## Code-review follow-up (Codex, PR #19)
+
+- `closed()` exposed the mutable internal future; it now returns a minimal stage and a test completes/cancels the caller copy while cleanup is frozen.
+- The static install slot and provider snapshots outlived a closed bridge; both are released on termination (tests `terminatedBridgeReleasesTheSlotAndRetainedState`, `failedProviderDoesNotBlockReinstall`). The snapshot-empty assertion uses a bridge without JavaFX windows, so it checks the reset path but not a populated tree.
+- `reinstallIsRejectedUntilProviderTerminates` now takes the provider lock before calling `close()` (removes the race).
+- `./gradlew cleanTest test --tests '*LifecycleTest'` run 5 consecutive times: 10 tests each, 0 failures.
 
 ## Defect found and fixed while testing
 

@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -79,22 +80,39 @@ class BridgeLifecycleTest {
                 () -> onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false)));
         assertTrue(running.getCause() instanceof IllegalStateException, "second install while installed must be rejected");
         onFx(() -> {
-            first.close();
-            // Hold the provider lock so native cleanup cannot finish: the closed bridge must still block reinstall.
+            // Take the lock before requesting shutdown so native cleanup cannot finish: closed but not terminated.
             synchronized (first.provider) {
+                first.close();
                 var rejected = assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
                 assertTrue(rejected.getMessage().contains("terminating"), rejected.getMessage());
+                // Completing or cancelling a caller's copy must not make the provider look terminated.
+                var copy = first.closed().toCompletableFuture();
+                copy.complete(null);
+                assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+                first.closed().toCompletableFuture().cancel(true);
+                assertThrows(IllegalStateException.class, () -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
                 first.close(); // closing twice stays safe
             }
             return null;
         });
         first.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        assertTrue(first.provider.isTerminated());
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
         assertDoesNotThrow(() -> onFx(() -> { last.close(); last.close(); return null; }));
+    }
+    @Test void terminatedBridgeReleasesTheSlotAndRetainedState() throws Exception {
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+        onFx(() -> { last.close(); return null; });
+        last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        onFx(() -> null); // the release hop was queued before this task
+        assertFalse(onFx(FxAtSpiBridge::slotHeld));
+        assertTrue(last.provider.snapshotIsEmpty());
     }
     @Test void failedProviderDoesNotBlockReinstall() throws Exception {
         var failing = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false));
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        onFx(() -> null);
+        assertFalse(onFx(FxAtSpiBridge::slotHeld), "a self-failed provider must release the slot without close()");
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
     }
 }
