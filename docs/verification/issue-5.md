@@ -36,7 +36,7 @@ REQUIRE_FX_TOOLKIT=1 ./gradlew check generatePomFileForMavenJavaPublication :exa
 python3 examples/fx-lab/scripts/atspi_probe.py --pid=<fx-lab pid>    # OK: expected roles and buttons present (19 nodes, 7 roles)
 examples/fx-lab/scripts/run-baseline.sh <scratch>/before quick       # in a clean worktree at 349df59, ~70 min
 examples/fx-lab/scripts/run-baseline.sh <scratch>/after quick        # at cd818fc, ~70 min
-python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-5/{before,after}   # needs the JSONs from evidence PR #28
+python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-5/{before,after}   # JSONs added by evidence PR #28
 ```
 
 Desktop structural check (ad-hoc script, not committed): with fx-lab running, an independent libatspi client pressed `Añadir campo` and then `Quitar campo` through the Action interface; the number of `entry` nodes went 1 → 2 → 1. Two first-run test failures were test-timing issues, not product defects: an asynchronous window-focus change arriving after `show()` was counted as idle activity; the tests now let focus settle (idle test) or discard work scheduled before `close()`.
