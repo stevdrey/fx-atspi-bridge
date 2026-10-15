@@ -1,6 +1,6 @@
 # Memory diagnostics summary
 
-Source: `<scratch>/data/install10k-after`. Values: median (min–max) over repetitions; MB = 1024 KB.
+Source: `<out>/install10k-after`. Values: median (min–max) over repetitions; MB = 1024 KB.
 
 ## Phase deltas (MB, after − before)
 

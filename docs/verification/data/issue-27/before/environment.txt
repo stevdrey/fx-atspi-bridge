@@ -31,4 +31,4 @@ cpus=16
 model name	: AMD Ryzen 7 7730U with Radeon Graphics
 MemTotal:       15690536 kB
 workload=warmup:50,samples:200,idle:10,installChurn:100
-command=examples/fx-lab/scripts/run-baseline.sh <scratch>/data/quick-before quick
+command=examples/fx-lab/scripts/run-baseline.sh <out>/quick-before quick

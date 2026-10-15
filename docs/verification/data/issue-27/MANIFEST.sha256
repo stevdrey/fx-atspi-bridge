@@ -5,8 +5,8 @@
 # install10k-before/: run-memory-diag.sh install10k at a9e26c7 = 349df59 + install10k-profile.patch, started 2026-10-15T17:57:17Z
 # 57d3237 is the head of PR #26; its squash merge 243a674 on main has the identical tree (3e62355a).
 # Per-run logs and raw diagnostic snapshots (pmap, smaps_rollup, malloc_info, NMT, histograms) are not committed.
-# Local paths in environment.txt and summary.md were replaced by $HOME and <scratch> after collection; hashes are of the redacted files.
-359206b4761ac29934606c152deaa7cee642c5fec6297e4a9d18b1d351dc5896  after/environment.txt
+# Local paths in environment.txt and summary.md were replaced by $HOME and <out>/<name> after collection; hashes are of the redacted files.
+18973c806115a3092891ae8690601c83e97dc201997d75f09671ac283cecd2eb  after/environment.txt
 7cd42439b413ec51b2fab599b3991985158f49ec91109b51e260b016573a5928  after/n10000-d10-off-r1.json
 c9464a508a7152a98fe273d12af81ddc85c8951b18ada82ab4db93cb5fb90d4f  after/n10000-d10-off-r2.json
 a7c486b369a2ac686fd068f45668d8d12bfc86211bc7c504fd4b238098412cbc  after/n10000-d10-on-r1.json
@@ -51,7 +51,7 @@ b88f04d388ae453e040f3fa7cb627e13ba426d3821fcc902f4e8d8f8b6f17a07  after/n100-d1-
 175d9ee49e195998580f4b91dba0820599dd0d09f34aa318c78f11a105441d21  after/n100-d1-on-r1.json
 bbef87500b182c315e74ad40b99124cb174d954d50dfd636d45cf15c2e4ddc73  after/n100-d1-on-r2.json
 a16847e1de8f5eddfcc83a67f1d2b7bfae1ac68eb07abe31a1807378b5f62143  after/n100-d1-on-r3.json
-8411d4bc7fe5b5a33e4c8df2f0580061bffa81a41b2b081f1196c611c9ca6906  before/environment.txt
+eeefd776916c0277223ed000da812f5c7601075d8f0343f4cc84510eae2369f5  before/environment.txt
 f92c4e089bd6fb5a916e3c08193c228ec7e0df2278dbdc4004ce71536a20660d  before/n10000-d10-off-r1.json
 5dc7e91c917c09c3006b1fdb78f738268e048b28474923bf1f448177074016bf  before/n10000-d10-off-r2.json
 26cf9e2469beb20ac4b27a9d4939ba8e13b82d895815197cd5869960750d2fff  before/n10000-d10-on-r1.json
@@ -112,7 +112,7 @@ b9bb09400278344943f088b630138a7c71af3272f1a02b83d146cb37082400c6  install10k-aft
 488eb7cfaf00c63f1be541ccf50ab6360db1cce7175a334424864e882c74feae  install10k-after/install-n10000-on-plain-r3.json
 57e24b6a779f6f38d2d9e5bf7680aab73d505f60f188878d739d4dfaf9ccfebd  install10k-after/install-n10000-on-plain-r4.json
 900cd456e6f1d4e4d4602edda634effb78eb679f1cf4e1186cf4052046ba8d82  install10k-after/install-n10000-on-plain-r5.json
-5355ff20ddfac197ca5cc98b2d7717ba9e91e6edb9aafe6f39d6b6ba41daec5b  install10k-after/summary.md
+00e78c90385e2edae69a88509af4498665c6a350d87d3126fdc030115b81ce23  install10k-after/summary.md
 eedd8775f12511326cdd7ac77ec6eede76c769ad996d1444742fab6131938b1d  install10k-before/environment.txt
 91f165ee893f275947126ebf01aacda965c6d5e4d648edb17540516a67270643  install10k-before/install-n10000-on-arena2-r1.json
 2c963ed21fecf14202a3af5f583d8f9b20d8e18d9140b384cc5c9f2bab83b597  install10k-before/install-n10000-on-arena2-r2.json
@@ -129,5 +129,5 @@ fcdd6553296fbdd1f7c3ebe1a6e2e022c47406cb78c77bf599702df309f2f945  install10k-bef
 c783639a855cc8f0676196d56cc3bec7134e7a42d20ded791f29bc585c71b5f6  install10k-before/install-n10000-on-plain-r3.json
 1522f450a623acb21f84ebe09a2d450a0439b32c149f4865fac1e4294e2444a2  install10k-before/install-n10000-on-plain-r4.json
 7aef6f9493cef22326f9c7e45cb7565ad58a7b5dbf260f5b8fa706a16a0687aa  install10k-before/install-n10000-on-plain-r5.json
-42ab4a4ba2491e364a85fa9a6e8531a08a82d80d7db995289e5391561638577f  install10k-before/summary.md
+5d7b3b37cd492072e1dcb81910bfbd274790aba1cfb5aa84fcaa3eb3633a7b25  install10k-before/summary.md
 7a74f06bef85bb5e1218175a76d6bd2ee9f11948898a3d3b790be43c9266aba0  install10k-profile.patch
