@@ -3,7 +3,9 @@
 # after:  measured commit cd818fcf974954e195786b7342c40dabb108a5df (clean tree), started 2026-10-15T06:16:17Z
 # The JSON files were committed in c60a8b6 and moved to a separate evidence PR to keep PR #26 reviewable; their
 # bytes must match these hashes. After a squash merge, cd818fc and c60a8b6 remain reachable through refs/pull/26/head.
-# environment.txt (plan, JDK, jar hashes) and retries.txt stay next to this manifest.
+# environment.txt (plan, JDK, jar hashes) and before/retries.txt are hashed below as well. In both environment.txt files
+# the home directory and the output directory were redacted after collection ($HOME, <out>/<name>); the hashes are
+# of the redacted files. after/ had no retries, so it has no retries.txt.
 # The data describes cd818fc, not the final head of PR #26; see docs/verification/issue-5.md.
 811d8e0b5cf295bb36968e4b237277edf6bf33b39bf5862f20e3723986816610  before/n10000-d10-off-r1.json
 8d10ef3b3fa156690bf64a34ac47733cdaafdb34e58a3cfbd6c428a4b9dee691  before/n10000-d10-off-r2.json
@@ -93,3 +95,6 @@ b5df98fef1dc32eeaf56a1ddceefe9a048f0ab33f73576b3a7be0a4b1cf9e7e4  after/n100-d1-
 ef0041e27fff404d02c71f4669cfd53be98a2b25f5121bf915330a56ed5ddc3d  after/n100-d1-on-r1.json
 cd8f54b809707e59394f4f839384b7a960ca08cd476e24d99b6ab2e271c06d70  after/n100-d1-on-r2.json
 6aa73cd2071ab9b8a50b3069c359d0ed3aaec83890d42b7b513935c04dfb3b21  after/n100-d1-on-r3.json
+f987ffe97ef09ca3f3f3e8ff6869f79f5eee57699bd62003cf5549ebee071fdc  after/environment.txt
+556b4b26fe8f4c39f4a76da8a3ff710b6b065d47ff5d4e1198616a2827c848cc  before/environment.txt
+65fd5fd0e91078b8f62cd75dc84aa830cfff3336006bb32e6422fba9736a2938  before/retries.txt
