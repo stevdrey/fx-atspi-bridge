@@ -16,14 +16,21 @@
 package dev.desktopcontrol.fxatspi.fx;
 
 import dev.desktopcontrol.fxatspi.model.ActionPort;
+import java.util.List;
+import javafx.scene.Node;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextInputControl;
+import javafx.stage.Modality;
+import javafx.stage.PopupWindow;
+import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * Applies semantic actions to live JavaFX targets resolved by id. Call only on the FX application
  * thread, never while holding a lock shared with the provider. Each method revalidates the target
- * immediately before acting and returns {@code false} when the action is not permitted.
+ * immediately before acting (live, enabled, shown in a showing window, not blocked by a modal window,
+ * editable and not a password field for text) and returns {@code false} when the action is not permitted.
  */
 public final class ActionExecutor implements ActionPort {
     private final TargetRegistry registry;
@@ -32,7 +39,7 @@ public final class ActionExecutor implements ActionPort {
 
     /** Fires an enabled button-like target. */
     @Override public boolean press(String id) {
-        if (!(registry.target(id) instanceof ButtonBase button) || button.isDisabled()) return false;
+        if (!(registry.target(id) instanceof ButtonBase button) || !eligible(button)) return false;
         button.fire();
         return true;
     }
@@ -40,8 +47,64 @@ public final class ActionExecutor implements ActionPort {
     /** Replaces the text of an editable, enabled, non-password text input. */
     @Override public boolean setText(String id, String value) {
         if (!(registry.target(id) instanceof TextInputControl text) || text instanceof PasswordField) return false;
-        if (!text.isEditable() || text.isDisabled()) return false;
+        if (!text.isEditable() || !eligible(text)) return false;
         text.setText(value);
         return true;
+    }
+
+    /** Enabled, visible along its whole parent chain, in a showing window that no modal window blocks. */
+    private static boolean eligible(Node node) {
+        if (node.isDisabled()) return false;
+        var scene = node.getScene();
+        var window = scene == null ? null : scene.getWindow();
+        if (window == null || !window.isShowing()) return false;
+        for (var current = node; current != null; current = current.getParent()) if (!current.isVisible()) return false;
+        return !blockedByModal(window);
+    }
+
+    /**
+     * A showing modal {@link Stage} M blocks {@code window} unless {@code window} is in M's child hierarchy: an
+     * application-modal stage blocks every other window, a window-modal stage blocks its owner chain. A modal stage
+     * shown after M receives input instead of M, so a window that is, or is owned by, such a newer modal stage is not
+     * blocked by M. {@link Window#getWindows()} lists windows in the order they were shown.
+     */
+    static boolean blockedByModal(Window window) {
+        var windows = Window.getWindows();
+        for (int i = 0; i < windows.size(); i++) {
+            if (!(windows.get(i) instanceof Stage modal) || modal == window || !modal.isShowing()) continue;
+            var modality = effectiveModality(modal);
+            if (modality == Modality.NONE || ownedBy(window, modal) || supersededBy(window, i, windows)) continue;
+            if (modality == Modality.APPLICATION_MODAL || ownedBy(modal, window)) return true;
+        }
+        return false;
+    }
+
+    /** True when {@code window} or one of its owners is a showing modal stage shown after position {@code modal}. */
+    private static boolean supersededBy(Window window, int modal, List<Window> windows) {
+        for (var current = window; current != null; current = owner(current)) {
+            if (current instanceof Stage stage && stage.isShowing() && effectiveModality(stage) != Modality.NONE
+                    && windows.indexOf(stage) > modal) return true;
+        }
+        return false;
+    }
+
+    /** JavaFX treats a window-modal stage without an owner as modeless. */
+    private static Modality effectiveModality(Stage stage) {
+        var modality = stage.getModality();
+        return modality == Modality.WINDOW_MODAL && stage.getOwner() == null ? Modality.NONE : modality;
+    }
+
+    /** True when {@code ancestor} is in the owner chain of {@code window}. */
+    private static boolean ownedBy(Window window, Window ancestor) {
+        for (var owner = owner(window); owner != null; owner = owner(owner)) if (owner == ancestor) return true;
+        return false;
+    }
+
+    private static Window owner(Window window) {
+        return switch (window) {
+            case Stage stage -> stage.getOwner();
+            case PopupWindow popup -> popup.getOwnerWindow();
+            default -> null;
+        };
     }
 }

@@ -60,6 +60,7 @@ final class Ffm implements AutoCloseable {
     private final MethodHandle connectionUniqueName = bind("g_dbus_connection_get_unique_name", FunctionDescriptor.of(ADDRESS, ADDRESS));
     private final MethodHandle connectionIsClosed = bind("g_dbus_connection_is_closed", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private final MethodHandle connectionCloseSync = bind("g_dbus_connection_close_sync", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    private final MethodHandle connectionFlushSync = bind("g_dbus_connection_flush_sync", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
     private final MethodHandle cancellableNew = bind("g_cancellable_new", FunctionDescriptor.of(ADDRESS));
     private final MethodHandle cancellableCancel = bind("g_cancellable_cancel", FunctionDescriptor.ofVoid(ADDRESS));
     private final MethodHandle connectionCall = bind("g_dbus_connection_call", FunctionDescriptor.ofVoid(
@@ -148,7 +149,22 @@ final class Ffm implements AutoCloseable {
         open();
         try { return (int) connectionIsClosed.invokeExact(connection) != 0; } catch (Throwable error) { throw failed("g_dbus_connection_is_closed", error); }
     }
-    /** Flushes and closes; throws when the bus reports a failure. */
+    /**
+     * Writes every message already queued on {@code connection} (for example method replies) and returns; the
+     * {@code cancellable} bounds the wait. Throws when the flush fails or is cancelled.
+     */
+    void flushConnection(MemorySegment connection, MemorySegment cancellable) {
+        open();
+        try (Arena temporary = Arena.ofConfined()) {
+            var error = temporary.allocate(ADDRESS);
+            try { var ignored = (int) connectionFlushSync.invokeExact(connection, cancellable, error); } catch (Throwable failure) { throw failed("g_dbus_connection_flush_sync", failure); }
+            check(error);
+        }
+    }
+    /**
+     * Closes; throws when the bus reports a failure. GDBus discards messages still queued for writing when the close
+     * is processed, so call {@link #flushConnection} first when queued replies must reach their peers.
+     */
     void closeConnection(MemorySegment connection) {
         open();
         try (Arena temporary = Arena.ofConfined()) {
