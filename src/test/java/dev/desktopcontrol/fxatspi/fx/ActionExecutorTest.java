@@ -79,7 +79,7 @@ class ActionExecutorTest {
             main.setScene(new Scene(box, 200, 100));
             main.show();
         }
-        String id(Object target) { return registry.identity(target); }
+        String id(Object target) { return registry.register(target); }
         boolean press() { return executor.press(id(button)); }
         boolean type() { return executor.setText(id(field), "new"); }
         Stage dialog(Modality modality, Stage owner) {

@@ -22,45 +22,29 @@ import java.util.Map;
 /**
  * Maps live JavaFX targets to stable AT-SPI ids and back. Confined to the FX application thread:
  * the provider thread only ever sees ids and immutable model records, never the targets.
- * Each traversal is a mark-and-sweep pass: targets not seen during the pass are released.
+ * Targets are registered and released explicitly by the {@link SceneObserver} as they join and leave the tree,
+ * so each change costs O(1) and nothing is swept periodically.
  */
 public final class TargetRegistry {
-    private static final class Entry {
-        final String id;
-        long pass;
-        Entry(String id) { this.id = id; }
-    }
-
-    private final IdentityHashMap<Object, Entry> byTarget = new IdentityHashMap<>();
+    private final IdentityHashMap<Object, String> byTarget = new IdentityHashMap<>();
     private final Map<String, Object> byId = new HashMap<>();
     private long sequence;
-    private long pass;
 
-    /** Starts a traversal; call {@link #sweep()} when it completes. */
-    void beginPass() { pass++; }
-
-    /** Returns the id for {@code target}, creating one if needed, and marks it live for this pass. */
-    String identity(Object target) {
-        var entry = byTarget.get(target);
-        if (entry == null) {
-            entry = new Entry("object" + (++sequence));
-            byTarget.put(target, entry);
-            byId.put(entry.id, target);
+    /** Returns the id for {@code target}, creating one if needed. */
+    String register(Object target) {
+        var id = byTarget.get(target);
+        if (id == null) {
+            id = "object" + (++sequence);
+            byTarget.put(target, id);
+            byId.put(id, target);
         }
-        entry.pass = pass;
-        return entry.id;
+        return id;
     }
 
-    /** Releases every target that was not marked during the current pass. */
-    void sweep() {
-        var iterator = byTarget.entrySet().iterator();
-        while (iterator.hasNext()) {
-            var entry = iterator.next();
-            if (entry.getValue().pass != pass) {
-                byId.remove(entry.getValue().id);
-                iterator.remove();
-            }
-        }
+    /** Forgets {@code target}; its id is never reused. */
+    void release(Object target) {
+        var id = byTarget.remove(target);
+        if (id != null) byId.remove(id);
     }
 
     /** Drops every mapping so a closed bridge does not retain the last scene graph. FX thread only. */
@@ -73,10 +57,7 @@ public final class TargetRegistry {
     public Object target(String id) { return byId.get(id); }
 
     /** Id previously assigned to {@code target}, or {@code null}. FX thread only. */
-    String targetId(Object target) {
-        var entry = byTarget.get(target);
-        return entry == null ? null : entry.id;
-    }
+    String targetId(Object target) { return byTarget.get(target); }
 
     /** Number of live targets currently held. FX thread only. */
     public int size() { return byTarget.size(); }

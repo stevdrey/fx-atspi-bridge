@@ -86,13 +86,13 @@ Immediately before acting, the bridge checks on the JavaFX thread that the contr
 
 A reply reports the call to the control, not that an application workflow finished. Running handlers are never interrupted.
 
-No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object disappears, its reference is removed. If it returns after its absence has been observed, it receives a new reference.
+No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object leaves the tree, its reference is removed. If it returns after its removal has been published, it receives a new reference.
 
 ## Discovery and events
 
-Every 100 ms, during a JavaFX pulse, the bridge traverses `Window.getWindows()`, scenes, and container children. Controls are treated as semantic leaves: their internal skin nodes are not published. Additional windows and complete scene replacements are detected. The GDBus thread registers new objects and removes old ones, emitting `Cache.AddAccessible`, `Cache.RemoveAccessible`, and `ChildrenChanged`. It also reports observed changes to names, text, caret positions, and states.
+At installation the bridge traverses `Window.getWindows()`, scenes, and container children once and subscribes to them: the window list, each window's scene and scene root, container children, and the properties it publishes (visibility, disabled state, focus, accessible text, id, labels, and the text, caret and editability of non-password text inputs). Controls are treated as semantic leaves: their internal skin nodes are not published or observed. Password fields' text and caret are never observed. Changes mark the affected objects; the bridge publishes them once per JavaFX event-loop turn, and an idle scene costs no work. Hiding or disabling a container updates its descendants. Additional windows, scene and root replacements, removals and reparenting are detected; a control moved between observed containers keeps its reference. The GDBus thread registers new objects and removes old ones, emitting `Cache.AddAccessible`, `Cache.RemoveAccessible`, and `ChildrenChanged`. It also reports observed changes to names, text, caret positions, and states.
 
-Polling coalesces changes between observations. It is not an exhaustive record of every transition, and it cannot guarantee detection of controls that appear and disappear within 100 ms. Its cost increases with tree size. A production bridge should subscribe to properties and structural changes to avoid periodically traversing the entire tree.
+Changes made within one event-loop turn are coalesced: the bridge synchronizes state, it does not record every transition, and a control added and removed within the same turn is never published. Listeners are removed when an object leaves the tree and when the bridge closes.
 
 ## Current coverage
 

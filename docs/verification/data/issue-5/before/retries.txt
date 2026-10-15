@@ -1,0 +1,1 @@
+n1000-d10-off-r1 attempt=1 exit=3 bench invalid: a measured pulse took 6135.355387 ms; display throttled or process stalled during the measured phase

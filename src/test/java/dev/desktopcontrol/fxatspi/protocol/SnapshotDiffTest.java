@@ -1,0 +1,100 @@
+/*
+ * Copyright 2026 Steven Rey Sequeira
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package dev.desktopcontrol.fxatspi.protocol;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.Role;
+import dev.desktopcontrol.fxatspi.model.Snapshot;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Caret;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Change;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Name;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Removed;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.State;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextDeleted;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextInserted;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+
+/** The AT-SPI change plan from snapshots alone: no D-Bus, no FFM, no JavaFX toolkit. */
+class SnapshotDiffTest {
+    private static AccessibleNode node(String id, String parent, List<String> children) {
+        return new AccessibleNode(id, id, Role.PANEL, "", false, true, true, false, false, 0, parent, children, Set.of());
+    }
+
+    private static Snapshot tree(AccessibleNode... nodes) {
+        var map = new LinkedHashMap<String, AccessibleNode>();
+        for (var node : nodes) map.put(node.id(), node);
+        return new Snapshot(map);
+    }
+
+    private static Snapshot parentWith(String... children) {
+        var nodes = new AccessibleNode[children.length + 1];
+        nodes[0] = node("p", "root", List.of(children));
+        for (int i = 0; i < children.length; i++) nodes[i + 1] = node(children[i], "p", List.of());
+        return tree(nodes);
+    }
+
+    @Test void reorderRemovesAtOldAndAddsAtNewIndices() {
+        var changes = SnapshotDiff.diff(parentWith("a", "b", "c"), parentWith("c", "a"), List.of("p", "b"));
+        assertEquals(List.<Change>of(new ChildRemoved("p", 0, "a"), new ChildRemoved("p", 1, "b"), new ChildRemoved("p", 2, "c"),
+                new ChildAdded("p", 0, "c"), new ChildAdded("p", 1, "a"), new Removed("b")), changes);
+    }
+
+    @Test void middleInsertAndRemoveMoveOnlyTheShiftedChildren() {
+        assertEquals(List.<Change>of(new Added("x"), new ChildRemoved("p", 1, "b"), new ChildAdded("p", 1, "x"), new ChildAdded("p", 2, "b")),
+                SnapshotDiff.diff(parentWith("a", "b"), parentWith("a", "x", "b"), List.of("p", "x")));
+        assertEquals(List.<Change>of(new ChildRemoved("p", 1, "x"), new ChildRemoved("p", 2, "b"), new ChildAdded("p", 1, "b"),
+                new Removed("x")), SnapshotDiff.diff(parentWith("a", "x", "b"), parentWith("a", "b"), List.of("p", "x")));
+    }
+
+    @Test void newObjectsAreAnnouncedBeforeAnyParentListsThemAndRemovalsComeLast() {
+        var before = tree(node("root", "", List.of("old")), node("old", "root", List.of()));
+        var after = tree(node("root", "", List.of("p")), node("p", "root", List.of("c1", "c2")), node("c1", "p", List.of()),
+                node("c2", "p", List.of()));
+        // Children before parents, as the observer may report them; the order of announcements must not depend on it.
+        var changes = SnapshotDiff.diff(before, after, List.of("c1", "root", "old", "p", "c2"));
+        var lastAdded = -1;
+        var firstChildEvent = changes.size();
+        for (int i = 0; i < changes.size(); i++) {
+            if (changes.get(i) instanceof Added) lastAdded = i;
+            if (changes.get(i) instanceof ChildAdded && firstChildEvent == changes.size()) firstChildEvent = i;
+        }
+        assertTrue(lastAdded < firstChildEvent, "every AddAccessible precedes every ChildrenChanged(add): " + changes);
+        assertEquals(new Removed("old"), changes.getLast());
+        assertEquals(Set.of(new Added("c1"), new Added("p"), new Added("c2")), Set.copyOf(changes.subList(0, 3)));
+    }
+
+    @Test void unchangedRecordsAndUnknownIdsYieldNothing() {
+        var snapshot = parentWith("a", "b");
+        assertTrue(SnapshotDiff.diff(snapshot, snapshot, List.of("p", "a", "missing")).isEmpty());
+    }
+
+    @Test void propertyStateTextAndCaretChangesKeepTheirEventOrder() {
+        var old = new AccessibleNode("f", "old", Role.ENTRY, "ab", true, true, true, false, true, 1, "root", List.of(), Set.of());
+        var now = new AccessibleNode("f", "new", Role.ENTRY, "c🧪", true, false, false, true, true, 2, "root", List.of(), Set.of());
+        assertEquals(List.<Change>of(new State("f", "enabled", false), new State("f", "sensitive", false), new State("f", "focused", true),
+                new State("f", "showing", false), new State("f", "visible", false), new Name("f", "new"), new TextDeleted("f", "ab"),
+                new TextInserted("f", "c🧪"), new Caret("f", 2)), SnapshotDiff.diff(tree(old), tree(now), List.of("f")));
+    }
+}
