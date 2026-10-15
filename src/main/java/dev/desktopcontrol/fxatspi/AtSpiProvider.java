@@ -28,6 +28,7 @@ import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -297,6 +298,7 @@ final class AtSpiProvider {
         for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
         if (connection.address() != 0) {
             var closing = connection;
+            guarded(() -> flushReplies(closing)); // close would otherwise discard the replies just queued above
             guarded(() -> {
                 try { ffi.closeConnection(closing); }
                 catch (RuntimeException ignored) { /* Connection closure removes the application from the registry. */ }
@@ -312,6 +314,34 @@ final class AtSpiProvider {
         ffi.unref(invocation);
     }
     private static final long EMBED_DRAIN_NANOS = 1_000_000_000L;
+    private static final long FLUSH_NANOS = 1_000_000_000L;
+    /**
+     * Writes the replies queued during teardown before the connection is closed: GDBus discards messages still queued
+     * when a close is processed, so a peer would otherwise see NoReply instead of {@code Provider stopped}. A stalled
+     * bus must not hold teardown, so a timer thread cancels the flush after {@link #FLUSH_NANOS}; it is joined before
+     * the cancellable is released.
+     */
+    private void flushReplies(MemorySegment closing) {
+        var cancellable = ffi.newCancellable();
+        try {
+            var timer = Thread.ofPlatform().daemon().name("fx-atspi-flush-timeout").start(() -> {
+                try { Thread.sleep(Duration.ofNanos(FLUSH_NANOS)); }
+                catch (InterruptedException flushed) { return; }
+                guarded(() -> ffi.cancel(cancellable));
+            });
+            try { ffi.flushConnection(closing, cancellable); }
+            catch (RuntimeException ignored) { /* Cancelled or failed: closing still releases everything. */ }
+            finally { timer.interrupt(); joinUninterruptibly(timer); }
+        } finally { ffi.unref(cancellable); }
+    }
+    private static void joinUninterruptibly(Thread thread) {
+        var interrupted = false;
+        while (true) {
+            try { thread.join(); break; }
+            catch (InterruptedException again) { interrupted = true; }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+    }
     /** Ready GLib iterations dispatched before the provider loop returns to its own work. */
     static final int DISPATCH_BATCH = 64;
     /** Runs at most {@link #DISPATCH_BATCH} nonblocking iterations; true when the batch ran out while work was still ready. */

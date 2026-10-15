@@ -126,6 +126,23 @@ The desktop smoke was not rerun for these changes: they do not alter the applica
 - `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check`: 97 tests, 0 failures, 0 skipped.
 - The desktop smoke was not rerun: the change is confined to the coordinator's start path, which `ModalActionTest` and the D-Bus provider tests exercise.
 
+## CI failure on `ec34045`: replies lost at connection close
+
+**Symptom.** CI run 38681411623 (`xvfb-run`, GitHub runner) failed once in `pendingInvocationsAreReleasedExactlyOnceAcrossShutdown`, at the assertion that every client is told `Provider stopped`. The release counters had already passed, so all 4 invocations were answered and released once. Earlier CI runs and every local run passed.
+
+**Cause (from the GLib source, not reproduced).** In `gio/gdbusprivate.c`, `continue_writing` gives a pending close precedence over the write queue, and `iostream_close_cb` discards every message still queued. Teardown queues the `Provider stopped` replies and then closes the connection with `g_dbus_connection_close_sync`. When the GDBus worker thread has not written them by then, which is plausible on a slow shared runner, the replies are dropped and the daemon sends the client `NoReply`. The `Ffm.closeConnection` Javadoc ("Flushes and closes") was wrong.
+
+**Fix.**
+- Teardown now calls `g_dbus_connection_flush_sync` before closing.
+- The flush is bounded: a timer thread cancels it after 1 s, and the timer is joined before the cancellable is released.
+- A failed or cancelled flush still closes and releases everything.
+
+**Evidence and limits.**
+- Before the fix, 61 local runs did not reproduce the loss: 25 normal runs, 20 pinned to one CPU, and 8 + 8 with up to 64 pending replies on one contended CPU. The 64-reply test was therefore not kept, since it could not show the difference.
+- The fix rests on the GLib source and on construction.
+- After the fix: `ProviderLifecycleTest` passed 10/10 and `./gradlew cleanTest check` passed with 97 tests.
+- The failing assertion now prints every reply, so a recurrence in CI would show the actual error text.
+
 ## Measurement against SC-01
 
 No SC-01 metric was re-collected: the change does not touch traversal, refresh or the 5 ms loop that SC-01 measured, and a full collection is tracked in [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15). The added per-tick work is an O(n) scan of at most `maxOutstanding` (default 16) outstanding commands on the provider thread. The raw read latencies above are dominated by the 5 ms provider tick (SC-06), and the idle-versus-modal comparison is a smoke observation, not a benchmark. No performance improvement is claimed.

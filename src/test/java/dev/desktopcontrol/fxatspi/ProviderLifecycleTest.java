@@ -304,7 +304,8 @@ class ProviderLifecycleTest {
         assertEquals(4, provider.pendingAcquired());
         assertEquals(4, provider.pendingReleased(), "shutdown must release each pending invocation once");
         assertEquals(0, provider.pendingCount());
-        assertTrue(calls.stream().allMatch(call -> output(call).contains("Provider stopped")), "every client must be told the provider stopped");
+        var replies = calls.stream().map(ProviderLifecycleTest::output).toList();
+        assertTrue(replies.stream().allMatch(reply -> reply.contains("Provider stopped")), "every client must be told the provider stopped: " + replies);
         heldTasks.forEach(Runnable::run); // late FX tasks find nothing to release and never run the action
         assertEquals(4, provider.pendingReleased(), "a task running after shutdown must not release again");
     }
