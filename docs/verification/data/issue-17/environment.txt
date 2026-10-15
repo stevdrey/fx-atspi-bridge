@@ -1,0 +1,31 @@
+date=2026-10-14T21:35:46Z
+git=87d8c94796c8b761ce33673819c4bd37664589ae
+tree=clean
+profile=diag
+idle_inhibit=1
+plan=structural:10000:3:off,on:plain,nmt:30:0
+plan=install:1000:3:on:plain,nmt,arena2:0:100
+workload=warmup:50,samples:200,idle:10
+variants=plain:none,nmt:-XX:NativeMemoryTracking=summary,arena2:MALLOC_ARENA_MAX=2
+limits_sha256=3e133b237f7ceecad3c58350faada314a56616a3bd51042e61b2e0f3ad19ec0e
+6665ff033c61ff6112a46cd31e2d6a48772efefa36d2eef878bd2f90b079670c  fx-atspi-bridge-0.1.0-SNAPSHOT.jar
+5857d324fc90d49f65b2f7bd69690b72ed50c5a25f45e898afcc2154688831ec  fx-lab.jar
+47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d  javafx-base-27-linux.jar
+6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8  javafx-controls-27-linux.jar
+93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0  javafx-graphics-27-linux.jar
+JAVA_TOOL_OPTIONS_effective=
+JDK_JAVA_OPTIONS_effective=
+_JAVA_OPTIONS_effective=
+JAVA_OPTS_effective=
+FX_LAB_OPTS_effective=
+openjdk version "27" 2026-09-15
+OpenJDK Runtime Environment Zulu27.28+101-CA (build 27+35)
+OpenJDK 64-Bit Server VM Zulu27.28+101-CA (build 27+35, mixed mode, sharing)
+glibc=ldd (GNU libc) 2.43
+glib2=glib2-2.88.4-1.fc44.x86_64
+pmap=pmap from procps-ng 4.0.6
+session=wayland wayland=wayland-0 display=:0
+Linux 7.2.9-201.fc44.x86_64 x86_64
+cpus=16
+model name	: AMD Ryzen 7 7730U with Radeon Graphics
+MemTotal:       15690532 kB

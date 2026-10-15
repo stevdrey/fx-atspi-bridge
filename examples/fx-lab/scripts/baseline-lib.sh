@@ -39,6 +39,21 @@ require_allowed_opts() {
   fi
 }
 
+# --- allocator environment -----------------------------------------------------------------------------------------
+# glibc reads GLIBC_TUNABLES (e.g. glibc.malloc.arena_max) and the MALLOC_* variables in every child process, and
+# LD_PRELOAD can replace the allocator altogether. Memory evidence compares allocator variants per cell, so an inherited
+# setting would silently apply to every cell. require_default_allocator -> returns 1 naming (never printing) the variables.
+require_default_allocator() {
+  local name set=()
+  for name in GLIBC_TUNABLES LD_PRELOAD $(compgen -e | grep -E '^MALLOC_' || true); do
+    [ -n "${!name:-}" ] && set+=("$name")
+  done
+  if [ "${#set[@]}" -ne 0 ]; then
+    echo "Refusing to run: ${set[*]} set in the environment (values not printed); they change the glibc allocator of every cell. Unset them; the script sets allocator variants per cell." >&2
+    return 1
+  fi
+}
+
 # The JVM echoes "[NOTE: ]Picked up <VAR>: <value>"; never let that value reach a retained file.
 redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 
@@ -67,6 +82,60 @@ resume_matches() {
   local env_file="$1"; shift
   [ -f "$env_file" ] || return 1
   [ "$(grep -E '^(git|profile|plan)=' "$env_file")" = "$(printf '%s\n' "$@")" ]
+}
+
+# --- shared collection preamble (run-baseline.sh, run-memory-diag.sh) ----------------------------------------------
+# require_jdk27 JAVA_BIN -> 1 unless JAVA_BIN reports java.specification.version 27. The generated launcher uses
+# JAVA_HOME or PATH, not the Gradle toolchain, so the runtime has to be checked separately.
+require_jdk27() {
+  local java_bin="$1" spec
+  spec="$("$java_bin" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java.specification.version = //p')"
+  if [ "$spec" != "27" ]; then
+    echo "Refusing to run: $java_bin reports java.specification.version='${spec:-unknown}', JDK 27 is required." >&2
+    return 1
+  fi
+}
+
+# require_fresh_or_resumable OUT_ABS RESUME HEAD_SHA PROFILE PLAN... -> 0 for an empty directory or a --resume of the
+# same commit, profile and plan; otherwise 1, so stale results never mix into the evidence.
+require_fresh_or_resumable() {
+  local out_abs="$1" resume="$2" head_sha="$3" profile="$4"
+  shift 4
+  dir_is_empty "$out_abs" && return 0
+  if [ "$resume" -eq 1 ] && resume_matches "$out_abs/environment.txt" "git=$head_sha" "profile=$profile" "${@/#/plan=}"; then
+    echo "Resuming the collection in $out_abs (same commit, profile and plan)"
+    return 0
+  fi
+  echo "Refusing to run: $out_abs is not empty$([ "$resume" -eq 1 ] && echo ' and its environment.txt does not match this commit/profile/plan'); stale results would mix into the evidence. Remove it or choose a new directory." >&2
+  return 1
+}
+
+# print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
+# commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware.
+print_environment() {
+  local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
+  shift 5
+  echo "date=$(date -u +%FT%TZ)"
+  echo "git=$head_sha"
+  echo "tree=clean"
+  echo "profile=$profile"
+  echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
+  for entry in "$@"; do echo "plan=$entry"; done
+  echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
+  (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
+  (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
+  echo "java_bin=$java_bin"
+  for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
+    echo "${opts_var}_effective=${!opts_var:-}"
+  done
+  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
+  "$java_bin" -version 2>&1 | redact_picked_up | head -3
+  echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
+  uname -srm
+  echo "cpus=$(nproc)"
+  grep -m1 'model name' /proc/cpuinfo || true
+  grep MemTotal /proc/meminfo
 }
 
 # --- one benchmark cell --------------------------------------------------------------------------------------------

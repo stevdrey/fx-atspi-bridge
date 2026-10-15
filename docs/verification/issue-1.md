@@ -17,6 +17,8 @@ Issue 1 therefore stays open until the follow-ups are scheduled or the maintaine
 
 Follow-up issues: [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) fresh `full` collection with the final harness, as a separate evidence PR or artifact; [#16](https://github.com/stevdrey/fx-atspi-bridge/issues/16) desktop interoperability QA (Wayland vs XWayland, actions, text editing, events, second window, Orca, other distributions); [#17](https://github.com/stevdrey/fx-atspi-bridge/issues/17) native and heap memory characterization. The performance findings below are already covered by [#5](https://github.com/stevdrey/fx-atspi-bridge/issues/5) (full-tree polling, CPU and update latency), [#6](https://github.com/stevdrey/fx-atspi-bridge/issues/6) (5 ms GLib polling, wakeups) and [#3](https://github.com/stevdrey/fx-atspi-bridge/issues/3) (provider shutdown and native resource ownership). High RSS is an observed symptom here, not proof of a leak, and none of these performance topics is implemented in this PR.
 
+**Superseded by [#17](https://github.com/stevdrey/fx-atspi-bridge/issues/17):** the install-churn results below measured the library before #3, which now rejects a reinstall until the previous provider has terminated; the harness waits for `closed()` since #17, and the structural RSS growth is characterized with NMT, `smaps_rollup`, `malloc_info` and class histograms in [`issue-17.md`](issue-17.md).
+
 Evidence policy: future collections are delivered in a separate evidence PR or artifact so tooling reviews stay manageable (this PR carries 44 benchmark JSON files).
 
 ## Environment
