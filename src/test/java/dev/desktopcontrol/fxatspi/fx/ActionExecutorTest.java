@@ -132,7 +132,7 @@ class ActionExecutorTest {
             return null;
         });
     }
-    @Test void applicationModalDialogBlocksEarlierWindowsButNotItself() throws Exception {
+    @Test void applicationModalDialogBlocksOtherWindowsButNotItself() throws Exception {
         onFx(() -> {
             var fixture = new Fixture();
             var dialog = fixture.dialog(Modality.APPLICATION_MODAL, null);
@@ -143,6 +143,38 @@ class ActionExecutorTest {
             assertTrue(fixture.executor.press(fixture.id(ok)), "the dialog's own controls stay actionable");
             dialog.hide();
             assertTrue(fixture.press(), "closing the dialog unblocks the window");
+            return null;
+        });
+    }
+    @Test void unownedWindowShownAfterAnApplicationModalDialogIsBlocked() throws Exception {
+        onFx(() -> {
+            var fixture = new Fixture();
+            fixture.dialog(Modality.APPLICATION_MODAL, null);
+            var later = new Stage();
+            var button = new Button("Later");
+            later.setScene(new Scene(new VBox(button), 50, 50));
+            later.show();
+            assertTrue(ActionExecutor.blockedByModal(later), "application modality has no show-order exception");
+            assertFalse(fixture.executor.press(fixture.id(button)));
+            return null;
+        });
+    }
+    @Test void nestedModalDialogSupersedesTheEarlierOne() throws Exception {
+        onFx(() -> {
+            var fixture = new Fixture();
+            var first = fixture.dialog(Modality.APPLICATION_MODAL, fixture.main);
+            var second = fixture.dialog(Modality.APPLICATION_MODAL, null); // opened from the first, not owned by it
+            var child = new Stage();
+            child.initOwner(second);
+            child.setScene(new Scene(new VBox(), 50, 50));
+            child.show();
+            assertFalse(ActionExecutor.blockedByModal(second), "the newest modal dialog receives input");
+            assertFalse(ActionExecutor.blockedByModal(child), "and so does its child hierarchy");
+            assertTrue(ActionExecutor.blockedByModal(first), "the earlier dialog is blocked by the newer one");
+            assertTrue(ActionExecutor.blockedByModal(fixture.main));
+            second.hide();
+            child.hide();
+            assertFalse(ActionExecutor.blockedByModal(first), "closing the newer dialog unblocks the earlier one");
             return null;
         });
     }

@@ -10,11 +10,11 @@ Fedora 44, kernel 7.2.9-201.fc44, Zulu JDK 27 (27+35), JavaFX 27 per Gradle, Gra
 
 | Command | Result |
 |---|---|
-| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 17 + 5 tests, 0 failures (no native library or toolkit needed) |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 18 tests, 0 failures, 0 skipped |
-| `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 6 tests, 0 failures, 0 skipped |
+| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 20 + 5 tests (after the Codex review), 0 failures (no native library or toolkit needed) |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 19 tests (after the Codex review), 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 8 tests (after the Codex review), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ModalActionTest'` | 1 test, 0 failures; printed `modal-read-latency-ms (gdbus process included) p50=10 max=12` over 20 reads |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests across the suite (run twice, before and after the docs), 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, **92 tests** after the Codex review fixes; 0 failures, 0 skipped |
 | `./gradlew javadoc` | no warnings for the library (the 6 warnings are in `examples/fx-lab`, unchanged) |
 | `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | 98 tests OK (skipped=1, optional Atspi bindings), unchanged scripts |
 
@@ -59,7 +59,7 @@ FX=$(find ~/.gradle/caches/modules-2 -name 'javafx-*-27-linux.jar' | sort | past
 python3 -I docs/verification/data/issue-4/modal_smoke.py --jar "$PWD/build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar" --fx-path "$FX" --out docs/verification/data/issue-4
 ```
 
-Latest run: `result: completed`, exit 0, **10/10 checks PASS** (`results.json`):
+Latest run (after the Codex review fixes; `results.json`): `result: completed`, exit 0, **10/10 checks PASS**, raw `GetChildren` p50 5.74 ms with the modal open versus 5.76 ms idle. The detailed observations below are from the run on `d7d596b`; the rerun reproduced every one of them:
 
 - Registered in the real registry after 0.21 s.
 - While the first `Delete` request was still pending and the FX thread was inside `showAndWait()`, 20 reads were answered: raw `GetChildren` on the application root p50 5.61 ms / max 5.77 ms (idle, before the dialog: p50 5.66 ms / max 5.85 ms); uncached libatspi name reads of every frame p50 63.78 ms / max 64.69 ms (idle: 37.88 / 38.20 ms with one frame instead of two, so that sample does twice the work while the dialog is open and is not a like-for-like comparison).
@@ -73,6 +73,19 @@ Two earlier runs of the same scenario gave the same observations; the first ende
 
 Limits: one application, one modal dialog, XWayland only, no screen reader, no window-modal case on the desktop (covered only by `ActionExecutorTest`), a single sample of 20 reads per state.
 
+## Codex review on `d7d596b`
+
+Four findings, all confirmed against the code and fixed. Each fix has a test that fails when the fix is removed (mutation-checked with the same throwaway script).
+
+| Finding | Fix | Test (fails without the fix) |
+|---|---|---|
+| P1: an unowned window shown **after** an application-modal stage stayed actionable (show-order exception), contrary to JavaFX's modality contract and invariant 4 | `blockedByModal` blocks every window outside the modal's child hierarchy regardless of order; a window that is, or is owned by, a newer modal stage is exempt so nested dialogs stay usable | `unownedWindowShownAfterAnApplicationModalDialogIsBlocked`; `nestedModalDialogSupersedesTheEarlierOne` (fails if the nested-modal exemption is removed) |
+| P2: `run` could read `closed == false`, lose to `close()`, and still win `QUEUED → RUNNING`, running an action after shutdown began | recheck `closed` after the start transition; if closed, `CANCELLED` and return without running (teardown answers it) | `closeBetweenTheFxCheckAndTheStartPreventsExecution` (clock hook closes the coordinator between the check and the transition) |
+| P2: a completion offered after teardown cleared the queue stayed retained in a closed coordinator | `post` rechecks `closed` after `offer` and removes it; teardown takes stragglers with `drainTo`; both counted once as dropped. Teardown now also drains first, so finished actions get their real result | `completionOfferedAfterTeardownIsNotRetained`, `shutdownCancelsQueuedWorkAndAnswersEachRequestOnce`; `teardownAnswersFinishedCommandsWithTheirResult` (fails if the drain is removed) |
+| P1: `while (ffi.iterate(context)) {}` was unbounded, so continuous bus traffic could starve drain and expiry | at most 64 ready iterations per loop pass (`dispatchBatch`), then drain/expire/reconcile; the 5 ms sleep only when the context went idle | `glibDispatchIsBoundedSoProviderWorkIsNotStarved` |
+
+**Starvation reproduction attempt (not kept).** A PyGObject client keeping 512 `GetRole` calls pipelined for 6 s did not keep the provider's context continuously ready: with the old unbounded loop and with the new batch, a queued action with a 200 ms deadline was answered as expired in 237–255 ms (3 runs each) while the flood was still running. The test could not tell the two loops apart, so it was dropped. The fix is verified by the unit test and by construction, not by an end-to-end reproduction of the starvation.
+
 ## Measurement against SC-01
 
 No SC-01 metric was re-collected: the change does not touch traversal, refresh or the 5 ms loop that SC-01 measured, and a full collection is tracked in [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15). The added per-tick work is an O(n) scan of at most `maxOutstanding` (default 16) outstanding commands on the provider thread. The raw read latencies above are dominated by the 5 ms provider tick (SC-06), and the idle-versus-modal comparison is a smoke observation, not a benchmark. No performance improvement is claimed.
@@ -81,5 +94,5 @@ No SC-01 metric was re-collected: the change does not touch traversal, refresh o
 
 - Expiry precision on the provider side is the provider tick (≈5 ms plus iteration time); the FX-side check is exact at start.
 - A handler that never returns keeps its slot; after `maxOutstanding` such handlers every new action is rejected while reads continue.
-- Windows that become showing after an application-modal stage, and are not owned by it, are not treated as blocked; JavaFX's own behavior there was not verified.
+- The nested-modal rule relies on `Window.getWindows()` listing windows in show order.
 - `requireCapability` (unknown or stale target) is defense in depth: GDBus already rejects unexported paths and interfaces, so the D-Bus test only shows those requests never reach the application.

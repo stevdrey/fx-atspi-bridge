@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -78,6 +79,8 @@ final class CommandCoordinator {
     long lateCompletions() { return lateCompletions.get(); }
     /** Completions posted after {@link #close()}; their requests were already answered as stopped. */
     long droppedCompletions() { return droppedCompletions.get(); }
+    /** Completions waiting for the provider to drain them. */
+    int queuedCompletions() { return completions.size(); }
 
     /**
      * Provider thread. Reserves a completion slot and returns the queued command.
@@ -116,6 +119,8 @@ final class CommandCoordinator {
         }
         command.startedAt = now;
         if (!command.phase.compareAndSet(Phase.QUEUED, Phase.RUNNING)) return;
+        // Shutdown may have begun between the check above and the transition; it answers every command, so just stop.
+        if (closed) { command.phase.set(Phase.CANCELLED); return; }
         depth++;
         runningTargets.add(command.target);
         var accepted = false;
@@ -127,8 +132,14 @@ final class CommandCoordinator {
         post(new Completion(command.id, accepted, failure));
     }
 
+    /**
+     * Hands a completion to the provider. If teardown closed the coordinator around the offer, the completion is taken
+     * back out here or by {@link #cancelAll}, whichever gets it first (the queue serializes both), so nothing stays
+     * queued in a closed coordinator.
+     */
     private void post(Completion completion) {
-        if (closed || !completions.offer(completion)) droppedCompletions.incrementAndGet();
+        if (!completions.offer(completion)) droppedCompletions.incrementAndGet();
+        else if (closed && completions.remove(completion)) droppedCompletions.incrementAndGet();
     }
 
     /** Provider thread. Answers every posted completion and frees its slot. */
@@ -176,16 +187,22 @@ final class CommandCoordinator {
     /** Any thread. From now on admission is rejected and queued FX tasks cancel themselves. */
     void close() { closed = true; }
 
-    /** Provider thread, at teardown. Prevents queued commands from starting and answers every unanswered one. */
+    /**
+     * Provider thread, at teardown. Answers finished commands with their result, prevents queued commands from
+     * starting, answers every other unanswered one as stopped, and drops completions that arrive meanwhile.
+     */
     void cancelAll(Replies replies) {
         close();
+        drain(replies);
         for (var command : outstanding.values()) {
             command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED);
             answer(command, Rejected.STOPPED, replies);
         }
         outstanding.clear();
         outstandingSize = 0;
-        completions.clear();
+        var stragglers = new ArrayList<Completion>();
+        completions.drainTo(stragglers);
+        droppedCompletions.addAndGet(stragglers.size());
     }
 
     private static void answer(Command command, Throwable failure, Replies replies) {

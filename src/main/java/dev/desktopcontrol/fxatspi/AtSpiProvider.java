@@ -40,6 +40,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
@@ -184,13 +185,14 @@ final class AtSpiProvider {
                 export(CACHE_ID);
                 if (embed) embedWithRegistry();
                 state.compareAndSet(State.STARTING, State.RUNNING);
+                var loopContext = context;
                 while (running) {
                     if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
                     commands.drain(this::answer);
                     commands.expire(this::answer);
                     reconcile();
-                    while (ffi.iterate(context)) {}
-                    Thread.sleep(5);
+                    // Bounded so continuous bus traffic cannot starve completion, expiry and reconcile work.
+                    if (!dispatchBatch(() -> ffi.iterate(loopContext))) Thread.sleep(5);
                 }
             } finally {
                 teardown(context, pushed);
@@ -306,6 +308,13 @@ final class AtSpiProvider {
         ffi.unref(invocation);
     }
     private static final long EMBED_DRAIN_NANOS = 1_000_000_000L;
+    /** Ready GLib iterations dispatched before the provider loop returns to its own work. */
+    static final int DISPATCH_BATCH = 64;
+    /** Runs at most {@link #DISPATCH_BATCH} nonblocking iterations; true when the batch ran out while work was still ready. */
+    static boolean dispatchBatch(BooleanSupplier iterate) {
+        for (int i = 0; i < DISPATCH_BATCH; i++) if (!iterate.getAsBoolean()) return false;
+        return true;
+    }
     /**
      * Hands a status message to the shared dispatcher and returns immediately, so a slow or blocked consumer can
      * never hold the provider thread or delay teardown and {@code closed()}.

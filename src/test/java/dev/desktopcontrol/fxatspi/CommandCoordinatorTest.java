@@ -306,6 +306,46 @@ class CommandCoordinatorTest {
             assertTrue(duplicates.isEmpty());
         }
     }
+    /** {@code stop()} closes the coordinator after the FX thread checked it but before its start transition. */
+    @Test void closeBetweenTheFxCheckAndTheStartPreventsExecution() {
+        var hook = new Runnable[1];
+        var coordinator = new CommandCoordinator(new ActionLimits(4, 2, Duration.ofMillis(100), Duration.ofMillis(500)), () -> {
+            var pending = hook[0];
+            hook[0] = null;
+            if (pending != null) pending.run();
+            return now.get();
+        });
+        var ran = new AtomicBoolean();
+        var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+        hook[0] = coordinator::close; // only the flag: teardown has not reached cancelAll yet
+        coordinator.run(command);
+        assertFalse(ran.get(), "an action must not start once shutdown has begun");
+        assertEquals(0, coordinator.queuedCompletions(), "the provider answers it, not the FX thread");
+        coordinator.cancelAll(this::answer);
+        assertSame(Rejected.STOPPED, answers.get(command.id()).failure());
+        assertTrue(duplicates.isEmpty());
+    }
+    @Test void completionOfferedAfterTeardownIsNotRetained() {
+        var coordinator = coordinator(4, 2);
+        var command = coordinator.admit("a", () -> {
+            coordinator.cancelAll(this::answer); // teardown closes and empties the queue before this completion is offered
+            return true;
+        });
+        coordinator.run(command);
+        assertEquals(0, coordinator.queuedCompletions(), "a closed coordinator must not keep a completion");
+        assertEquals(1, coordinator.droppedCompletions());
+        assertSame(Rejected.STOPPED, answers.get(command.id()).failure());
+    }
+    @Test void teardownAnswersFinishedCommandsWithTheirResult() {
+        var coordinator = coordinator(4, 2);
+        var done = coordinator.admit("a", () -> true);
+        var queued = coordinator.admit("b", () -> true);
+        coordinator.run(done); // completed, but the provider has not drained it yet
+        coordinator.cancelAll(this::answer);
+        assertEquals(new Answer(true, null), answers.get(done.id()));
+        assertSame(Rejected.STOPPED, answers.get(queued.id()).failure());
+        assertEquals(0, coordinator.droppedCompletions());
+    }
     @Test void unknownCompletionIdsAreIgnored() {
         var coordinator = coordinator(1, 1);
         coordinator.drain(this::answer);

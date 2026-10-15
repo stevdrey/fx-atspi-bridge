@@ -403,6 +403,15 @@ class ProviderLifecycleTest {
         } finally { port.release.countDown(); fx.shutdownNow(); }
     }
     /** GDBus rejects paths and interfaces that are not exported; the snapshot check behind them is defense in depth. */
+    @Test void glibDispatchIsBoundedSoProviderWorkIsNotStarved() {
+        var calls = new AtomicInteger();
+        // Ready for far longer than one batch (finite, so an unbounded loop fails here instead of hanging).
+        assertTrue(AtSpiProvider.dispatchBatch(() -> calls.incrementAndGet() < 10_000), "a continuously ready context exhausts the batch");
+        assertEquals(AtSpiProvider.DISPATCH_BATCH, calls.get(), "the loop must return to drain and expiry after one batch");
+        calls.set(0);
+        assertFalse(AtSpiProvider.dispatchBatch(() -> calls.incrementAndGet() < 3), "an idle context ends the batch early");
+        assertEquals(3, calls.get());
+    }
     @Test void unknownOrIncapableTargetsNeverReachTheApplication() throws Exception {
         var port = new CountingPort();
         var provider = new AtSpiProvider(statuses::add, () -> buttons("button1"), port, ffi -> address, false, Runnable::run);

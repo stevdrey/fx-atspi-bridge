@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi.fx;
 
 import dev.desktopcontrol.fxatspi.model.ActionPort;
+import java.util.List;
 import javafx.scene.Node;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.PasswordField;
@@ -62,19 +63,27 @@ public final class ActionExecutor implements ActionPort {
     }
 
     /**
-     * A showing modal {@link Stage} blocks {@code window} unless {@code window} is owned by it: an application-modal
-     * stage blocks windows shown before it, a window-modal stage blocks its owner chain. {@link Window#getWindows()}
-     * lists windows in the order they were shown.
+     * A showing modal {@link Stage} M blocks {@code window} unless {@code window} is in M's child hierarchy: an
+     * application-modal stage blocks every other window, a window-modal stage blocks its owner chain. A modal stage
+     * shown after M receives input instead of M, so a window that is, or is owned by, such a newer modal stage is not
+     * blocked by M. {@link Window#getWindows()} lists windows in the order they were shown.
      */
     static boolean blockedByModal(Window window) {
         var windows = Window.getWindows();
-        var position = windows.indexOf(window);
         for (int i = 0; i < windows.size(); i++) {
             if (!(windows.get(i) instanceof Stage modal) || modal == window || !modal.isShowing()) continue;
             var modality = modal.getModality();
-            if (modality == Modality.NONE || ownedBy(window, modal)) continue;
-            if (modality == Modality.APPLICATION_MODAL && i > position) return true;
-            if (modality == Modality.WINDOW_MODAL && ownedBy(modal, window)) return true;
+            if (modality == Modality.NONE || ownedBy(window, modal) || supersededBy(window, i, windows)) continue;
+            if (modality == Modality.APPLICATION_MODAL || ownedBy(modal, window)) return true;
+        }
+        return false;
+    }
+
+    /** True when {@code window} or one of its owners is a showing modal stage shown after position {@code modal}. */
+    private static boolean supersededBy(Window window, int modal, List<Window> windows) {
+        for (var current = window; current != null; current = owner(current)) {
+            if (current instanceof Stage stage && stage.isShowing() && stage.getModality() != Modality.NONE
+                    && windows.indexOf(stage) > modal) return true;
         }
         return false;
     }

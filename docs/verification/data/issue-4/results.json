@@ -4,32 +4,32 @@
  "idle_reads": {
   "raw_get_children": {
    "n": 10,
-   "p50_ms": 5.66,
-   "max_ms": 5.85
+   "p50_ms": 5.76,
+   "max_ms": 6.49
   },
   "atspi_frame_names": {
    "n": 10,
-   "p50_ms": 37.88,
-   "max_ms": 38.2
+   "p50_ms": 39.09,
+   "max_ms": 39.81
   },
   "n": 20,
-  "max_ms": 38.2
+  "max_ms": 39.81
  },
  "window_backend": "xwayland",
  "dialog_shown_after_s": 0.01,
  "modal_reads": {
   "raw_get_children": {
    "n": 10,
-   "p50_ms": 5.61,
-   "max_ms": 5.77
+   "p50_ms": 5.74,
+   "max_ms": 6.27
   },
   "atspi_frame_names": {
    "n": 10,
-   "p50_ms": 63.78,
-   "max_ms": 64.69
+   "p50_ms": 66.11,
+   "max_ms": 67.32
   },
   "n": 20,
-  "max_ms": 64.69
+  "max_ms": 67.32
  },
  "first_pending_during_reads": true,
  "second_delete": [
@@ -46,7 +46,7 @@
   "org.freedesktop.DBus.Error.Timeout",
   "GDBus.Error:org.freedesktop.DBus.Error.Timeout: Action is still running; its outcome is unknown"
  ],
- "first_delete_seconds": 2.006,
+ "first_delete_seconds": 2.007,
  "ok": [
   "reply",
   true
@@ -66,12 +66,12 @@
   {
    "check": "reads_answered_while_modal",
    "passed": true,
-   "observed": "{'raw_get_children': {'n': 10, 'p50_ms': 5.61, 'max_ms': 5.77}, 'atspi_frame_names': {'n': 10, 'p50_ms': 63.78, 'max_ms': 64.69}, 'n': 20, 'max_ms': 64.69}"
+   "observed": "{'raw_get_children': {'n': 10, 'p50_ms': 5.74, 'max_ms': 6.27}, 'atspi_frame_names': {'n': 10, 'p50_ms': 66.11, 'max_ms': 67.32}, 'n': 20, 'max_ms': 67.32}"
   },
   {
    "check": "modal_reads_under_1s",
    "passed": true,
-   "observed": "{'raw_get_children': {'n': 10, 'p50_ms': 5.61, 'max_ms': 5.77}, 'atspi_frame_names': {'n': 10, 'p50_ms': 63.78, 'max_ms': 64.69}, 'n': 20, 'max_ms': 64.69}"
+   "observed": "{'raw_get_children': {'n': 10, 'p50_ms': 5.74, 'max_ms': 6.27}, 'atspi_frame_names': {'n': 10, 'p50_ms': 66.11, 'max_ms': 67.32}, 'n': 20, 'max_ms': 67.32}"
   },
   {
    "check": "first_delete_running_timeout",
@@ -81,7 +81,7 @@
   {
    "check": "first_delete_answered_near_2s",
    "passed": true,
-   "observed": "2.006"
+   "observed": "2.007"
   },
   {
    "check": "second_delete_conflict",
@@ -110,15 +110,15 @@
   }
  ],
  "steps": [
-  "registered as [':1.1052'] after 0.21s",
-  "idle reads {'raw_get_children': {'n': 10, 'p50_ms': 5.66, 'max_ms': 5.85}, 'atspi_frame_names': {'n': 10, 'p50_ms': 37.88, 'max_ms': 38.2}, 'n': 20, 'max_ms': 38.2}",
-  "reads while the handler is in showAndWait {'raw_get_children': {'n': 10, 'p50_ms': 5.61, 'max_ms': 5.77}, 'atspi_frame_names': {'n': 10, 'p50_ms': 63.78, 'max_ms': 64.69}, 'n': 20, 'max_ms': 64.69} (first request pending: True)",
+  "registered as [':1.1056'] after 0.21s",
+  "idle reads {'raw_get_children': {'n': 10, 'p50_ms': 5.76, 'max_ms': 6.49}, 'atspi_frame_names': {'n': 10, 'p50_ms': 39.09, 'max_ms': 39.81}, 'n': 20, 'max_ms': 39.81}",
+  "reads while the handler is in showAndWait {'raw_get_children': {'n': 10, 'p50_ms': 5.74, 'max_ms': 6.27}, 'atspi_frame_names': {'n': 10, 'p50_ms': 66.11, 'max_ms': 67.32}, 'n': 20, 'max_ms': 67.32} (first request pending: True)",
   "second Delete ['error', 'org.freedesktop.DBus.Error.Failed', 'GDBus.Error:org.freedesktop.DBus.Error.Failed: Action conflicts with an action in progress']; Other ['reply', False]",
-  "first Delete answered after 2.006s: ['error', 'org.freedesktop.DBus.Error.Timeout', 'GDBus.Error:org.freedesktop.DBus.Error.Timeout: Action is still running; its outcome is unknown']",
+  "first Delete answered after 2.007s: ['error', 'org.freedesktop.DBus.Error.Timeout', 'GDBus.Error:org.freedesktop.DBus.Error.Timeout: Action is still running; its outcome is unknown']",
   "OK ['reply', True]; handler returned; status label deleted"
  ],
  "app_stdout": [
-  "PID=448381",
+  "PID=512059",
   "DIALOG_SHOWN",
   "DELETE_HANDLER_RETURNED",
   "EXIT_CLOSED_COMPLETED"
