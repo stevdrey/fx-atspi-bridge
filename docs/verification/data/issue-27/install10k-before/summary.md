@@ -1,6 +1,6 @@
 # Memory diagnostics summary
 
-Source: `/tmp/claude-1000/-home-stevdrey-Projects-Java-fx-atspi-bridge/d0e83f72-2099-4404-b9ff-cb6778751045/scratchpad/data/install10k-before`. Values: median (min–max) over repetitions; MB = 1024 KB.
+Source: `<scratch>/data/install10k-before`. Values: median (min–max) over repetitions; MB = 1024 KB.
 
 ## Phase deltas (MB, after − before)
 
