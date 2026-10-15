@@ -175,6 +175,47 @@ class BridgeLifecycleTest {
         while (fixture.button().get() != null && System.nanoTime() < collected) { System.gc(); Thread.sleep(50); }
         assertNull(fixture.button().get(), "the control is only reachable through the bridge once the application released it");
     }
+    @Test void anIdleBridgeDoesNotRescanAndAChangeIsPublishedToTheProvider() throws Exception {
+        var button = new Button("before");
+        onFx(() -> {
+            var stage = new Stage();
+            stage.setScene(new Scene(new VBox(button), 200, 100));
+            stage.show();
+            return null;
+        });
+        Thread.sleep(1000); // let window focus settle: a focus change is a real change, not a rescan
+        last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+        Thread.sleep(500); // dozens of pulses; the removed timer rescanned every 100 ms
+        assertEquals(1L, onFx(last::publications), "only the initial traversal is published while idle");
+        onFx(() -> { button.setText("after"); return null; });
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (last.provider.publishedSnapshot().nodes().values().stream().noneMatch(node -> node.name().equals("after"))
+                && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(last.provider.publishedSnapshot().nodes().values().stream().anyMatch(node -> node.name().equals("after")),
+                "the provider thread reconciles the observed change");
+        assertEquals(2L, onFx(last::publications), "one change, one publication");
+        onFx(() -> { button.getScene().getWindow().hide(); return null; });
+    }
+    @Test void theObserverClosesThroughItsOwnSchedulerWhenTheReleaseIsDropped() throws Exception {
+        var observerTasks = new CopyOnWriteArrayList<Runnable>();
+        var fixture = onFx(() -> {
+            var stage = new Stage();
+            stage.setScene(new Scene(new VBox(new Button("probe")), 200, 100));
+            stage.show();
+            var bridge = FxAtSpiBridge.install(message -> {}, ffi -> { throw new IllegalStateException("no bus"); }, false, task -> {},
+                    ActionLimits.defaults(), observerTasks::add);
+            return new Fixture(bridge, stage, null, bridge.trackedTargets());
+        });
+        assertTrue(fixture.trackedAtInstall() > 0);
+        fixture.bridge().closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (observerTasks.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(onFx(fixture.bridge()::observerActive), "nothing closes the observer until its scheduler runs the fallback");
+        onFx(() -> { observerTasks.forEach(Runnable::run); fixture.stage().hide(); return null; });
+        assertFalse(onFx(fixture.bridge()::observerActive), "the termination fallback closed the observer");
+        assertEquals(0, onFx(fixture.bridge()::trackedTargets));
+        assertFalse(onFx(fixture.bridge()::closeRequested), "the dropped release task never ran");
+    }
     @Test void rejectedFxReleaseStillReleasesTheSlotAndNeverDisturbsTheProvider() throws Exception {
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false, task -> { throw new RejectedExecutionException("toolkit stopped"); }));
         onFx(() -> { last.close(); return null; });

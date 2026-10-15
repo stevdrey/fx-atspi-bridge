@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Target design accepted for incremental implementation, not a claim that these components already exist. Baseline: commit `c29e8f33f816244086fab5f0c93f343326eb01e0`; Java 27 / JavaFX 27 / Linux x86_64. Current classes: `FxAtSpiBridge`, `AtSpiProvider`, `Ffm`, plus internal packages `model` (immutable records), `fx` (registry, scene reader, action executor) and `protocol` (pure AT-SPI mapping) from [issue 2](../specs/issue-2.md). Current tests cover variants, Unicode, the model, protocol mapping and the FX scene reader. Full screen-reader interoperability is not established.
+Target design accepted for incremental implementation, not a claim that these components already exist. Baseline: commit `c29e8f33f816244086fab5f0c93f343326eb01e0`; Java 27 / JavaFX 27 / Linux x86_64. Current classes: `FxAtSpiBridge`, `AtSpiProvider`, `Ffm`, plus internal packages `model` (immutable records), `fx` (registry, scene observer, action executor) and `protocol` (pure AT-SPI mapping) from [issue 2](../specs/issue-2.md); the subscription-based scene observer below replaced the 100 ms full traversal in [issue 5](../specs/issue-5.md). Current tests cover variants, Unicode, the model, protocol mapping and the FX scene reader. Full screen-reader interoperability is not established.
 
 Integrate an opt-in library into each JavaFX application. An independently developed third-party AT-SPI client discovers and operates it. This repository implements no MCP server, MCP tools or MCP client. No screenshots, sudo, synthetic pointer injection, HTTP server or embedded LLM are needed. Semantic action success does not prove visual appearance or completion of asynchronous business work.
 
