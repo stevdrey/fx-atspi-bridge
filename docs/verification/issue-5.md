@@ -1,6 +1,6 @@
 # Verification — Issue 5 (SC-05)
 
-Spec: [`docs/specs/issue-5.md`](../specs/issue-5.md). Raw data: `docs/verification/data/issue-5/before/` (baseline `349df59`) and `docs/verification/data/issue-5/after/` (implementation `cd818fc`, before the review fixes in `847a053`), one JSON per run plus `environment.txt` (commit, clean-tree flag, plan, jar hashes) and `retries.txt`. Per-run logs were not committed.
+Spec: [`docs/specs/issue-5.md`](../specs/issue-5.md). Raw data: two collections, `before/` at baseline `349df59` and `after/` at implementation `cd818fc` (before the review fixes in `847a053`), with one JSON per run. To keep PR #26 reviewable, the 88 JSONs are delivered in the evidence-only PR [#28](https://github.com/stevdrey/fx-atspi-bridge/pull/28). This PR keeps each side's `environment.txt` (commit, clean-tree flag, plan, jar hashes) and `retries.txt`, plus `docs/verification/data/issue-5/MANIFEST.sha256`, which holds the SHA-256 of every JSON. Per-run logs were not committed.
 
 ## Status
 
@@ -11,7 +11,7 @@ Spec: [`docs/specs/issue-5.md`](../specs/issue-5.md). Raw data: `docs/verificati
 | Window/root/scene replacement, removals and reparenting; detach listeners | **Met** | `sceneRootAndWindowReplacementReleaseTheOldTree`, `childrenStayOrderedAndRemovedOrReparentedNodesAreHandledByIdentity`, `closeReleasesEveryTargetAndDetachesEveryListener`, `aStoppedReceiverClosesTheObserver`, existing `BridgeLifecycleTest` disposal and GC tests |
 | Coalesce batches once, preserve ordered children, churn/short-lived controls | **Met** | `changesInOneBatchArePublishedOnceAndCoherently` (one flush per batch), `shortLivedControlsAreCoalescedAndLeaveNoListenersOrIds` (1,000 controls), `ProviderLifecycleTest.publishedChangesAreReconciledByTheirTouchedIdsAndMergeUntilConsumed`; desktop add/remove field through AT-SPI |
 | No O(n²) identity or child-index cleanup | **Met** (by construction, reviewed) | `TargetRegistry.register/release` O(1); detach O(removed subtree); child events with index maps, O(c) per changed parent ([spec, Complexity](../specs/issue-5.md#contracts-and-design)) |
-| Record before/after latency/allocations against issue 1 | **Met, with a caveat** | Fresh paired collections below. The provisional issue 1 figures are not reproduced by the fresh "before" (see Comparison with issue 1) |
+| Record before/after latency/allocations against issue 1 | **Met for `cd818fc`**; re-measurement on the final head deferred to [#27](https://github.com/stevdrey/fx-atspi-bridge/issues/27) | Fresh paired collections below, for `349df59` vs `cd818fc` only. The provisional issue 1 figures are not reproduced by the fresh "before" (see Comparison with issue 1) |
 
 ## Environment
 
@@ -36,7 +36,7 @@ REQUIRE_FX_TOOLKIT=1 ./gradlew check generatePomFileForMavenJavaPublication :exa
 python3 examples/fx-lab/scripts/atspi_probe.py --pid=<fx-lab pid>    # OK: expected roles and buttons present (19 nodes, 7 roles)
 examples/fx-lab/scripts/run-baseline.sh <scratch>/before quick       # in a clean worktree at 349df59, ~70 min
 examples/fx-lab/scripts/run-baseline.sh <scratch>/after quick        # at cd818fc, ~70 min
-python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-5/{before,after}
+python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-5/{before,after}   # needs the JSONs from evidence PR #28
 ```
 
 Desktop structural check (ad-hoc script, not committed): with fx-lab running, an independent libatspi client pressed `Añadir campo` and then `Quitar campo` through the Action interface; the number of `entry` nodes went 1 → 2 → 1. Two first-run test failures were test-timing issues, not product defects: an asynchronous window-focus change arriving after `show()` was counted as idle activity; the tests now let focus settle (idle test) or discard work scheduled before `close()`.
@@ -44,6 +44,12 @@ Desktop structural check (ad-hoc script, not committed): with fx-lab running, an
 Not done: Orca, XWayland vs native Wayland, other distributions (still [#16](https://github.com/stevdrey/fx-atspi-bridge/issues/16)).
 
 ## Results (bridge on; before → after)
+
+**Scope of these figures:** every table in this section compares `349df59` with `cd818fc`. Later commits changed measured paths:
+- `847a053`: `NodeStore` snapshot sharing, memoized `showing`, listener arrays;
+- `d34ec11`: adopting the initial generation.
+
+These results are therefore **not** claimed for `d34ec11` or the merged head. Re-measuring the final implementation is tracked in [#27](https://github.com/stevdrey/fx-atspi-bridge/issues/27).
 
 Methodology unchanged from issue 1 (paired off/on, one JVM per cell, 50 warmup + 200 samples; latency = mutation on the FX thread to the end of the next pulse). Off-runs differ between the two collections as well, so differences of a few milliseconds in p99 are within session noise; the on−off difference within each collection is the fairer comparison.
 
