@@ -30,11 +30,12 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
 
 | Function | Contract |
 | --- | --- |
-| `redact_home` (stdin → stdout) | Replaces `HOME` with the literal `$HOME` only where it appears as a whole path. The character before it must be the line start or not a path character (`[A-Za-z0-9._/-]`). The character after it must be the line end or not a name character (`[A-Za-z0-9._-]`), so `/` may follow. Every trailing slash of `HOME` is ignored. A `HOME` that is unset, empty or only slashes makes it a no-op. Implemented in `awk`, which reads `HOME` through `ENVIRON` so backslashes are not interpreted. |
-| `display_path ROOT PATH` | Returns `.` for the root itself, the path relative to `ROOT` when inside it, and otherwise `<out>/<last component>`. Uses `printf`, so names such as `-n` or `-e` are printed literally. |
+| `home_forms` | The distinct forms of `HOME` that a tool may print: the value without trailing slashes, its logical normalization (`realpath -ms`: `//`, `/.` and `..` collapsed, links kept) and its physical path (`realpath -m`: links resolved, e.g. `/home` → `/var/home`). A relative, empty or root `HOME` yields nothing. `realpath` is used only when it exists. |
+| `redact_home` (stdin → stdout) | Replaces every `home_forms` value with the literal `$HOME`, only where it appears as a whole path. The character before it must be the line start or not a path character (`[A-Za-z0-9._/-]`). The character after it must be the line end or not a name character (`[A-Za-z0-9._-]`), so `/` may follow. A `HOME` that is unset, empty, relative or only slashes makes it a no-op. Implemented in `awk`, which reads the forms through `ENVIRON` so backslashes are not interpreted. |
+| `display_path ROOT PATH` | Returns `.` for the root itself, the path relative to `ROOT` when inside it, and otherwise `<out>/<last component>`. Uses `printf`, so names such as `-n` or `-e` are printed literally. Control characters become `?`, so a name cannot inject lines (e.g. `profile=full`) into `environment.txt`. |
 | `command_line ROOT SCRIPT OUT_ABS PROFILE` | Returns `command=<display_path script> <display_path out> <profile>`. |
 | `write_environment FILE` | `redact_home > FILE`. It is the **only** writer of `environment.txt` in `run-baseline.sh` and `run-memory-diag.sh`, so every line is redacted, including lines a script appends after `print_environment`. The `resumed=` append (`>>`) carries no path. |
-| `memory_diag.display_path(data, root=REPOSITORY)` | Same rule as `display_path`, for the `Source:` line; `REPOSITORY` is resolved once. |
+| `memory_diag.display_path(data, root=REPOSITORY)` | Same rule as `display_path`, for the `Source:` line; control characters and backticks become `?` so the code span stays intact. `REPOSITORY` is resolved once. |
 
 - **Compatibility:**
   - `git=`, `tree=`, `profile=`, `plan=`, `variants=`, `limits_sha256=`, the jar hashes and the measured JSON fields are unchanged;
@@ -43,8 +44,9 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
 
 ## Limits and failure modes
 
-- **Only `HOME` is redacted:** a JDK outside `HOME`, such as `/usr/lib/jvm/...`, is recorded as it is. That is a system path, not a personal one.
-- **`<out>/<name>` keeps the last path component:** a directory name chosen by the collector is therefore visible.
+- **Only `HOME` is redacted,** in its stripped, logical and physical forms: a JDK outside `HOME`, such as `/usr/lib/jvm/...`, is recorded as it is. That is a system path, not a personal one.
+- **Without `realpath`,** only the stripped value of `HOME` is redacted. GNU coreutils provides it on the supported Fedora session.
+- **`<out>/<name>` keeps the last path component:** a directory name chosen by the collector is therefore visible, with control characters shown as `?`.
 - **Console output still shows full paths:** for example, the `Summarize with:` hint. Console output is not evidence.
 - **Earlier commits and pull requests:** they keep the unredacted values.
 
@@ -63,8 +65,8 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
 3. Parsed fields are unchanged, and `--resume` still matches.
 4. Unit tests exist in `test_baseline_lib.py` and `test_memory_diag.py`, including:
    - boundary cases;
-   - a `HOME` with several trailing slashes;
-   - option-like directory names;
+   - a `HOME` with several trailing slashes, logical aliases and a symlinked `HOME`;
+   - option-like directory names and names that contain control characters;
    - a static check that both scripts write `environment.txt` only through `write_environment`.
 5. `docs/verification/data/issue-1/environment.txt` is redacted.
 
@@ -72,7 +74,7 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
 - `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'`;
 - mutation checks of each protection;
 - `run-baseline.sh <scratch> smoke` and `run-memory-diag.sh <scratch> smoke` on a Fedora/GNOME/Wayland session, followed by `budgets.py`, `memory_diag.py` and `--resume` on their output;
-- `git grep -nE '/home/|/tmp/claude' -- docs`.
+- `git grep -nE '/home/|/tmp/claude' -- docs/verification/data`. The scan targets the committed evidence; this spec and the verification record quote example paths on purpose.
 
 Smoke runs validate the harness only and are never performance evidence. Results are in [`docs/verification/issue-30.md`](../verification/issue-30.md).
 
