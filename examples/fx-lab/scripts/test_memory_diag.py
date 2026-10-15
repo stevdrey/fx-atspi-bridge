@@ -169,6 +169,17 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| structural n=100 bridge on plain | structuralBefore | 0.01 (0.01–0.01) | 309 (309–309) |", text)
         self.assertNotIn("--secret-path", text)
 
+    def test_the_source_line_records_no_absolute_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "install10k-after")
+            root.mkdir()
+            self.write_reps(root)
+            text = memory_diag.summary(root)
+        self.assertIn("Source: `<out>/install10k-after`.", text)
+        self.assertNotIn(d, text)
+        repository = pathlib.Path(d, "repo")
+        self.assertEqual(memory_diag.display_path(repository / "docs/data/x", repository), "docs/data/x")
+
     def test_a_missing_artifact_rejects_the_collection_and_names_the_file(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)

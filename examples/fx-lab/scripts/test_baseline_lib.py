@@ -61,6 +61,50 @@ class RedactionTest(unittest.TestCase):
         self.assertEqual(out.stdout.splitlines(), ["NOTE: Picked up JDK_JAVA_OPTIONS: [redacted]", "Picked up _JAVA_OPTIONS: [redacted]", "other"])
 
 
+class RecordedPathTest(unittest.TestCase):
+    def test_home_is_replaced_only_as_a_whole_path_prefix(self):
+        lines = ("java_bin=/home/u/.sdkman/java/bin/java", "    java.home = /home/u/jdk", "home=/home/u",
+                 "cp=/home/u:/opt /home/u /x", "other=/home/u2/x", "plain=/usr/lib/jvm")
+        out = bash("printf '%s\\n' " + " ".join(f"'{line}'" for line in lines) + " | redact_home", env={"HOME": "/home/u/"})
+        self.assertEqual(out.stdout.splitlines(), ["java_bin=$HOME/.sdkman/java/bin/java", "    java.home = $HOME/jdk",
+                                                   "home=$HOME", "cp=$HOME:/opt $HOME /x", "other=/home/u2/x",
+                                                   "plain=/usr/lib/jvm"])
+
+    def test_without_a_usable_home_nothing_changes(self):
+        for home in ("", "/"):
+            with self.subTest(home=home):
+                out = bash("printf 'java_bin=/usr/bin/java\\n' | redact_home", env={"HOME": home})
+                self.assertEqual(out.stdout, "java_bin=/usr/bin/java\n")
+
+    def test_display_path_is_repository_relative_or_hides_the_parent(self):
+        cases = (("/repo /repo", "."), ("/repo /repo/docs/data/x", "docs/data/x"), ("/repo/ /repo/x/", "x"),
+                 ("/repo /tmp/claude-1000/abc/scratchpad/quick-after", "<out>/quick-after"), ("/repo /repo2/x", "<out>/x"))
+        for args, expected in cases:
+            with self.subTest(args=args):
+                self.assertEqual(bash(f"display_path {args}").stdout, expected + "\n")
+
+    def test_print_environment_records_no_home_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = pathlib.Path(d, "home", "collector")
+            root = pathlib.Path(d, "repo")
+            lib = root / "examples/fx-lab/build/install/fx-lab/lib"
+            lib.mkdir(parents=True)
+            (lib / "a.jar").write_text("x")
+            limits = root / "baseline.conf"
+            limits.write_text("K=1\n")
+            java = home / ".sdkman/java/bin/java"
+            java.parent.mkdir(parents=True)
+            java.write_text(f"#!/bin/sh\necho '    java.home = {home}/.sdkman/java' >&2\n"
+                            "echo '    java.specification.version = 27' >&2\necho 'openjdk version \"27\"' >&2\n")
+            java.chmod(0o755)
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100"', env={"HOME": str(home)})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn(str(home), out.stdout)
+        self.assertIn("java_bin=$HOME/.sdkman/java/bin/java", out.stdout)
+        self.assertIn("    java.home = $HOME/.sdkman/java", out.stdout)
+        self.assertIn("plan=100:3:1:100", out.stdout)
+
+
 class CleanTreeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

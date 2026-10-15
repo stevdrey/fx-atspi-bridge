@@ -57,6 +57,34 @@ require_default_allocator() {
 # The JVM echoes "[NOTE: ]Picked up <VAR>: <value>"; never let that value reach a retained file.
 redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 
+# --- recorded paths ------------------------------------------------------------------------------------------------
+# docs/verification/README.md: captured values are sanitized. Recorded paths must not carry the collector's home
+# directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
+# redact_home -> stdin with the home directory replaced by the literal $HOME where it is a whole path prefix
+# ("$HOME", "$HOME/...", "$HOME " or "$HOME:"; "/home/u2" is left alone for HOME=/home/u). No-op without a usable HOME.
+redact_home() {
+  local line home="${HOME:-}"
+  home="${home%/}"
+  if [ -z "$home" ]; then cat; return; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line//"$home"\//\$HOME/}"
+    line="${line//"$home" /\$HOME }"
+    line="${line//"$home":/\$HOME:}"
+    [[ "$line" == *"$home" ]] && line="${line%"$home"}\$HOME"
+    printf '%s\n' "$line"
+  done
+}
+
+# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>.
+display_path() {
+  local root="${1%/}" path="${2%/}"
+  case "$path" in
+    "$root") echo . ;;
+    "$root"/*) echo "${path#"$root"/}" ;;
+    *) echo "<out>/${path##*/}" ;;
+  esac
+}
+
 # --- clean tree ----------------------------------------------------------------------------------------------------
 # check_clean_tree ROOT OUT_ABS -> 0 when tracked/untracked files outside OUT_ABS match HEAD. The exclusion is a literal
 # pathspec (glob characters in the directory name must not widen it) and a failing git is never read as "clean".
@@ -112,8 +140,13 @@ require_fresh_or_resumable() {
 
 # print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
 # commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
-# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware.
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. The home directory is
+# recorded as $HOME (redact_home).
 print_environment() {
+  print_environment_raw "$@" | redact_home
+}
+
+print_environment_raw() {
   local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
   shift 5
   echo "date=$(date -u +%FT%TZ)"

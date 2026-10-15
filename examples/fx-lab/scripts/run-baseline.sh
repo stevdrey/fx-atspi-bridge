@@ -58,7 +58,7 @@ else
   {
     print_environment "$root" "$head_sha" "$profile" "$limits" "$java_bin" "${plan[@]}"
     echo "workload=warmup:$warmup,samples:$samples,idle:$idle_seconds,installChurn:$install_churn"
-    echo "command=$0 $*"
+    echo "command=$(display_path "$root" "$script_dir/${0##*/}") $(display_path "$root" "$out_abs") $profile"
   } > "$out_abs/environment.txt"
 fi
 for entry in "${plan[@]}"; do

@@ -1,6 +1,6 @@
 # Verification — Issue 1 (SC-01)
 
-Spec: [`docs/specs/issue-1.md`](../specs/issue-1.md). Raw data: `docs/verification/data/issue-1/` (one JSON per run, plus `environment.txt`).
+Spec: [`docs/specs/issue-1.md`](../specs/issue-1.md). Raw data: `docs/verification/data/issue-1/` (one JSON per run, plus `environment.txt`, whose home-directory paths are recorded as `$HOME` since [#30](https://github.com/stevdrey/fx-atspi-bridge/issues/30)).
 
 ## Status and follow-ups
 

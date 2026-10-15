@@ -17,6 +17,9 @@ import sys
 CELL = re.compile(r"^(?P<kind>[a-z]+)-n(?P<nodes>\d+)-(?P<bridge>on|off)-(?P<variant>[a-z0-9]+)-r(?P<rep>\d+)$")
 BRIDGE_MODULE = "dev.desktopcontrol.fxatspi"
 JAVAFX_MODULE = re.compile(r"^javafx\.")
+# The summary may be committed (docs/verification/README.md: captured values are sanitized): the data directory is shown
+# relative to the repository, or as <out>/<name> when it lies outside it.
+REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 WATCHED_CLASSES = ("javafx.scene.control.TextField", "javafx.scene.control.Button", "javafx.scene.Scene",
                    "javafx.scene.layout.VBox")
 # Phase -> (checkpoint before, checkpoints after) whose differences are reported.
@@ -308,6 +311,14 @@ def load(data):
     return cells
 
 
+def display_path(data, root=REPOSITORY):
+    data = pathlib.Path(data).resolve()
+    try:
+        return data.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return f"<out>/{data.name}"
+
+
 def label(key):
     kind, nodes, bridge, variant = key
     return f"{kind} n={nodes} bridge {bridge} {variant}"
@@ -317,7 +328,7 @@ def summary(data):
     data = pathlib.Path(data)
     cells = load(data)
     artifacts = load_artifacts(data, cells)
-    out = [f"# Memory diagnostics summary\n\nSource: `{data}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
+    out = [f"# Memory diagnostics summary\n\nSource: `{display_path(data)}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
 
     out.append("## Phase deltas (MB, after − before)\n")
     out.append("Snapshot cost: RSS added by the diagnostic snapshots taken inside the interval (the phase's own \"before\" "
