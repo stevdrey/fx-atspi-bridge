@@ -122,6 +122,8 @@ final class AtSpiProvider {
     private MemorySegment embedCancellable = Ffm.NIL;
     private final AtomicLong pendingAcquired = new AtomicLong(), pendingReleased = new AtomicLong();
     private final AtomicLong exportsAcquired = new AtomicLong(), exportsReleased = new AtomicLong();
+    /** Changes reconciled after the initial tree (each one a signal payload); concurrent only so tests can read it. */
+    private final AtomicLong reconciledChanges = new AtomicLong();
 
     /** Provider lifecycle: NEW → STARTING → RUNNING → STOPPING → CLOSED, or FAILED after cleanup. */
     enum State { NEW, STARTING, RUNNING, STOPPING, CLOSED, FAILED }
@@ -205,6 +207,7 @@ final class AtSpiProvider {
     Snapshot publishedSnapshot() { return snapshot.get(); }
     long exportsAcquired() { return exportsAcquired.get(); }
     long exportsReleased() { return exportsReleased.get(); }
+    long reconciledChanges() { return reconciledChanges.get(); }
     /** Starts the provider thread once; later calls and calls after stop are ignored. */
     void start() {
         if (!state.compareAndSet(State.NEW, State.STARTING)) return;
@@ -246,6 +249,7 @@ final class AtSpiProvider {
                 vtable.set(ADDRESS, 0, stub("method", null, 8));
                 vtable.set(ADDRESS, 8, stub("property", ADDRESS, 7));
                 vtable.set(ADDRESS, 16, stub("setProperty", JAVA_INT, 8));
+                adoptInitialGeneration();
                 for (String id : snapshot.get().nodes().keySet()) export(id);
                 export(CACHE_ID);
                 if (embed) embedWithRegistry();
@@ -437,6 +441,18 @@ final class AtSpiProvider {
             registrations.add(ffi.registerObject(connection, path(id), iface, vtable));
         }
     }
+    /**
+     * Provider thread, before the first export. A generation published before the provider thread started (the
+     * observer's initial traversal) becomes the initial tree: it is exported before Embed, like a tree pulled at
+     * construction, instead of being diffed against an empty tree, which would build an AddAccessible and
+     * ChildrenChanged payload per object that no client could receive yet. Later generations reconcile against it;
+     * one that merged with it in the meantime still lists the initial ids, which then compare unchanged.
+     */
+    private void adoptInitialGeneration() {
+        if (!snapshot.get().nodes().isEmpty()) return;
+        var initial = desired.getAndSet(null);
+        if (initial != null) snapshot.set(initial.snapshot());
+    }
     private void unexport(String id) {
         Export exported = exports.remove(id); if (exported==null) return;
         try {
@@ -460,6 +476,7 @@ final class AtSpiProvider {
             ids = all;
         }
         var changes = SnapshotDiff.diff(before, after, ids);
+        reconciledChanges.addAndGet(changes.size());
         for (var change : changes) if (change instanceof Added(var id)) export(id);
         for (var change : changes) {
             switch (change) {

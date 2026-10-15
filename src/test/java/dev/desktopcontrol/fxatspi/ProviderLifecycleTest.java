@@ -182,6 +182,29 @@ class ProviderLifecycleTest {
         assertTrue(provider.snapshotIsEmpty());
         assertEquals(provider.exportsAcquired(), provider.exportsReleased());
     }
+    @Test void theTreePublishedBeforeStartIsAdoptedWithoutReconcilingItAgainstAnEmptyTree() throws Exception {
+        // As the bridge does: a push provider whose observer publishes its initial traversal before the thread starts.
+        var provider = AtSpiProvider.pushed(statuses::add, () -> {}, new ActionExecutor(new TargetRegistry()), ffi -> address, false,
+                Runnable::run, ActionLimits.defaults());
+        providers.add(provider);
+        var initial = buttons("button1", "button2");
+        assertTrue(provider.publish(initial, Set.of(Snapshot.ROOT_ID, "button1", "button2")));
+        provider.start();
+        await(provider, State.RUNNING);
+        assertEquals(initial, provider.publishedSnapshot(), "the initial tree is published as is");
+        assertEquals(4, provider.exportsAcquired(), "root, two buttons and the cache object are exported before Embed");
+        Thread.sleep(100); // several provider loop iterations: nothing is left to reconcile
+        assertEquals(0, provider.reconciledChanges(), "no AddAccessible/ChildrenChanged payload is built for the initial tree");
+        // A later generation is reconciled as usual, against the adopted tree.
+        assertTrue(provider.publish(buttons("button1", "button2", "button3"), Set.of(Snapshot.ROOT_ID, "button3")));
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (provider.exportsAcquired() < 5 && System.nanoTime() < deadline) Thread.sleep(10);
+        assertEquals(5, provider.exportsAcquired(), "only the new button is exported");
+        assertEquals(2, provider.reconciledChanges(), "Added(button3) and ChildAdded(root, 2, button3) only");
+        provider.stop();
+        awaitTermination(provider);
+        assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+    }
     @Test void lateEmbedCallbackForAnUnknownProviderIsIgnored() {
         AtSpiProvider.embeddedCallback(Ffm.NIL, Ffm.NIL, MemorySegment.ofAddress(Long.MAX_VALUE)); // must neither throw nor touch native state
     }

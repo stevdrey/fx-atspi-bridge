@@ -99,8 +99,8 @@ At 10,000 nodes the bridge's p50 overhead goes from +3/+6 ms to about +1/0 ms. L
 | Provider threads after install churn | 1 | 1 |
 
 - No heap retention: structural and install churn heap deltas after GC stay below 1 MB with the bridge on.
-- **Regression to track:** installing the bridge on 10,000 nodes takes ≈170 ms longer to become ready (initial traversal plus ≈10 listener registrations per node). This is a one-time cost per install, not per update.
-- **Unexplained outlier:** one of two 10,000-node install-churn runs grew RSS by 1.2 GB (heap after GC +0.8 MB, so not retained Java objects); the other shrank by 27 MB. Two repetitions cannot separate a pattern from allocator/heap-commit noise. It was not characterized here; issue 17's NMT/`smaps_rollup` tooling (`run-memory-diag.sh`) is the method to apply.
+- **Install regression (at `cd818fc`; fixed later, see Install fix):** installing the bridge on 10,000 nodes took ≈170 ms longer to become ready. The cause was not the listeners: the provider diffed the initial tree against an empty one.
+- **RSS outlier (characterized later, see Install fix):** one of two 10,000-node install-churn runs grew RSS by 1.2 GB (heap after GC +0.8 MB); the other shrank by 27 MB.
 
 ## Post-review changes (`847a053`)
 
@@ -120,6 +120,31 @@ A `/code-review` pass found 8 issues; all were fixed in `847a053`. Writing the f
 Commands at `847a053`: `REQUIRE_FX_TOOLKIT=1 ./gradlew check generatePomFileForMavenJavaPublication :examples:fx-lab:installDist --no-daemon` (**passed**, 123 tests, 0 failed, 0 skipped); `atspi_probe.py` (**OK**, 19 nodes, 7 roles); the add/remove-field libatspi check (entries 1 → 2 → 1); `run-baseline.sh <scratch> smoke` (**passed**; harness sanity only, never evidence).
 
 **The `quick` collection was not repeated for these changes.** The allocation-per-update, install-time and churn tables above describe `cd818fc`. The changes to the measured path (no per-publication map copy, memoized `showing`, fewer per-node allocations) are expected to lower allocation and install cost, but that expectation is not measured here. A `quick` re-collection is deferred to a dedicated QA session, together with the install-churn RSS characterization.
+
+## Install fix (adopt the initial generation)
+
+A separate characterization of the 10,000-node install-churn cell ran 15 JVMs each at `349df59`, `cd818fc` and `847a053` with the issue 17 tooling (NMT, `smaps_rollup`, `malloc_info`, class histograms). Its raw data and draft note are outside this repository and are not committed here.
+
+- **RSS outlier: G1 Java-heap expansion, not a leak.** In the `cd818fc` run that hit it, the committed Java heap grew by 1,234 MB, glibc in-use memory moved −1.2 MB, and trimming the native heap released nothing. Used heap after GC grew only 0.5 MB, and the bridge's class counts were identical in every run. The same jump (+1,254 MB) occurs at `349df59`, before SC-05, about once in 15 runs per commit, so it is not attributable to this change.
+- **Install regression: the initial tree was diffed against an empty tree.** Observer start itself costs ≈11 ms more than the old builder (16 ms vs 4.6 ms). The rest came from the provider's first reconcile. It built an `AddAccessible` and `ChildrenChanged` payload per object, which were dropped because the provider was not registered yet, and it exported after Embed instead of before.
+
+**Fix** (`AtSpiProvider.adoptInitialGeneration`, this PR): before the first export the provider thread adopts the generation published before it started as its initial tree. It exports that tree before Embed, as pre-SC-05 code did.
+
+| Commit | Install-to-ready p50 (ms), median of per-run p50 | Runs |
+| --- | ---: | ---: |
+| `349df59` (before SC-05) | 385 | 15 |
+| `cd818fc` | 596 | 15 |
+| `847a053` | 561 | 15 |
+| `04bbfe5` + this fix | 399 | **5** |
+
+Source: the separate characterization session, with the fix applied as an uncommitted patch on `04bbfe5`. The fix row has only 5 runs and was not re-collected after committing; the committed code is identical to that patch apart from the Javadoc wording.
+
+Verification of the committed fix:
+- `ProviderLifecycleTest.theTreePublishedBeforeStartIsAdoptedWithoutReconcilingItAgainstAnEmptyTree`: the initial tree is exported (4 objects including the cache) with **0** reconciled changes. A later generation is reconciled as usual: exactly `Added(button3)` and `ChildAdded(root, 2, button3)`.
+- The test fails with the adoption call removed (mutation check).
+- `REQUIRE_FX_TOOLKIT=1 ./gradlew check generatePomFileForMavenJavaPublication :examples:fx-lab:installDist --no-daemon`: **passed**, 124 tests, 0 failed, 0 skipped.
+- `atspi_probe.py`: OK, 19 nodes, 7 roles.
+- Add/remove-field libatspi check: entries 1 → 2 → 1, 3 of 3 runs. The first attempt failed only because the ad-hoc script looked the application up once, right after "ready", before the registry listed it; it now waits up to 10 s.
 
 ## Comparison with issue 1
 
