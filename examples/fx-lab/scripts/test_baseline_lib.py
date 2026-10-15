@@ -88,6 +88,11 @@ class RecordedPathTest(unittest.TestCase):
             with self.subTest(home=home):
                 self.assertEqual(self.redact(["java_bin=/home/u/x", "home=/home/u"], home), ["java_bin=$HOME/x", "home=$HOME"])
 
+    def test_trailing_slashes_are_stripped_even_without_realpath(self):
+        # A failing realpath stub leaves only the stripped HOME value, so the loop itself is checked.
+        out = bash("realpath() { return 1; }; printf 'java_bin=/home/u/x\\n' | redact_home", env={"HOME": "/home/u//"})
+        self.assertEqual(out.stdout, "java_bin=$HOME/x\n")
+
     def test_logical_aliases_of_home_are_redacted(self):
         for home in ("/home//u", "/home/u/.", "/home/x/../u"):
             with self.subTest(home=home):
