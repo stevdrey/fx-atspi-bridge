@@ -29,7 +29,9 @@ import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
+import java.io.IOException;
 import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,8 +44,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -277,23 +282,16 @@ class ProviderLifecycleTest {
         assertTrue(provider.snapshotIsEmpty(), "a traversal finishing after termination must not republish field text");
     }
     @Test void pendingInvocationsAreReleasedExactlyOnceAcrossShutdown() throws Exception {
-        var button = new AccessibleNode("button1", "Go", Role.PUSH_BUTTON, "", false, true, true, false, true, 0, Snapshot.ROOT_ID,
-                List.of(), Set.of(Capability.ACTION));
-        var root = new AccessibleNode(Snapshot.ROOT_ID, "app", Role.APPLICATION, "", false, true, true, false, false, 0, "",
-                List.of("button1"), Set.of());
-        var snapshot = new Snapshot(Map.of(Snapshot.ROOT_ID, root, "button1", button));
+        var snapshot = buttons("button1", "button2", "button3", "button4");
         var heldTasks = new CopyOnWriteArrayList<Runnable>();
         // Tasks are captured, not run, so every accepted DoAction stays pending until shutdown drains it.
-        var provider = new AtSpiProvider(statuses::add, () -> snapshot, new ActionExecutor(new TargetRegistry()), ffi -> address, false, heldTasks::add);
+        var provider = new AtSpiProvider(statuses::add, () -> snapshot, new ActionExecutor(new TargetRegistry()), ffi -> address, false,
+                heldTasks::add, new ActionLimits(16, 2, Duration.ofSeconds(60), Duration.ofSeconds(60)));
         providers.add(provider);
         provider.start();
         await(provider, State.RUNNING);
         var calls = new ArrayList<Process>();
-        for (int i = 0; i < 4; i++) {
-            calls.add(new ProcessBuilder("gdbus", "call", "--address", address, "--dest", provider.busName(),
-                    "--object-path", "/org/a11y/atspi/accessible/button1", "--method", "org.a11y.atspi.Action.DoAction", "0")
-                    .redirectErrorStream(true).start());
-        }
+        for (int i = 1; i <= 4; i++) calls.add(doAction(provider, "button" + i));
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
         while (provider.pendingCount() < 4 && System.nanoTime() < deadline) Thread.sleep(10);
         assertEquals(4, provider.pendingCount(), "invocations must be outstanding when shutdown starts");
@@ -306,8 +304,120 @@ class ProviderLifecycleTest {
         assertEquals(4, provider.pendingAcquired());
         assertEquals(4, provider.pendingReleased(), "shutdown must release each pending invocation once");
         assertEquals(0, provider.pendingCount());
-        heldTasks.forEach(Runnable::run); // late FX tasks find nothing to release
+        assertTrue(calls.stream().allMatch(call -> output(call).contains("Provider stopped")), "every client must be told the provider stopped");
+        heldTasks.forEach(Runnable::run); // late FX tasks find nothing to release and never run the action
         assertEquals(4, provider.pendingReleased(), "a task running after shutdown must not release again");
+    }
+    private Process doAction(AtSpiProvider provider, String id) throws IOException {
+        return call(provider, id, "org.a11y.atspi.Action.DoAction", "0");
+    }
+    private Process call(AtSpiProvider provider, String id, String method, String... args) throws IOException {
+        var command = new ArrayList<>(List.of("gdbus", "call", "--address", address, "--dest", provider.busName(),
+                "--object-path", "/org/a11y/atspi/accessible/" + id, "--method", method));
+        command.addAll(List.of(args));
+        return new ProcessBuilder(command).redirectErrorStream(true).start();
+    }
+    /** Waits for a gdbus client and returns everything it printed (its reply or its error). */
+    private static String output(Process call) {
+        try {
+            if (!call.waitFor(WAIT_SECONDS, TimeUnit.SECONDS)) { call.destroyForcibly(); fail("client call never completed"); }
+            return new String(call.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException | InterruptedException failure) { throw new AssertionError(failure); }
+    }
+    private static void awaitTrue(BooleanSupplier condition, String message) throws InterruptedException {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(5);
+        assertTrue(condition.getAsBoolean(), message);
+    }
+    /** Counts every call that reaches the application, so a test can prove an action never ran. */
+    private static final class CountingPort implements ActionPort {
+        final AtomicInteger presses = new AtomicInteger();
+        @Override public boolean press(String id) { presses.incrementAndGet(); return true; }
+        @Override public boolean setText(String id, String value) { return true; }
+    }
+    @Test void saturationIsRejectedWithLimitsExceededWithoutTakingAReference() throws Exception {
+        var heldTasks = new CopyOnWriteArrayList<Runnable>();
+        var port = new CountingPort();
+        var provider = new AtSpiProvider(statuses::add, () -> buttons("button1", "button2", "button3"), port, ffi -> address, false,
+                heldTasks::add, new ActionLimits(2, 2, Duration.ofSeconds(60), Duration.ofSeconds(60)));
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        var first = doAction(provider, "button1");
+        var second = doAction(provider, "button2");
+        awaitTrue(() -> provider.outstandingCount() == 2, "both actions must be admitted and queued");
+        var busy = output(doAction(provider, "button3"));
+        assertTrue(busy.contains("org.freedesktop.DBus.Error.LimitsExceeded") && busy.contains("Too many pending actions"), busy);
+        assertEquals(2, provider.pendingAcquired(), "a rejected request must not take a reference");
+        heldTasks.forEach(Runnable::run);
+        assertTrue(output(first).contains("(true,)"));
+        assertTrue(output(second).contains("(true,)"));
+        assertEquals(2, port.presses.get());
+        awaitTrue(() -> provider.outstandingCount() == 0, "completed actions must free their slots");
+        var third = doAction(provider, "button3"); // admitted now; its task stays held
+        awaitTrue(() -> provider.outstandingCount() == 1, "a freed slot must admit a new action");
+        provider.stop();
+        awaitTermination(provider);
+        assertTrue(output(third).contains("Provider stopped"));
+        assertEquals(3, provider.pendingAcquired());
+        assertEquals(3, provider.pendingReleased());
+    }
+    @Test void expiredQueuedActionIsAnsweredAndNeverExecutes() throws Exception {
+        var heldTasks = new CopyOnWriteArrayList<Runnable>();
+        var port = new CountingPort();
+        var provider = new AtSpiProvider(statuses::add, () -> buttons("button1"), port, ffi -> address, false,
+                heldTasks::add, new ActionLimits(4, 2, Duration.ofMillis(200), Duration.ofSeconds(60)));
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        var reply = output(doAction(provider, "button1")); // the FX side never gets to it before the deadline
+        assertTrue(reply.contains("org.freedesktop.DBus.Error.Timeout") && reply.contains("Action expired before it started"), reply);
+        assertEquals(1, provider.pendingReleased());
+        assertEquals(0, provider.outstandingCount());
+        heldTasks.forEach(Runnable::run); // the FX thread finally runs the stale task
+        assertEquals(0, port.presses.get(), "an expired queued action must never execute");
+        provider.stop();
+        awaitTermination(provider);
+        assertEquals(1, provider.pendingReleased());
+    }
+    @Test void runningTimeoutAnswersWithoutClaimingRollbackAndKeepsTheSlot() throws Exception {
+        var port = new BlockingPort();
+        var fx = Executors.newSingleThreadExecutor();
+        try {
+            var provider = new AtSpiProvider(statuses::add, () -> buttons("button1", "button2"), port, ffi -> address, false, fx,
+                    new ActionLimits(1, 2, Duration.ofSeconds(60), Duration.ofMillis(200)));
+            providers.add(provider);
+            provider.start();
+            await(provider, State.RUNNING);
+            var reply = output(doAction(provider, "button1"));
+            assertTrue(reply.contains("org.freedesktop.DBus.Error.Timeout") && reply.contains("still running; its outcome is unknown"), reply);
+            assertEquals(1, provider.pendingReleased(), "the timed-out request is answered and released once");
+            assertEquals(1, provider.outstandingCount(), "the running action keeps its reserved slot");
+            assertTrue(output(doAction(provider, "button2")).contains("LimitsExceeded"));
+            port.release.countDown();
+            awaitTrue(() -> provider.outstandingCount() == 0, "the late completion must free the slot");
+            assertEquals(1, provider.lateCompletions());
+            assertEquals(1, provider.pendingReleased(), "the late completion must not reply or release again");
+            provider.stop();
+            awaitTermination(provider);
+        } finally { port.release.countDown(); fx.shutdownNow(); }
+    }
+    /** GDBus rejects paths and interfaces that are not exported; the snapshot check behind them is defense in depth. */
+    @Test void unknownOrIncapableTargetsNeverReachTheApplication() throws Exception {
+        var port = new CountingPort();
+        var provider = new AtSpiProvider(statuses::add, () -> buttons("button1"), port, ffi -> address, false, Runnable::run);
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        var unknown = output(doAction(provider, "object999"));
+        assertTrue(unknown.contains("Error"), unknown);
+        var noText = output(call(provider, "button1", "org.a11y.atspi.EditableText.SetTextContents", "x"));
+        assertTrue(noText.contains("Error"), noText);
+        assertEquals(0, port.presses.get());
+        assertEquals(0, provider.pendingAcquired());
+        assertTrue(output(doAction(provider, "button1")).contains("(true,)"));
+        provider.stop();
+        awaitTermination(provider);
     }
     /** Owns the AT-SPI registry name on the private bus and never answers, so Embed stays outstanding. */
     private static final String STALLED_REGISTRY = """

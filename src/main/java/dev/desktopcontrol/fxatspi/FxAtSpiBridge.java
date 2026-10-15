@@ -20,6 +20,7 @@ import dev.desktopcontrol.fxatspi.fx.SceneModelBuilder;
 import dev.desktopcontrol.fxatspi.fx.TargetRegistry;
 import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
+import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,10 +38,11 @@ public final class FxAtSpiBridge implements AutoCloseable {
     private static final AtomicReference<FxAtSpiBridge> ACTIVE = new AtomicReference<>();
     private final Executor fxExecutor;
     private boolean closed;
-    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor) {
+    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, ActionLimits limits) {
         this.fxExecutor = fxExecutor;
         registry = new TargetRegistry();
-        provider = new AtSpiProvider(status, new SceneModelBuilder(registry)::build, new ActionExecutor(registry), bus, embed);
+        provider = new AtSpiProvider(status, new SceneModelBuilder(registry)::build, new ActionExecutor(registry), bus, embed,
+                Platform::runLater, limits);
         observer = new Observer(provider, registry);
     }
     /**
@@ -89,18 +91,32 @@ public final class FxAtSpiBridge implements AutoCloseable {
      * @param status receives provider status on a shared daemon thread, never on the FX or provider thread; messages are queued (bounded; failure notices are kept in preference to informational ones) so a slow consumer cannot delay shutdown
      * @return the bridge to close on the FX application thread at application shutdown
      */
-    public static FxAtSpiBridge install(Consumer<String> status) { return install(status, null, true, Platform::runLater); }
+    public static FxAtSpiBridge install(Consumer<String> status) { return install(status, ActionLimits.defaults()); }
+    /**
+     * Installs one bridge with explicit bounds for actions requested through AT-SPI; otherwise identical to
+     * {@link #install(Consumer)}.
+     * @param status receives provider status on a shared daemon thread, as for {@link #install(Consumer)}
+     * @param limits capacity, nesting and timeouts for actions; see {@link ActionLimits}
+     * @return the bridge to close on the FX application thread at application shutdown
+     */
+    public static FxAtSpiBridge install(Consumer<String> status, ActionLimits limits) {
+        return install(status, null, true, Platform::runLater, limits);
+    }
     static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed) {
         return install(status, bus, embed, Platform::runLater);
     }
     static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor) {
+        return install(status, bus, embed, fxExecutor, ActionLimits.defaults());
+    }
+    static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, ActionLimits limits) {
+        Objects.requireNonNull(limits, "limits");
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Install on the FX application thread");
         var previous = ACTIVE.get();
         if (previous != null && !previous.provider.isTerminated()) {
             throw new IllegalStateException(previous.closed ? "The previous bridge is still terminating" : "A bridge is already installed");
         }
         if (previous != null) previous.close(); // The provider failed on its own; release its observer and registry.
-        var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor);
+        var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor, limits);
         ACTIVE.set(bridge);
         bridge.begin();
         return bridge;

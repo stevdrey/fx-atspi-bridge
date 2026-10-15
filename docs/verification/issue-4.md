@@ -1,0 +1,85 @@
+# Verification — Issue 4 (SC-04)
+
+Spec: [`docs/specs/issue-4.md`](../specs/issue-4.md). Baseline `7c28fa0`, branch `4-sc-04-execute-actions-outside-locks-with-bounded-admission-and-expiry`.
+
+## Environment
+
+Fedora 44, kernel 7.2.9-201.fc44, Zulu JDK 27 (27+35), JavaFX 27 per Gradle, Gradle 9.8.1 wrapper, system `dbus-daemon`, `gdbus`, Python 3.14 with PyGObject 3.56.3. Automated native tests use a private `dbus-daemon --session` (`PrivateBus`), not the desktop accessibility bus. Toolkit tests ran inside the GNOME session (real display), not under Xvfb.
+
+## Automated
+
+| Command | Result |
+|---|---|
+| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 17 + 5 tests, 0 failures (no native library or toolkit needed) |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 18 tests, 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 6 tests, 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ModalActionTest'` | 1 test, 0 failures; printed `modal-read-latency-ms (gdbus process included) p50=10 max=12` over 20 reads |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests across the suite (run twice, before and after the docs), 0 failures, 0 skipped |
+| `./gradlew javadoc` | no warnings for the library (the 6 warnings are in `examples/fx-lab`, unchanged) |
+| `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | 98 tests OK (skipped=1, optional Atspi bindings), unchanged scripts |
+
+## Acceptance criteria
+
+| Criterion | Evidence |
+|---|---|
+| Configurable validated bounds and monotonic deadlines | `ActionLimitsTest` (defaults, inclusive bounds, fixed messages, huge durations rejected before nanosecond conversion, nulls); deadlines use `System.nanoTime` through an injected `LongSupplier`; `CommandCoordinatorTest.expiredQueuedActionNeverRunsWhenTheProviderSweepsFirst` checks the boundary (queued 1 ms before the deadline, expired at it) |
+| Reject saturation; expired queued actions never execute | `CommandCoordinatorTest.saturationIsRejectedAndASlotIsFreedOnlyByCompletion`, both expiry paths, `providerWinningBetweenTheFxCheckAndTheStartPreventsExecution`; over D-Bus `ProviderLifecycleTest.saturationIsRejectedWithLimitsExceededWithoutTakingAReference` and `expiredQueuedActionIsAnsweredAndNeverExecutes` (the held FX task runs afterwards and the port counts 0 presses) |
+| No locks during `button.fire` / `showAndWait` | `ModalActionTest`: `ThreadMXBean` shows no bridge-owned monitor or synchronizer held by the FX thread inside the handler, before and after `showAndWait()`; the provider answered 20 reads while the FX thread was in the nested loop. By construction the coordinator uses no monitors and the provider path has no lock |
+| Real modal test: reads responsive, conflicting mutation rejected | `ModalActionTest` (real toolkit, private bus) and the desktop smoke below |
+| Exactly one reply/release under close/expiry/completion races; reserve completion capacity | `CommandCoordinatorTest.exactlyOneAnswerUnderExpiryCompletionAndShutdownRaces` (300 rounds, real threads, shutdown during and after FX work), `providerWinningBetweenTheFxCheckAndTheStartPreventsExecution` (deterministic narrowest interleaving for expiry and shutdown), `completionQueueNeverRejectsWithinCapacity` (256 completions posted before any drain, 0 dropped), `shutdownCancelsQueuedWorkAndAnswersEachRequestOnce`; D-Bus counters `pendingAcquired == pendingReleased` in every provider test |
+| Running timeouts do not claim rollback | `runningTimeoutAnswersOnceWithoutClaimingRollbackAndKeepsTheSlot` (coordinator) and `runningTimeoutAnswersWithoutClaimingRollbackAndKeepsTheSlot` (D-Bus): fixed text `Action is still running; its outcome is unknown`, slot kept until the real completion, late completion counted and not answered again; desktop smoke shows the action taking effect after that reply |
+
+## Mutation checks (test fails when the behavior is removed; each restored afterwards)
+
+Run with a throwaway script that edits one line, runs the named tests and restores the file.
+
+| Behavior removed | Test that failed |
+|---|---|
+| FX-side queue deadline check | `expiredQueuedActionNeverRunsWhenTheFxThreadSeesTheDeadlineFirst` |
+| Provider queue sweep | `expiredQueuedActionIsAnsweredAndNeverExecutes` |
+| `QUEUED → RUNNING` compare-and-set replaced by a plain set | `providerWinningBetweenTheFxCheckAndTheStartPreventsExecution` |
+| Capacity check at admission | `saturationIsRejectedWithLimitsExceededWithoutTakingAReference` |
+| Answer-once guard | `runningTimeoutAnswersOnceWithoutClaimingRollbackAndKeepsTheSlot` |
+| Running timeout freeing the slot | `runningTimeoutAnswersWithoutClaimingRollbackAndKeepsTheSlot` |
+| Modal blocking in `ActionExecutor` | `ModalActionTest` |
+| Same-target conflict at admission | `sameTargetConflictsWhileQueuedOrRunning` |
+| Cancel CAS at shutdown | `providerWinningBetweenTheFxCheckAndTheStartPreventsExecution` |
+
+The first run of this table found that the plain-set and shutdown-CAS mutants survived: the 300-round stress test does not reliably hit a window of a few instructions. The deterministic interleaving test was added because of that. A redundant `answered` condition in the running-timeout branch was removed after it proved equivalent.
+
+## Real desktop AT-SPI smoke (not the release-gate QA)
+
+Harness: `docs/verification/data/issue-4/` (`ModalSmokeApp.java`, `modal_smoke.py`). Real session accessibility bus and registry; clients independent of the bridge (raw D-Bus through `Gio`, and libatspi). The app uses the **default** `ActionLimits`. "Delete" opens an application-modal "Confirm" dialog with `showAndWait()` and sets the status label to `deleted` after it returns; "Other" sits in the blocked main window.
+
+Environment: Fedora 44, GNOME Shell 50.5, mutter 50.5, Xwayland 24.1.14, at-spi2-core 2.60.7, Zulu JDK 27, JavaFX 27, `XDG_SESSION_TYPE=wayland`, `GDK_BACKEND` unset. **XWayland, not native Wayland:** the script found an X11 client window whose `_NET_WM_PID` is the app pid (`window_backend: xwayland` in `results.json`). The JAR was built from the working tree of this branch before commit.
+
+```bash
+./gradlew jar
+FX=$(find ~/.gradle/caches/modules-2 -name 'javafx-*-27-linux.jar' | sort | paste -sd:)
+python3 -I docs/verification/data/issue-4/modal_smoke.py --jar "$PWD/build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar" --fx-path "$FX" --out docs/verification/data/issue-4
+```
+
+Latest run: `result: completed`, exit 0, **10/10 checks PASS** (`results.json`):
+
+- Registered in the real registry after 0.21 s.
+- While the first `Delete` request was still pending and the FX thread was inside `showAndWait()`, 20 reads were answered: raw `GetChildren` on the application root p50 5.61 ms / max 5.77 ms (idle, before the dialog: p50 5.66 ms / max 5.85 ms); uncached libatspi name reads of every frame p50 63.78 ms / max 64.69 ms (idle: 37.88 / 38.20 ms with one frame instead of two, so that sample does twice the work while the dialog is open and is not a like-for-like comparison).
+- Second `Delete`: `org.freedesktop.DBus.Error.Failed` "Action conflicts with an action in progress".
+- `Other` (main window blocked by the modal): `(false,)`, its handler never ran.
+- First `Delete`: answered after 2.006 s with `org.freedesktop.DBus.Error.Timeout` "Action is still running; its outcome is unknown".
+- `OK` in the dialog: `(true,)`; the dialog closed, the `Delete` handler returned and the status label read `deleted`, i.e. the action did take effect after the timeout reply, as the reply said it might.
+- `close()` → `closed()` completed, exit code 0, no provider left for the pid.
+
+Two earlier runs of the same scenario gave the same observations; the first ended `failed` because the script itself mis-parsed the error message (fixed), the second passed before the latency split and backend check were added. Only the latest run is claimed.
+
+Limits: one application, one modal dialog, XWayland only, no screen reader, no window-modal case on the desktop (covered only by `ActionExecutorTest`), a single sample of 20 reads per state.
+
+## Measurement against SC-01
+
+No SC-01 metric was re-collected: the change does not touch traversal, refresh or the 5 ms loop that SC-01 measured, and a full collection is tracked in [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15). The added per-tick work is an O(n) scan of at most `maxOutstanding` (default 16) outstanding commands on the provider thread. The raw read latencies above are dominated by the 5 ms provider tick (SC-06), and the idle-versus-modal comparison is a smoke observation, not a benchmark. No performance improvement is claimed.
+
+## Known limits
+
+- Expiry precision on the provider side is the provider tick (≈5 ms plus iteration time); the FX-side check is exact at start.
+- A handler that never returns keeps its slot; after `maxOutstanding` such handlers every new action is rejected while reads continue.
+- Windows that become showing after an application-modal stage, and are not owned by it, are not treated as blocked; JavaFX's own behavior there was not verified.
+- `requireCapability` (unknown or stale target) is defense in depth: GDBus already rejects unexported paths and interfaces, so the D-Bus test only shows those requests never reach the application.

@@ -70,6 +70,22 @@ public class MyApp extends Application {
 
 Install and close the bridge on the JavaFX application thread. Only one bridge is allowed per process. `install(Consumer<String>)` delivers status messages on a shared daemon thread (queued and bounded, so a slow or blocking consumer cannot delay shutdown or `closed()`; a consumer that never returns stalls status delivery until it does, and failure notices are kept in preference to informational ones); use `Platform.runLater` to update a UI label from that callback. `FxAtSpiBridge.closed()` completes when the provider thread has terminated and released its native resources; it does not wait for FX-side disposal when the provider ended by itself (that task is posted to the FX thread afterwards and is skipped if the toolkit has exited), and a new bridge may be installed as soon as it completes. A synchronous GIO call that never returns while connecting can keep `closed()` from completing; threads are never interrupted.
 
+### Actions requested through AT-SPI
+
+`DoAction` and `SetTextContents` run on the JavaFX thread; the bridge never holds a lock while your handler runs, and the D-Bus side keeps answering reads from its latest snapshot even while a handler blocks in `showAndWait()`. Requests are bounded by `ActionLimits`: `install()` and `install(Consumer)` use `ActionLimits.defaults()` (16 outstanding actions, 2 nested, 2 s queue timeout, 2 s running reply timeout); pass your own with `FxAtSpiBridge.install(status, new ActionLimits(...))`. Out-of-range values are rejected when the record is created.
+
+Immediately before acting, the bridge checks on the JavaFX thread that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `false`. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog.
+
+| Reply | D-Bus error | Meaning |
+|---|---|---|
+| `Too many pending actions` / `Too many nested actions` | `org.freedesktop.DBus.Error.LimitsExceeded` | capacity or nesting limit reached; nothing ran |
+| `Action conflicts with an action in progress` | `org.freedesktop.DBus.Error.Failed` | the same control already has a queued or running action; nothing ran |
+| `Action expired before it started` | `org.freedesktop.DBus.Error.Timeout` | not started within the queue timeout; it will never run |
+| `Action is still running; its outcome is unknown` | `org.freedesktop.DBus.Error.Timeout` | the handler is still running (for example a modal dialog); it was not cancelled and may still take effect |
+| `Provider stopped` | `org.freedesktop.DBus.Error.Failed` | the bridge closed before the action was answered |
+
+A reply reports the call to the control, not that an application workflow finished. Running handlers are never interrupted.
+
 No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object disappears, its reference is removed. If it returns after its absence has been observed, it receives a new reference.
 
 ## Discovery and events
