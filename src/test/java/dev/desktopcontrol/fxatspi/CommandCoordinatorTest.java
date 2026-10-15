@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -345,6 +346,83 @@ class CommandCoordinatorTest {
         assertEquals(new Answer(true, null), answers.get(done.id()));
         assertSame(Rejected.STOPPED, answers.get(queued.id()).failure());
         assertEquals(0, coordinator.droppedCompletions());
+    }
+    /**
+     * A clock that returns scripted readings in order (then repeats the last one) and can run a hook just before a
+     * given reading is returned, so a test can place a provider action at an exact point of {@code run}.
+     */
+    private static final class ScriptedClock implements LongSupplier {
+        private final long[] readings;
+        private final Map<Integer, Runnable> hooks = new HashMap<>();
+        private int reads;
+        ScriptedClock(long... readings) { this.readings = readings; }
+        ScriptedClock before(int reading, Runnable hook) { hooks.put(reading, hook); return this; }
+        int reads() { return reads; }
+        @Override public long getAsLong() {
+            var index = reads++;
+            var hook = hooks.remove(index);
+            if (hook != null) hook.run();
+            return readings[Math.min(index, readings.length - 1)];
+        }
+    }
+    private static final ActionLimits SHORT = new ActionLimits(4, 2, Duration.ofMillis(100), Duration.ofMillis(500));
+
+    /** Reading 0 is admission, 1 the FX pre-check, 2 the start boundary. No provider sweep runs in between. */
+    @Test void deadlinePassingAfterTheFxPreCheckPreventsExecution() {
+        var clock = new ScriptedClock(0, 99 * MS, 150 * MS);
+        var coordinator = new CommandCoordinator(SHORT, clock);
+        var ran = new AtomicBoolean();
+        var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+        coordinator.run(command);
+        assertEquals(3, clock.reads(), "the start boundary must read the clock again after the pre-check");
+        assertFalse(ran.get(), "a command whose deadline passed before it started must never execute");
+        assertEquals(Phase.EXPIRED, command.phase());
+        coordinator.drain(this::answer);
+        assertSame(Rejected.EXPIRED, answers.get(command.id()).failure());
+        assertEquals(0, coordinator.outstandingCount(), "no slot may stay reserved");
+        coordinator.expire(this::answer);
+        coordinator.cancelAll(this::answer);
+        assertEquals(1, answers.size());
+        assertTrue(duplicates.isEmpty());
+        assertEquals(0, coordinator.droppedCompletions());
+    }
+    @Test void claimedButUnstartedCommandIsNeverTreatedAsRunning() {
+        var holder = new CommandCoordinator[1];
+        // At the boundary reading the command is STARTING; the provider sweeps far past both timeouts.
+        var clock = new ScriptedClock(0, 10 * MS, 10 * MS + 10_000 * MS)
+                .before(2, () -> holder[0].expire(this::answer));
+        var coordinator = holder[0] = new CommandCoordinator(SHORT, clock);
+        var ran = new AtomicBoolean();
+        var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+        coordinator.run(command);
+        assertFalse(ran.get());
+        assertTrue(answers.isEmpty() || answers.get(command.id()).failure() != Rejected.STILL_RUNNING,
+                "a command that never started must not be answered as still running");
+        coordinator.drain(this::answer);
+        assertSame(Rejected.EXPIRED, answers.get(command.id()).failure());
+        assertTrue(duplicates.isEmpty());
+        assertEquals(0, coordinator.outstandingCount());
+    }
+    @Test void runningStartTimeIsTakenAtTheStartBoundary() {
+        var running = Duration.ofMillis(500).toNanos();
+        var holder = new CommandCoordinator[1];
+        var sweeps = new ArrayList<Long>();
+        // Readings: admission, pre-check at 10 ms, boundary at 50 ms, then two sweeps inside the action.
+        var clock = new ScriptedClock(0, 10 * MS, 50 * MS, 50 * MS + running - 1, 50 * MS + running);
+        var coordinator = holder[0] = new CommandCoordinator(SHORT, clock);
+        var command = coordinator.admit("a", () -> {
+            holder[0].expire(this::answer);
+            sweeps.add((long) answers.size());
+            holder[0].expire(this::answer);
+            sweeps.add((long) answers.size());
+            return true;
+        });
+        coordinator.run(command);
+        assertEquals(List.of(0L, 1L), sweeps, "the running timeout counts from the start boundary, not from the pre-check");
+        assertSame(Rejected.STILL_RUNNING, answers.get(command.id()).failure());
+        coordinator.drain(this::answer);
+        assertEquals(1, coordinator.lateCompletions());
+        assertTrue(duplicates.isEmpty());
     }
     @Test void unknownCompletionIdsAreIgnored() {
         var coordinator = coordinator(1, 1);

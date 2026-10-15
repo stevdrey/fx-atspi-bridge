@@ -30,7 +30,11 @@ import java.util.function.LongSupplier;
  * monitor is held anywhere, in particular not while an action runs.
  */
 final class CommandCoordinator {
-    enum Phase { QUEUED, RUNNING, COMPLETED, FAILED, EXPIRED, CANCELLED }
+    /**
+     * {@code STARTING} means the FX thread has claimed a queued command but has not invoked it yet; only the FX thread
+     * moves it on, to {@code RUNNING}, {@code EXPIRED} or {@code CANCELLED}.
+     */
+    enum Phase { QUEUED, STARTING, RUNNING, COMPLETED, FAILED, EXPIRED, CANCELLED }
     @FunctionalInterface interface Mutation { boolean apply(); }
     /** Answers one request; called on the provider thread at most once per action id. */
     @FunctionalInterface interface Replies { void answer(long id, boolean accepted, Throwable failure); }
@@ -89,8 +93,9 @@ final class CommandCoordinator {
         var running = 0;
         for (var command : outstanding.values()) {
             var phase = command.phase.get();
-            if (phase == Phase.RUNNING) running++;
-            if ((phase == Phase.QUEUED || phase == Phase.RUNNING) && command.target.equals(target)) throw Rejected.CONFLICT;
+            var started = phase == Phase.STARTING || phase == Phase.RUNNING;
+            if (started) running++;
+            if ((started || phase == Phase.QUEUED) && command.target.equals(target)) throw Rejected.CONFLICT;
         }
         if (running >= maxNested) throw Rejected.NESTING;
         var command = new Command(++nextId, target, operation, clock.getAsLong() + queueNanos);
@@ -99,12 +104,15 @@ final class CommandCoordinator {
         return command;
     }
 
-    /** FX thread. Starts the command unless it expired, conflicts or the provider already answered it. */
+    /**
+     * FX thread. Starts the command unless it expired, is too deeply nested or the provider already answered it. The
+     * deadline and closure checks before the claim only avoid claiming dead work; the checks after the claim, right
+     * before the invocation, are the authoritative start boundary.
+     */
     void run(Command command) {
         if (command.phase.get() != Phase.QUEUED) return;
         if (closed) { command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED); return; } // shutdown answers it
-        var now = clock.getAsLong();
-        if (now - command.queueDeadline >= 0) {
+        if (clock.getAsLong() - command.queueDeadline >= 0) {
             if (command.phase.compareAndSet(Phase.QUEUED, Phase.EXPIRED)) post(new Completion(command.id, false, Rejected.EXPIRED));
             return;
         }
@@ -114,10 +122,17 @@ final class CommandCoordinator {
             if (command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED)) post(new Completion(command.id, false, Rejected.NESTING));
             return;
         }
-        command.startedAt = now;
-        if (!command.phase.compareAndSet(Phase.QUEUED, Phase.RUNNING)) return;
-        // Shutdown may have begun between the check above and the transition; it answers every command, so just stop.
-        if (closed) { command.phase.set(Phase.CANCELLED); return; }
+        if (!command.phase.compareAndSet(Phase.QUEUED, Phase.STARTING)) return; // the provider expired or cancelled it
+        // Start boundary: the FX thread may have been suspended since the checks above.
+        if (closed) { command.phase.set(Phase.CANCELLED); return; } // shutdown answers every command, so just stop
+        var started = clock.getAsLong();
+        if (started - command.queueDeadline >= 0) {
+            command.phase.set(Phase.EXPIRED);
+            post(new Completion(command.id, false, Rejected.EXPIRED));
+            return;
+        }
+        command.startedAt = started;
+        command.phase.set(Phase.RUNNING); // volatile write publishes startedAt to the provider's running-timeout check
         depth++;
         var accepted = false;
         Throwable failure = null;
@@ -166,7 +181,7 @@ final class CommandCoordinator {
                     }
                 }
                 case RUNNING -> { if (now - command.startedAt >= runningNanos) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
-                default -> { /* A completion is posted or about to be; drain answers it. */ }
+                default -> { /* STARTING has not run yet; others have posted, or are about to post, a completion. */ }
             }
         }
         outstandingSize = outstanding.size();

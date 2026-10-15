@@ -10,11 +10,11 @@ Fedora 44, kernel 7.2.9-201.fc44, Zulu JDK 27 (27+35), JavaFX 27 per Gradle, Gra
 
 | Command | Result |
 |---|---|
-| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 20 + 5 tests (after both reviews), 0 failures (no native library or toolkit needed) |
+| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 23 + 5 tests (after all reviews), 0 failures (no native library or toolkit needed) |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 20 tests (after both reviews), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 9 tests (after both reviews), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ModalActionTest'` | 1 test, 0 failures; printed `modal-read-latency-ms (gdbus process included) p50=10 max=12` over 20 reads |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, 92 after the Codex review fixes (`38204fd`), **94 tests** after the local review fixes; 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, 92 after the Codex review fixes (`38204fd`), 94 after the local review fixes (`58e1b3d`), **97 tests** after the follow-up review fix; 0 failures, 0 skipped |
 | `./gradlew javadoc` | no warnings for the library (the 6 warnings are in `examples/fx-lab`, unchanged) |
 | `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | 98 tests OK (skipped=1, optional Atspi bindings), unchanged scripts |
 
@@ -99,6 +99,32 @@ Five findings against the PR diff (`origin/main...HEAD`); all fixed.
 | Efficiency: a capturing lambda was allocated on every provider loop pass | the `BooleanSupplier` is created once before the loop | no behavior change; full suite |
 
 The desktop smoke was not rerun for these changes: they do not alter the application-modal scenario, the replies or the loop timing it exercises.
+
+## Follow-up review on `58e1b3d` (P2: queue deadline at the start boundary)
+
+**Finding (confirmed).** `run` checked `queueDeadline` before the `QUEUED → RUNNING` compare-and-set. An FX thread suspended after that check (scheduler, GC pause) could win the transition after the deadline, before the provider's sweep, and run the action. `startedAt` also came from the pre-check reading. The spec's "nanoseconds" wording for this window was wrong.
+
+**Fix.**
+- A new transient phase, `STARTING`, is claimed by compare-and-set.
+- After the claim, the start boundary rechecks closure, reads the clock again, and expires the command (one completion, answered `Action expired before it started`) without running it.
+- Otherwise the boundary reading becomes the start time and `RUNNING` is published.
+- The provider's sweep ignores `STARTING`, so a claimed command is never answered as still running. Admission counts `STARTING` as running.
+- Exactly-once reply and release and slot accounting are unchanged: an expired boundary posts one completion and `drain` frees the slot; a concurrent teardown answers `stopped` and the late completion is dropped.
+- The remaining semantics are documented in the spec.
+
+**Tests (deterministic, scripted monotonic clock, no provider sweep unless stated).**
+
+| Test | What it fixes in place | Mutant that makes it fail |
+|---|---|---|
+| `deadlinePassingAfterTheFxPreCheckPreventsExecution` | Readings: admission 0 ms, pre-check 99 ms, boundary 150 ms. The mutation is never invoked; the request is answered once with the queued-expiry error; no slot remains; a later `expire()` and `cancelAll()` add no answer and drop nothing | boundary deadline check removed |
+| `claimedButUnstartedCommandIsNeverTreatedAsRunning` | The provider sweeps 10 s later while the command is `STARTING`; it is not answered as still running, and is answered once as expired | `expire()` treating `STARTING` as `RUNNING`; also the boundary check removed |
+| `runningStartTimeIsTakenAtTheStartBoundary` | Pre-check 10 ms, boundary 50 ms. Sweeps inside the action at boundary + timeout − 1 ns (no answer) and boundary + timeout (`STILL_RUNNING`) | start time taken from the pre-check |
+
+**Results.**
+- `./gradlew cleanTest test --tests '*CommandCoordinatorTest'`: 23 tests, 0 failures. All 20 earlier coordinator tests, including the 300-round race and the earlier interleaving tests, pass unchanged.
+- The three mutants fail as listed.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check`: 97 tests, 0 failures, 0 skipped.
+- The desktop smoke was not rerun: the change is confined to the coordinator's start path, which `ModalActionTest` and the D-Bus provider tests exercise.
 
 ## Measurement against SC-01
 
