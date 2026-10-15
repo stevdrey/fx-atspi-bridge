@@ -107,8 +107,15 @@ redact_home() {
     }'
 }
 
-# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>. Control
-# characters become "?", so a directory name cannot inject lines (e.g. "profile=") into environment.txt.
+# one_line VALUE -> VALUE with every control character replaced by "?". Every value environment.txt takes from the
+# environment or a path goes through it, so a newline in it cannot inject records such as "profile=" or "plan=" that
+# resume_matches compares.
+one_line() {
+  local value="$1"
+  printf '%s\n' "${value//[[:cntrl:]]/?}"  # printf: a value such as -n or -e must not become an echo option
+}
+
+# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>, as one line.
 display_path() {
   local root="${1%/}" path="${2%/}" shown
   case "$path" in
@@ -116,7 +123,7 @@ display_path() {
     "$root"/*) shown="${path#"$root"/}" ;;
     *) shown="<out>/${path##*/}" ;;
   esac
-  printf '%s\n' "${shown//[[:cntrl:]]/?}"  # printf: a directory named -n or -e must not become an echo option
+  one_line "$shown"
 }
 
 # command_line ROOT SCRIPT OUT_ABS PROFILE -> the command= line of environment.txt, with display_path paths only.
@@ -185,8 +192,9 @@ require_fresh_or_resumable() {
 
 # print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
 # commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
-# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. Callers pipe it into
-# write_environment, which records the home directory as $HOME.
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. Values taken from the
+# environment go through one_line; the java.home line is filtered by grep, so a newline in it cannot add a record.
+# Callers pipe it into write_environment, which records the home directory as $HOME.
 print_environment() {
   local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
   shift 5
@@ -194,18 +202,18 @@ print_environment() {
   echo "git=$head_sha"
   echo "tree=clean"
   echo "profile=$profile"
-  echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
+  one_line "idle_inhibit=${BASELINE_INHIBITED:-no}"
   for entry in "$@"; do echo "plan=$entry"; done
   echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
-  echo "java_bin=$java_bin"
+  one_line "java_bin=$java_bin"
   for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
-    echo "${opts_var}_effective=${!opts_var:-}"
+    one_line "${opts_var}_effective=${!opts_var:-}"
   done
   "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
   "$java_bin" -version 2>&1 | redact_picked_up | head -3
-  echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
+  one_line "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
   uname -srm
   echo "cpus=$(nproc)"
   grep -m1 'model name' /proc/cpuinfo || true

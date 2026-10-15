@@ -156,6 +156,34 @@ class RecordedPathTest(unittest.TestCase):
         self.assertIn("    java.home = $HOME/.sdkman/java", text)
         self.assertIn("plan=100:3:1:100", text)
 
+    def test_a_newline_in_an_environment_value_cannot_add_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "repo")
+            lib = root / "examples/fx-lab/build/install/fx-lab/lib"
+            lib.mkdir(parents=True)
+            (lib / "a.jar").write_text("x")
+            limits = root / "baseline.conf"
+            limits.write_text("K=1\n")
+            java = pathlib.Path(d, "jdk\nprofile=full\nplan=x:1", "bin", "java")
+            java.parent.mkdir(parents=True)
+            java.write_text("#!/bin/sh\necho '    java.specification.version = 27' >&2\necho 'openjdk version \"27\"' >&2\n")
+            java.chmod(0o755)
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "$JAVA" "100:3:1:100" | write_environment "{target}"',
+                       env={"JAVA": str(java), "HOME": "/nonexistent-home", "WAYLAND_DISPLAY": "w\nprofile=full",
+                            "BASELINE_INHIBITED": "1\nplan=y:1"})
+            lines = target.read_text().splitlines()
+            resumable = bash(f'resume_matches "{target}" "git=abc" "profile=quick" "plan=100:3:1:100"')
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual([line for line in lines if line.startswith(("profile=", "plan="))], ["profile=quick", "plan=100:3:1:100"])
+        self.assertIn(f"java_bin={d}/jdk?profile=full?plan=x:1/bin/java", lines)
+        self.assertEqual(resumable.returncode, 0)
+
+    def test_one_line_encodes_control_characters_and_options(self):
+        for value, expected in (("-n", "-n"), ("a\nb\tc\rd", "a?b?c?d"), ("plain=/x", "plain=/x")):
+            with self.subTest(value=value):
+                self.assertEqual(bash('one_line "$V"', env={"V": value}).stdout, expected + "\n")
+
     def test_collections_write_environment_only_through_write_environment(self):
         for script in ("run-baseline.sh", "run-memory-diag.sh"):
             with self.subTest(script=script):
