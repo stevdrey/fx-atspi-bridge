@@ -1,6 +1,6 @@
 # Verification — Issue 5 (SC-05)
 
-Spec: [`docs/specs/issue-5.md`](../specs/issue-5.md). Raw data: `docs/verification/data/issue-5/before/` (baseline `349df59`) and `docs/verification/data/issue-5/after/` (implementation `cd818fc`), one JSON per run plus `environment.txt` (commit, clean-tree flag, plan, jar hashes) and `retries.txt`. Per-run logs were not committed.
+Spec: [`docs/specs/issue-5.md`](../specs/issue-5.md). Raw data: `docs/verification/data/issue-5/before/` (baseline `349df59`) and `docs/verification/data/issue-5/after/` (implementation `cd818fc`, before the review fixes in `847a053`), one JSON per run plus `environment.txt` (commit, clean-tree flag, plan, jar hashes) and `retries.txt`. Per-run logs were not committed.
 
 ## Status
 
@@ -101,6 +101,25 @@ At 10,000 nodes the bridge's p50 overhead goes from +3/+6 ms to about +1/0 ms. L
 - No heap retention: structural and install churn heap deltas after GC stay below 1 MB with the bridge on.
 - **Regression to track:** installing the bridge on 10,000 nodes takes ≈170 ms longer to become ready (initial traversal plus ≈10 listener registrations per node). This is a one-time cost per install, not per update.
 - **Unexplained outlier:** one of two 10,000-node install-churn runs grew RSS by 1.2 GB (heap after GC +0.8 MB, so not retained Java objects); the other shrank by 27 MB. Two repetitions cannot separate a pattern from allocator/heap-commit noise. It was not characterized here; issue 17's NMT/`smaps_rollup` tooling (`run-memory-diag.sh`) is the method to apply.
+
+## Post-review changes (`847a053`)
+
+A `/code-review` pass found 8 issues; all were fixed in `847a053`. Writing the failing-projection test also exposed a ninth: JavaFX reads a property when a listener is added, so a property bound to a failing application value threw from `subscribe()` and aborted the flush mid-batch. That is fixed in the same commit.
+
+| Change | Measured path? | Verification |
+| --- | --- | --- |
+| `SnapshotDiff`: ordered change plan, every new object announced before any parent lists it; child events unchanged | Provider reconcile (signal order only) | `SnapshotDiffTest` (5), full `check` |
+| Touched ids published in change order (`LinkedHashSet`) | No | `check` |
+| Per-target catch for projection and listener registration; retry with the next batch; inert placeholder for a new target | Only on failure | `aFailingProjectionDoesNotLoseTheRestOfTheBatch`, `aNewTargetWhoseProjectionFailsIsPublishedAsAnInertPlaceholder` |
+| `showing` memoized per flush | **Yes**: projection | `SceneObserverTest` (16), 3 consecutive reruns |
+| `NodeStore` views instead of an O(n) map copy per publication | **Yes**: every publishing flush | `NodeStoreTest` (4, including a 20,000-step randomized comparison with `HashMap`) |
+| `AtSpiProvider.pushed(Runnable)` instead of a `null`-returning supplier | No (same calls) | `ProviderLifecycleTest`, `BridgeLifecycleTest` |
+| Injectable observer scheduler; termination fallback test | No (default `Platform::runLater`) | `theObserverClosesThroughItsOwnSchedulerWhenTheReleaseIsDropped` |
+| `Observable[]` per target instead of `ArrayList` + `List.of` | **Yes**: install | `check` |
+
+Commands at `847a053`: `REQUIRE_FX_TOOLKIT=1 ./gradlew check generatePomFileForMavenJavaPublication :examples:fx-lab:installDist --no-daemon` (**passed**, 123 tests, 0 failed, 0 skipped); `atspi_probe.py` (**OK**, 19 nodes, 7 roles); the add/remove-field libatspi check (entries 1 → 2 → 1); `run-baseline.sh <scratch> smoke` (**passed**; harness sanity only, never evidence).
+
+**The `quick` collection was not repeated for these changes.** The allocation-per-update, install-time and churn tables above describe `cd818fc`. The changes to the measured path (no per-publication map copy, memoized `showing`, fewer per-node allocations) are expected to lower allocation and install cost, but that expectation is not measured here. A `quick` re-collection is deferred to a dedicated QA session, together with the install-churn RSS characterization.
 
 ## Comparison with issue 1
 

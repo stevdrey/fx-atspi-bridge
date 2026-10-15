@@ -29,20 +29,25 @@ Non-goals: an exhaustive event history (a target added and removed within one ba
   - window: `showing` (inherited), `focused`, `Stage.title`, `scene` (structure) and the current scene's `root` (structure);
   - node: `visible` (inherited), `disabled`, `focused`, `accessibleText`, `id`; `Labeled.text`; for non-password `TextInputControl`: `text`, `caretPosition`, `editable`; for non-`Control` `Parent`: `getChildrenUnmodifiable()` (structure). A `PasswordField`'s text and caret are never subscribed to.
 - An invalidation marks the target dirty, its subtree dirty (inherited) or its child list for re-reading (structure), and posts one flush if none is pending (`Platform.runLater`). Every flush reads every observed property of a dirty target, so lazy invalidation listeners fire again on the next change.
-- **Flush** (one per batch): (1) re-read the child lists marked for structure, in order; attach new children with their subtree; a child already observed elsewhere is *adopted* (keeps its id; its subtree is re-projected); children that left become removal candidates; (2) a candidate that no observed parent adopted in this batch is detached with the descendants that still belong to it (listeners removed, id released, model entry removed); (3) project dirty targets; a record equal to the previous one is not touched; (4) if anything was touched, publish a shallow copy of the FX-side model and the touched ids.
-- **Inheritance.** `showing` = window showing ∧ the node and every observed ancestor visible, computed by walking the observed parent chain (O(depth)). A `visible`/`showing` change marks the observed subtree dirty. `enabled` = `!isDisabled()`; JavaFX already propagates `disabled` to descendants, each of which fires its own listener.
+- **Flush** (one per batch): (1) re-read the child lists marked for structure, in order; attach new children with their subtree; a child already observed elsewhere is *adopted* (keeps its id; its subtree is re-projected); children that left become removal candidates; (2) a candidate that no observed parent adopted in this batch is detached with the descendants that still belong to it (listeners removed, id released, model entry removed); (3) project dirty targets plus the retry set; a record equal to the previous one is not touched; (4) if anything was touched, publish an immutable `NodeStore` view and the touched ids in the order they changed.
+- **Failures.** JavaFX reads a property while adding a listener and while projecting, and a property bound to a failing application value throws there. Such a failure is caught per target: the listener is registered again and the target projected again with the next batch (the retry set never schedules a flush by itself, so a getter that always fails cannot busy-loop); an already published target keeps its last record, a new one is published as an inert placeholder (no name, text or capability, not showing) so its parent never lists an unknown child. Nothing about the failure is logged (values may be field contents).
+- **Inheritance.** `showing` = window showing ∧ the node and every observed ancestor visible, memoized for the duration of one flush, so each ancestor chain is read once per batch. A `visible`/`showing` change marks the observed subtree dirty. `enabled` = `!isDisabled()`; JavaFX already propagates `disabled` to descendants, each of which fires its own listener.
 - **Ordered children** come from the live list at the flush; the provider's child events use index maps (see below).
 - **Simplification:** a showing window without a scene is published as a frame with no children (before, it was skipped).
 
 **`fx.TargetRegistry`.** `register/release` (O(1)) replace `beginPass/identity/sweep`; `target`, `targetId`, `size`, `clear` keep their contracts. Ids are never reused.
 
+**`model.NodeStore`** (new, single owner). The FX-side model: a base map shared with published views and never modified once shared, plus a delta of changes (a `null` value removes a base entry). `freeze()` returns an immutable `AbstractMap` view that copies only the delta; when the delta exceeds `max(256, base/8)` it is merged into a new base, amortizing the full copy. Earlier views stay valid.
+
+**`protocol.SnapshotDiff`** (new, pure). Turns two snapshots and the touched ids into an ordered list of sealed `Change` records: every `Added` first, then per-object state/name/text/caret/child changes, every `Removed` last. Child changes use index maps (O(c)) with the previous semantics: a child that left or moved is removed at its old index, one that arrived or moved is added at its new index.
+
 **`AtSpiProvider`.**
 
 - `publish(Snapshot, Set<String> touched)` (FX thread) queues a `Pending(snapshot, touched)` under the existing `publication` lock; generations not yet consumed merge their touched ids (`null` = compare everything). Returns `false` after disposal, so a terminated provider is never republished (privacy: no field text retained after termination).
-- `refresh()` keeps the pull path for a `Supplier<Snapshot>` (tests; full comparison). The bridge's supplier is `SceneObserver::synchronize`, which flushes pending changes through `publish` and returns `null`; `CommandCoordinator`'s FX task still calls `refresh()` before and after an action, so an action's effects are published synchronously.
-- `reconcile()` consumes the pending generation and exports, signals and unexports only the touched ids; an unchanged record is skipped. Child events: a child that left or moved is removed at its old index, one that arrived or moved is added at its new index — the same events as before, now computed with `HashMap` index maps, O(c) per changed parent.
+- `refresh()` runs a `Runnable synchronize` (FX thread, skipped after disposal). Constructors taking a `Supplier<Snapshot>` (tests) pull a whole tree and compare every id; `AtSpiProvider.pushed(...)`, used by the bridge, takes `SceneObserver::synchronize`, which flushes pending changes through `publish`. `CommandCoordinator`'s FX task still calls `refresh()` before and after an action, so an action's effects are published synchronously.
+- `reconcile()` consumes the pending generation, exports every `Added` id, then executes the `SnapshotDiff` changes in order (unexporting after each `RemoveAccessible`). A new object is therefore always exported and announced before any `ChildrenChanged(add)` that lists it, whatever order the touched ids arrive in.
 
-**`FxAtSpiBridge`.** No timer. `begin()` starts the observer with `provider::publish`. `closeOnFx()` closes the observer (all listeners detached, registry cleared) and stops the provider. When the provider ends by itself, besides the disposal posted to the FX executor (issue 3), `provider.terminated()` asks the observer to close on the FX thread (`closeLater`), and a flush that finds the provider disposed closes it as well, so listeners on the static `Window.getWindows()` list never keep a terminated provider or its registry reachable while the FX runtime is alive. The observer holds the provider (through the sink) and the registry, never the bridge.
+**`FxAtSpiBridge`.** No timer. `begin()` starts the observer with `provider::publish`. `closeOnFx()` closes the observer (all listeners detached, registry cleared) and stops the provider. When the provider ends by itself, besides the disposal posted to the FX executor (issue 3), `provider.terminated()` asks the observer to close through its own scheduler (`closeLater`; `Platform::runLater` by default, injectable for tests; it replaces the removed timer's self-disposal), and a flush that finds the provider disposed closes it as well, so listeners on the static `Window.getWindows()` list never keep a terminated provider or its registry reachable while the FX runtime is alive. The observer holds the provider (through the sink) and the registry, never the bridge.
 
 **Ownership.**
 
@@ -59,11 +64,11 @@ Non-goals: an exhaustive event history (a target added and removed within one ba
 | Operation | Before | After |
 |---|---|---|
 | Idle | full traversal + O(n) diff every 100 ms | nothing |
-| k property changes in a batch | O(n) traversal + O(n) diff | O(k·depth) projection + O(n) shallow map copy + O(k) diff |
+| k property changes in a batch | O(n) traversal + O(n) diff | O(k + their ancestors) projection + O(d) view (d = changes since the last compaction, amortized) + O(k) diff |
 | Child list change, c children | O(n) + O(c²) | O(c) + attach/detach of the subtrees that moved in or out |
 | Identity cleanup | O(n) sweep per pass | O(removed subtree) |
 
-The O(n) shallow copy at each publishing flush keeps `Snapshot` immutable for the provider thread without locks; a persistent map is the alternative if measurements show the copy matters.
+`NodeStore` keeps `Snapshot` immutable for the provider thread without locks and without copying every node per publication; the full copy happens only at compaction, after at least `max(256, n/8)` distinct changes.
 
 ## Limits and failure modes
 
@@ -76,14 +81,15 @@ The O(n) shallow copy at each publishing flush keeps `Snapshot` immutable for th
 
 ## Dependencies and affected files
 
-Prerequisite: #2 (model/registry/adapter split). Changed: `FxAtSpiBridge.java`, `AtSpiProvider.java`, `fx/TargetRegistry.java`. Added: `fx/SceneObserver.java`. Removed: `fx/SceneModelBuilder.java`. Tests: `fx/SceneObserverTest` (replaces `SceneModelBuilderTest`), additions to `ProviderLifecycleTest` and `BridgeLifecycleTest`, `ActionExecutorTest` uses `register`.
+Prerequisite: #2 (model/registry/adapter split). Changed: `FxAtSpiBridge.java`, `AtSpiProvider.java`, `fx/TargetRegistry.java`. Added: `fx/SceneObserver.java`, `model/NodeStore.java`, `protocol/SnapshotDiff.java`. Removed: `fx/SceneModelBuilder.java`. Tests: `fx/SceneObserverTest` (replaces `SceneModelBuilderTest`), `model/NodeStoreTest`, `protocol/SnapshotDiffTest`, additions to `ProviderLifecycleTest` and `BridgeLifecycleTest`, `ActionExecutorTest` uses `register`.
 
 ## Acceptance and verification
 
 - Initial traversal, then no recurring full-tree scan at idle — `SceneObserverTest.anIdleSceneSchedulesAndPublishesNothing`, `BridgeLifecycleTest.anIdleBridgeDoesNotRescanAndAChangeIsPublishedToTheProvider`; idle CPU in the benchmark.
 - Names/text/caret/focus/visibility/disabled and ancestor inheritance — `changesInOneBatchArePublishedOnceAndCoherently`, `restoringAncestorVisibilityRepublishesDescendants`.
 - Window/root/scene replacement, removals, reparenting; listeners detached — `sceneRootAndWindowReplacementReleaseTheOldTree`, `childrenStayOrderedAndRemovedOrReparentedNodesAreHandledByIdentity`, `closeReleasesEveryTargetAndDetachesEveryListener`, `shortLivedControlsAreCoalescedAndLeaveNoListenersOrIds`.
-- Coalesce once, ordered children, churn — the same tests plus `ProviderLifecycleTest.publishedChangesAreReconciledByTheirTouchedIdsAndMergeUntilConsumed`.
+- Coalesce once, ordered children, churn — the same tests plus `ProviderLifecycleTest.publishedChangesAreReconciledByTheirTouchedIdsAndMergeUntilConsumed` and `SnapshotDiffTest` (exact child indices for reorder/insert/remove, announcement order).
+- Failing application values — `aFailingProjectionDoesNotLoseTheRestOfTheBatch`, `aNewTargetWhoseProjectionFailsIsPublishedAsAnInertPlaceholder`.
 - No O(n²) identity or child-index cleanup — by construction (table above), reviewed in code.
 - Before/after latency and allocation — `run-baseline.sh quick` on `349df59` and on the implementation, same machine and session; results in [`docs/verification/issue-5.md`](../verification/issue-5.md).
 
