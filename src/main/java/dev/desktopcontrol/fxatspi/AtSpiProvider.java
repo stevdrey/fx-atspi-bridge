@@ -20,6 +20,15 @@ import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Caret;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Name;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Removed;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextDeleted;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextInserted;
 import javafx.application.Platform;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -32,11 +41,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -93,7 +102,10 @@ final class AtSpiProvider {
     private record Export(List<Integer> registrations, MemorySegment info) {}
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
+    /** Pull source of whole trees (tests); {@code null} when the scene pushes its changes through {@link #publish}. */
     private final Supplier<Snapshot> scene;
+    /** FX thread: brings the published tree up to date, for example before and after an action. */
+    private final Runnable synchronize;
     private final BusAddress bus;
     private final boolean embed;
     private final Executor fxExecutor;
@@ -124,24 +136,37 @@ final class AtSpiProvider {
     AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed, Executor fxExecutor) {
         this(status, scene, actions, bus, embed, fxExecutor, ActionLimits.defaults());
     }
+    /** Pull source: every refresh builds a whole tree and the provider compares every id. */
     AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, ActionPort actions, BusAddress bus, boolean embed, Executor fxExecutor,
                   ActionLimits limits) {
+        this(status, Objects.requireNonNull(scene, "scene"), null, actions, bus, embed, fxExecutor, limits);
+    }
+    /**
+     * Push source: the scene publishes its own changes through {@link #publish}; {@code synchronize} (FX thread) asks
+     * it to publish pending changes now. The bridge's observer starts publishing only after construction.
+     */
+    static AtSpiProvider pushed(Consumer<String> status, Runnable synchronize, ActionPort actions, BusAddress bus, boolean embed,
+                                Executor fxExecutor, ActionLimits limits) {
+        return new AtSpiProvider(status, null, Objects.requireNonNull(synchronize, "synchronize"), actions, bus, embed, fxExecutor, limits);
+    }
+    private AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, Runnable synchronize, ActionPort actions, BusAddress bus,
+                          boolean embed, Executor fxExecutor, ActionLimits limits) {
         this.commands = new CommandCoordinator(limits, System::nanoTime);
         this.fxExecutor = fxExecutor;
         this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
+        this.synchronize = synchronize != null ? synchronize : this::pull;
         this.bus = bus != null ? bus : this::sessionAccessibilityAddress;
         refresh();
         var initial = desired.getAndSet(null);
         if (initial != null) snapshot.set(initial.snapshot());
     }
-    /**
-     * FX thread. Pulls a whole tree from the scene supplier and compares every id. A supplier that publishes its own
-     * changes through {@link #publish} (the bridge's observer) returns {@code null} and is only asked to flush.
-     */
+    /** FX thread. Brings the published tree up to date; nothing once the provider has been disposed. */
     void refresh() {
-        if (disposed) return;
-        var built = scene.get();
-        if (built != null) publish(built, null);
+        if (!disposed) synchronize.run();
+    }
+    /** Pull path: builds a whole tree and compares every id. */
+    private void pull() {
+        publish(scene.get(), null);
     }
     /**
      * FX thread. Queues {@code built} for the provider thread; {@code touched} lists the ids that changed since the
@@ -418,7 +443,10 @@ final class AtSpiProvider {
             for (int registration : exported.registrations()) ffi.unregisterObject(connection, registration);
         } finally { exportsReleased.incrementAndGet(); ffi.nodeInfoUnref(exported.info()); }
     }
-    /** Provider thread. Exports, signals and unexports only the ids touched since the last reconciled generation. */
+    /**
+     * Provider thread. Exports, signals and unexports only the ids touched since the last reconciled generation, in
+     * {@link SnapshotDiff} order: new objects are exported and announced before any parent lists them as children.
+     */
     private void reconcile() {
         var next = desired.getAndSet(null);
         if (next == null) return;
@@ -431,51 +459,21 @@ final class AtSpiProvider {
             all.addAll(before.nodes().keySet());
             ids = all;
         }
-        for (String id : ids) if (after.get(id) != null && before.get(id) == null) export(id);
-        for (String id : ids) {
-            var item = after.get(id);
-            if (item == null) continue;
-            var old = before.get(id);
-            if (old == null) signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,item,busName,parent)+",)");
-            else {
-                if (old.equals(item)) continue;
-                if (old.enabled()!=item.enabled()) { stateEvent(item.id(),"enabled",item.enabled()); stateEvent(item.id(),"sensitive",item.enabled()); }
-                if (old.focused()!=item.focused()) stateEvent(item.id(),"focused",item.focused());
-                if (old.showing()!=item.showing()) { stateEvent(item.id(),"showing",item.showing()); stateEvent(item.id(),"visible",item.showing()); }
-                if (!old.name().equals(item.name())) event(item.id(),"PropertyChange","('accessible-name', 0, 0, <"+Ffm.quote(item.name())+">, @a{sv} {})");
-                if (!old.text().equals(item.text())) {
-                    if (!old.text().isEmpty()) event(item.id(),"TextChanged","('delete', 0, "+old.text().codePointCount(0,old.text().length())+", <"+Ffm.quote(old.text())+">, @a{sv} {})");
-                    if (!item.text().isEmpty()) event(item.id(),"TextChanged","('insert', 0, "+item.text().codePointCount(0,item.text().length())+", <"+Ffm.quote(item.text())+">, @a{sv} {})");
-                }
-                if (old.caret()!=item.caret()) event(item.id(),"TextCaretMoved","('', "+item.caret()+", 0, <0>, @a{sv} {})");
+        var changes = SnapshotDiff.diff(before, after, ids);
+        for (var change : changes) if (change instanceof Added(var id)) export(id);
+        for (var change : changes) {
+            switch (change) {
+                case Added(var id) -> signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+                case SnapshotDiff.State(var id, var state, var value) -> stateEvent(id, state, value); // qualified: State is also the lifecycle enum
+                case Name(var id, var name) -> event(id,"PropertyChange","('accessible-name', 0, 0, <"+Ffm.quote(name)+">, @a{sv} {})");
+                case TextDeleted(var id, var text) -> event(id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
+                case TextInserted(var id, var text) -> event(id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
+                case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
+                case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
+                case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
+                case Removed(var id) -> { signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
             }
-            childEvents(item.id(), old == null ? List.of() : old.children(), item.children(), old == null);
         }
-        for (String id : ids) if (before.get(id) != null && after.get(id) == null) {
-            signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id);
-        }
-    }
-    /**
-     * A child that left or changed position is removed at its old index, and one that arrived or changed position is
-     * added at its new index. Index maps keep this linear in the number of children.
-     */
-    private void childEvents(String id, List<String> before, List<String> after, boolean created) {
-        if (!created && before.equals(after)) return;
-        var oldIndex = indexes(before);
-        var newIndex = indexes(after);
-        for (int i = 0; i < before.size(); i++) {
-            var at = newIndex.get(before.get(i));
-            if (at == null || at != i) childEvent(id, "remove", i, before.get(i));
-        }
-        for (int i = 0; i < after.size(); i++) {
-            var at = oldIndex.get(after.get(i));
-            if (at == null || at != i) childEvent(id, "add", i, after.get(i));
-        }
-    }
-    private static Map<String, Integer> indexes(List<String> children) {
-        var indexes = HashMap.<String, Integer>newHashMap(children.size());
-        for (int i = 0; i < children.size(); i++) indexes.put(children.get(i), i);
-        return indexes;
     }
     private void childEvent(String id,String type,int index,String child) {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");

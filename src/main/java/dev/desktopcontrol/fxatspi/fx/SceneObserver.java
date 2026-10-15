@@ -17,15 +17,14 @@ package dev.desktopcontrol.fxatspi.fx;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.NodeStore;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import javafx.beans.InvalidationListener;
@@ -62,23 +61,32 @@ public final class SceneObserver {
     private static final Set<Capability> NONE = Set.of();
     private static final Set<Capability> ACTION = Set.of(Capability.ACTION);
     private static final Set<Capability> TEXT_INPUT = Set.of(Capability.TEXT, Capability.EDITABLE_TEXT);
+    private static final Observable[] NO_PROPERTIES = {};
     /** Stands for the application root, whose children are the windows. */
     private static final Object APPLICATION = new Object();
 
     private final TargetRegistry registry;
     private final Executor scheduler;
     private final IdentityHashMap<Object, Observed> observed = new IdentityHashMap<>();
-    /** The current FX-side model, copied into each published snapshot. */
-    private final Map<String, AccessibleNode> model = new HashMap<>();
+    /** The current FX-side model; each publication shares it and copies only recent changes. */
+    private final NodeStore model = new NodeStore();
     /** Targets whose own projection must be read again (identity-based: Observed does not override equals). */
     private final Set<Observed> dirty = new LinkedHashSet<>();
     /** Targets whose child list must be read again. */
     private final Set<Observed> restructured = new LinkedHashSet<>();
-    /** Ids added, changed or removed since the last publication. */
+    /** Ids added, changed or removed since the last publication, in the order they changed. */
     private final Set<String> touched = new LinkedHashSet<>();
+    /**
+     * Targets whose projection threw (for example a property bound to a failing application value). They keep their
+     * last published record and are projected again with the next batch; they never schedule a flush by themselves,
+     * so a getter that always fails cannot cause a busy loop.
+     */
+    private final Set<Observed> retry = new LinkedHashSet<>();
+    /** Showing state per target, valid during one flush: each ancestor chain is read at most once per batch. */
+    private final IdentityHashMap<Observed, Boolean> showing = new IdentityHashMap<>();
     private Sink sink;
     private boolean active, closed, scheduled;
-    private long publications;
+    private long publications, projectionFailures;
 
     /** @param scheduler runs the batch flush later on the FX thread ({@code Platform::runLater}) */
     public SceneObserver(TargetRegistry registry, Executor scheduler) {
@@ -93,13 +101,18 @@ public final class SceneObserver {
         Observed parent;
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
-        final List<Observable> own = new ArrayList<>();
+        Observable[] own;
         /** Visibility of a node or showing state of a window: affects every descendant. */
         Observable inherited;
         /** The child list of a parent, the window list, or the scene property of a window. */
         Observable structure;
         /** A window's current scene, whose root property is observed while it is set. */
         Scene scene;
+        /**
+         * Properties whose listener is not registered yet: JavaFX reads a property while adding a listener, and a
+         * property bound to a failing application value throws there. Registered again with the retry batch.
+         */
+        List<Observable> unsubscribed = List.of();
         boolean attached = true;
 
         Observed(Object target, String id, Observed parent) { this.target = target; this.id = id; this.parent = parent; }
@@ -116,24 +129,43 @@ public final class SceneObserver {
             switch (target) {
                 case Window window -> {
                     inherited = window.showingProperty();
-                    own.add(window.focusedProperty());
-                    if (window instanceof Stage stage) own.add(stage.titleProperty());
+                    own = window instanceof Stage stage ? new Observable[] {window.focusedProperty(), stage.titleProperty()}
+                            : new Observable[] {window.focusedProperty()};
                     structure = window.sceneProperty();
                 }
                 case Node node -> {
                     inherited = node.visibleProperty();
-                    own.addAll(List.of(node.disabledProperty(), node.focusedProperty(), node.accessibleTextProperty(), node.idProperty()));
-                    if (node instanceof Labeled labeled) own.add(labeled.textProperty());
                     // Password contents and caret are never observed, let alone published.
-                    if (node instanceof TextInputControl field && !(node instanceof PasswordField))
-                        own.addAll(List.of(field.textProperty(), field.caretPositionProperty(), field.editableProperty()));
+                    own = switch (node) {
+                        case PasswordField _ -> nodeProperties(node);
+                        case TextInputControl field -> nodeProperties(node, field.textProperty(), field.caretPositionProperty(), field.editableProperty());
+                        case Labeled labeled -> nodeProperties(node, labeled.textProperty());
+                        default -> nodeProperties(node);
+                    };
                     if (node instanceof Parent container && !(node instanceof Control)) structure = container.getChildrenUnmodifiable();
                 }
-                default -> structure = Window.getWindows();
+                default -> { own = NO_PROPERTIES; structure = Window.getWindows(); }
             }
-            for (var property : own) property.addListener(this);
-            if (inherited != null) inherited.addListener(this);
-            if (structure != null) structure.addListener(this);
+            for (var property : own) listen(property);
+            if (inherited != null) listen(inherited);
+            if (structure != null) listen(structure);
+        }
+
+        private void listen(Observable property) {
+            try { property.addListener(this); }
+            catch (RuntimeException failure) {
+                if (unsubscribed.isEmpty()) unsubscribed = new ArrayList<>(1);
+                unsubscribed.add(property);
+            }
+        }
+
+        /** Retries the listeners that could not be registered; true when every one is registered. */
+        boolean resubscribe() {
+            if (unsubscribed.isEmpty()) return true;
+            var pending = unsubscribed;
+            unsubscribed = List.of();
+            for (var property : pending) listen(property);
+            return unsubscribed.isEmpty();
         }
 
         void unsubscribe() {
@@ -153,6 +185,17 @@ public final class SceneObserver {
         }
     }
 
+    /** The properties every node publishes, followed by {@code extra}. */
+    private static Observable[] nodeProperties(Node node, Observable... extra) {
+        var properties = new Observable[4 + extra.length];
+        properties[0] = node.disabledProperty();
+        properties[1] = node.focusedProperty();
+        properties[2] = node.accessibleTextProperty();
+        properties[3] = node.idProperty();
+        System.arraycopy(extra, 0, properties, 4, extra.length);
+        return properties;
+    }
+
     /**
      * Traverses every window once, subscribes, and publishes the first generation to {@code receiver}. Ignored
      * when already started or closed.
@@ -165,17 +208,17 @@ public final class SceneObserver {
         flush();
     }
 
-    /** Publishes pending changes now, for example around an action. Returns {@code null}: the sink receives them. */
-    public Snapshot synchronize() {
-        flush();
-        return null;
-    }
+    /** Publishes pending changes to the sink now, for example around an action. */
+    public void synchronize() { flush(); }
 
     /** True while listeners are attached. */
     public boolean active() { return active; }
 
     /** Generations published so far; read-only, for tests that check idle behavior. */
     public long publications() { return publications; }
+
+    /** Projections that threw and were kept for the next batch; read-only, for tests. */
+    public long projectionFailures() { return projectionFailures; }
 
     /** Removes every listener and releases every target; idempotent. FX thread only. */
     public void close() {
@@ -188,6 +231,8 @@ public final class SceneObserver {
         dirty.clear();
         restructured.clear();
         touched.clear();
+        retry.clear();
+        showing.clear();
         registry.clear();
     }
 
@@ -218,18 +263,31 @@ public final class SceneObserver {
             var entry = observed.get(removal.child());
             if (entry != null && entry.parent == removal.former()) detach(entry);
         }
+        for (var entry : retry) if (entry.attached) { entry.resubscribe(); dirty.add(entry); }
+        retry.clear();
         var projections = List.copyOf(dirty);
         dirty.clear();
-        for (var entry : projections) {
-            if (!entry.attached) continue;
-            var node = project(entry);
-            if (!node.equals(model.put(entry.id, node))) touched.add(entry.id);
-        }
+        try {
+            for (var entry : projections) {
+                if (!entry.attached) continue;
+                AccessibleNode node;
+                try { node = project(entry); }
+                catch (RuntimeException failure) { // no values are logged: they may be field contents
+                    projectionFailures++;
+                    retry.add(entry);
+                    if (model.get(entry.id) != null) continue; // keep the last published record
+                    node = placeholder(entry); // a new target must exist for the parent that lists it
+                }
+                if (!entry.unsubscribed.isEmpty()) retry.add(entry); // projected, but a listener is still missing
+                var previous = model.put(entry.id, node);
+                if (!node.equals(previous)) touched.add(entry.id);
+            }
+        } finally { showing.clear(); }
         if (touched.isEmpty()) return;
-        var changed = Set.copyOf(touched);
+        var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
         publications++;
-        if (!sink.publish(new Snapshot(new HashMap<>(model)), changed)) close();
+        if (!sink.publish(new Snapshot(model.freeze()), changed)) close();
     }
 
     private record Removal(Object child, Observed former) {}
@@ -239,6 +297,7 @@ public final class SceneObserver {
         var entry = new Observed(target, target == APPLICATION ? Snapshot.ROOT_ID : registry.register(target), parent);
         observed.put(target, entry);
         entry.subscribe();
+        if (!entry.unsubscribed.isEmpty()) retry.add(entry);
         var live = liveChildren(entry);
         var children = new ArrayList<Object>(live.size());
         for (var child : live) {
@@ -318,13 +377,21 @@ public final class SceneObserver {
         return ids;
     }
 
-    /** Showing when the window shows and the node and every observed ancestor are visible. Reads each property. */
-    private static boolean showing(Observed entry) {
-        return switch (entry.target) {
+    /**
+     * Showing when the window shows and the node and every observed ancestor are visible. Memoized for the current
+     * flush, so each ancestor chain is read once per batch; each projected node still reads its own property, which
+     * re-arms its invalidation listener.
+     */
+    private boolean showing(Observed entry) {
+        var known = showing.get(entry);
+        if (known != null) return known;
+        boolean value = switch (entry.target) {
             case Window window -> window.isShowing();
             case Node node -> node.isVisible() & (entry.parent == null || showing(entry.parent));
             default -> true;
         };
+        showing.put(entry, value);
+        return value;
     }
 
     /**
@@ -343,6 +410,12 @@ public final class SceneObserver {
             default -> new AccessibleNode(Snapshot.ROOT_ID, "JavaFX AT-SPI Lab", Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
+    }
+
+    /** Inert stand-in for a new target whose projection failed: no name, text or capability, not showing. */
+    private AccessibleNode placeholder(Observed entry) {
+        var ancestor = entry.parent == null ? "" : entry.parent.id;
+        return new AccessibleNode(entry.id, "", Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
     }
 
     private static AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children) {

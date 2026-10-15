@@ -34,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
+import javafx.beans.value.ObservableValueBase;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -379,13 +380,68 @@ class SceneObserverTest {
         assertEquals(List.of(false, 0), result);
     }
 
+    /** A value that throws while armed, like an application binding that fails. */
+    private static final class FailingValue extends ObservableValueBase<String> {
+        boolean armed;
+        String text = "first";
+        void arm(boolean value) { armed = value; fireValueChangedEvent(); }
+        @Override public String getValue() {
+            if (armed) throw new IllegalStateException("application value failed");
+            return text;
+        }
+    }
+
+    @Test void aFailingProjectionDoesNotLoseTheRestOfTheBatch() throws Exception {
+        var result = onFx(() -> {
+            var failing = new FailingValue();
+            var broken = new Label("broken");
+            broken.accessibleTextProperty().bind(failing);
+            var first = new Button("a");
+            var second = new Button("x");
+            show(new VBox(first, broken, second));
+            var harness = new Harness().start();
+            var brokenId = harness.id(broken);
+            failing.arm(true);
+            first.setText("b");
+            second.setText("y");
+            harness.endBatch();
+            var duringFailure = List.of(harness.last.get(harness.id(first)).name(), harness.last.get(harness.id(second)).name(),
+                    harness.last.get(brokenId).name(), harness.observer.projectionFailures() > 0);
+            failing.armed = false; // no event: the retry rides on the next batch
+            failing.text = "second";
+            first.setText("c");
+            harness.endBatch();
+            return List.of(duringFailure, List.of(harness.last.get(brokenId).name(), harness.scheduled.isEmpty()));
+        });
+        assertEquals(List.of(List.of("b", "y", "first", true), List.of("second", true)), result,
+                "other targets publish; the failed one keeps its last record and is retried with the next batch");
+    }
+
+    @Test void aNewTargetWhoseProjectionFailsIsPublishedAsAnInertPlaceholder() throws Exception {
+        var result = onFx(() -> {
+            var failing = new FailingValue();
+            var box = new VBox();
+            show(box);
+            var harness = new Harness().start();
+            var broken = new Button("secret label");
+            broken.accessibleTextProperty().bind(failing); // binding reads the value once
+            failing.arm(true);
+            box.getChildren().add(broken);
+            harness.endBatch();
+            var node = harness.last.get(harness.id(broken));
+            return List.of(harness.last.get(harness.id(box)).children().contains(node.id()), node.name(), node.showing(),
+                    node.capabilities().isEmpty());
+        });
+        assertEquals(List.of(true, "", false, true), result, "the parent's child exists, exposing nothing until it projects");
+    }
+
     @Test void synchronizePublishesPendingChangesImmediately() throws Exception {
         var result = onFx(() -> {
             var button = new Button("a");
             show(new VBox(button));
             var harness = new Harness().start();
             button.setText("b");
-            assertNull(harness.observer.synchronize());
+            harness.observer.synchronize();
             var name = harness.last.get(harness.id(button)).name();
             harness.endBatch(); // the already scheduled flush finds nothing left
             return List.of(name, (int) harness.observer.publications());
