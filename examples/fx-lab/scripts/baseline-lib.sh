@@ -63,10 +63,10 @@ redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 # redact_home -> stdin with the home directory replaced by the literal $HOME wherever it appears as a whole path: the
 # character before it is the line start or not a path character, the one after it is the line end or not a name
 # character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without
-# a usable HOME (unset, empty or "/"). HOME is read through ENVIRON so backslashes in it are not interpreted.
+# a usable HOME (unset, empty or only slashes). HOME is read through ENVIRON so backslashes in it are not interpreted.
 redact_home() {
   local home="${HOME:-}"
-  home="${home%/}"
+  while [ "${home%/}" != "$home" ]; do home="${home%/}"; done  # every trailing slash: /home/u// is /home/u
   if [ -z "$home" ]; then cat; return; fi
   REDACT_HOME="$home" awk '
     BEGIN { home = ENVIRON["REDACT_HOME"]; n = length(home) }
@@ -91,15 +91,15 @@ redact_home() {
 display_path() {
   local root="${1%/}" path="${2%/}"
   case "$path" in
-    "$root") echo . ;;
-    "$root"/*) echo "${path#"$root"/}" ;;
-    *) echo "<out>/${path##*/}" ;;
+    "$root") printf '%s\n' . ;;
+    "$root"/*) printf '%s\n' "${path#"$root"/}" ;;  # printf: a directory named -n or -e must not become an echo option
+    *) printf '%s\n' "<out>/${path##*/}" ;;
   esac
 }
 
 # command_line ROOT SCRIPT OUT_ABS PROFILE -> the command= line of environment.txt, with display_path paths only.
 command_line() {
-  echo "command=$(display_path "$1" "$2") $(display_path "$1" "$3") $4"
+  printf 'command=%s %s %s\n' "$(display_path "$1" "$2")" "$(display_path "$1" "$3")" "$4"
 }
 
 # write_environment FILE -> writes stdin to FILE through redact_home. Every collection writes environment.txt only
