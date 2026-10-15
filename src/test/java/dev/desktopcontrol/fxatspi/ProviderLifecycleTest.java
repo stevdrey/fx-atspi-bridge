@@ -161,6 +161,27 @@ class ProviderLifecycleTest {
         assertTrue(provider.exportsAcquired() > 0);
         assertEquals(provider.exportsAcquired(), provider.exportsReleased(), "every node info must be released exactly once");
     }
+    @Test void publishedChangesAreReconciledByTheirTouchedIdsAndMergeUntilConsumed() throws Exception {
+        var provider = new AtSpiProvider(statuses::add, () -> buttons("button1", "button2"), new ActionExecutor(new TargetRegistry()),
+                ffi -> address, false, Runnable::run);
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        var initial = provider.exportsAcquired(); // root, two buttons and the cache object
+        // Two generations in a row: the provider may consume them separately or merged, never losing a touched id.
+        assertTrue(provider.publish(buttons("button2", "button3"), Set.of(Snapshot.ROOT_ID, "button1", "button3")));
+        assertTrue(provider.publish(buttons("button2", "button3", "button4"), Set.of(Snapshot.ROOT_ID, "button4")));
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while ((provider.exportsAcquired() < initial + 2 || provider.exportsReleased() < 1) && System.nanoTime() < deadline) Thread.sleep(10);
+        assertEquals(initial + 2, provider.exportsAcquired(), "exactly the two arriving nodes are exported");
+        assertEquals(1, provider.exportsReleased(), "exactly the departed node is unexported");
+        assertEquals(Set.of(Snapshot.ROOT_ID, "button2", "button3", "button4"), provider.publishedSnapshot().nodes().keySet());
+        provider.stop();
+        awaitTermination(provider);
+        assertFalse(provider.publish(buttons("button9"), Set.of("button9")), "a disposed provider refuses publication");
+        assertTrue(provider.snapshotIsEmpty());
+        assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+    }
     @Test void lateEmbedCallbackForAnUnknownProviderIsIgnored() {
         AtSpiProvider.embeddedCallback(Ffm.NIL, Ffm.NIL, MemorySegment.ofAddress(Long.MAX_VALUE)); // must neither throw nor touch native state
     }

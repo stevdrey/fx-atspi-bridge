@@ -31,9 +31,13 @@ import java.lang.invoke.MethodType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -68,7 +72,12 @@ final class AtSpiProvider {
     private final Consumer<String> status;
     private final ActionPort actions;
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(Snapshot.EMPTY);
-    private final AtomicReference<Snapshot> desired = new AtomicReference<>(Snapshot.EMPTY);
+    /**
+     * A published generation not yet reconciled, with the ids that changed since the last reconciled one;
+     * {@code touched == null} means every id must be compared.
+     */
+    private record Pending(Snapshot snapshot, Set<String> touched) {}
+    private final AtomicReference<Pending> desired = new AtomicReference<>();
     private volatile boolean running = true, registered;
     private volatile Ffm ffi;
     private volatile MemorySegment connection = Ffm.NIL;
@@ -121,18 +130,44 @@ final class AtSpiProvider {
         this.fxExecutor = fxExecutor;
         this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
         this.bus = bus != null ? bus : this::sessionAccessibilityAddress;
-        refresh(); snapshot.set(desired.get());
+        refresh();
+        var initial = desired.getAndSet(null);
+        if (initial != null) snapshot.set(initial.snapshot());
     }
-    // Called only on the FX application thread.
+    /**
+     * FX thread. Pulls a whole tree from the scene supplier and compares every id. A supplier that publishes its own
+     * changes through {@link #publish} (the bridge's observer) returns {@code null} and is only asked to flush.
+     */
     void refresh() {
         if (disposed) return;
         var built = scene.get();
-        synchronized (publication) { if (!disposed) desired.set(built); }
+        if (built != null) publish(built, null);
+    }
+    /**
+     * FX thread. Queues {@code built} for the provider thread; {@code touched} lists the ids that changed since the
+     * previous publication ({@code null}: compare all). Generations not yet reconciled merge their touched ids, so a
+     * slow provider thread still sees every change once. Returns false once the provider has been disposed.
+     */
+    boolean publish(Snapshot built, Set<String> touched) {
+        synchronized (publication) {
+            if (disposed) return false;
+            var queued = desired.get();
+            Set<String> merged = touched;
+            if (queued != null && touched != null) {
+                if (queued.touched() == null) merged = null;
+                else { merged = new LinkedHashSet<>(queued.touched()); merged.addAll(touched); }
+            }
+            desired.set(new Pending(built, merged));
+            return true;
+        }
     }
     State state() { return state.get(); }
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
     CompletionStage<Void> terminated() { return terminatedView; }
-    boolean snapshotIsEmpty() { return snapshot.get().nodes().isEmpty() && desired.get().nodes().isEmpty(); }
+    boolean snapshotIsEmpty() {
+        var queued = desired.get();
+        return snapshot.get().nodes().isEmpty() && (queued == null || queued.snapshot().nodes().isEmpty());
+    }
     boolean embedOutstanding() { return embedOutstanding; }
     boolean isTerminated() { return terminated.isDone(); }
     String busName() { return busName; }
@@ -250,7 +285,7 @@ final class AtSpiProvider {
     }
     /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
     private void complete() {
-        synchronized (publication) { disposed = true; snapshot.set(Snapshot.EMPTY); desired.set(Snapshot.EMPTY); }
+        synchronized (publication) { disposed = true; snapshot.set(Snapshot.EMPTY); desired.set(null); }
         terminated.complete(null);
     }
     private boolean busClosed() {
@@ -383,16 +418,27 @@ final class AtSpiProvider {
             for (int registration : exported.registrations()) ffi.unregisterObject(connection, registration);
         } finally { exportsReleased.incrementAndGet(); ffi.nodeInfoUnref(exported.info()); }
     }
+    /** Provider thread. Exports, signals and unexports only the ids touched since the last reconciled generation. */
     private void reconcile() {
-        var before=snapshot.get();
-        var after=desired.get();
-        if (before.equals(after)) return;
+        var next = desired.getAndSet(null);
+        if (next == null) return;
+        var before = snapshot.get();
+        var after = next.snapshot();
         snapshot.set(after);
-        for (String id : after.nodes().keySet()) if (!before.nodes().containsKey(id)) export(id);
-        for (var item : after.nodes().values()) {
-            var old=before.get(item.id());
-            if (old==null) signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,item,busName,parent)+",)");
+        Collection<String> ids = next.touched();
+        if (ids == null) {
+            var all = new LinkedHashSet<>(after.nodes().keySet());
+            all.addAll(before.nodes().keySet());
+            ids = all;
+        }
+        for (String id : ids) if (after.get(id) != null && before.get(id) == null) export(id);
+        for (String id : ids) {
+            var item = after.get(id);
+            if (item == null) continue;
+            var old = before.get(id);
+            if (old == null) signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,item,busName,parent)+",)");
             else {
+                if (old.equals(item)) continue;
                 if (old.enabled()!=item.enabled()) { stateEvent(item.id(),"enabled",item.enabled()); stateEvent(item.id(),"sensitive",item.enabled()); }
                 if (old.focused()!=item.focused()) stateEvent(item.id(),"focused",item.focused());
                 if (old.showing()!=item.showing()) { stateEvent(item.id(),"showing",item.showing()); stateEvent(item.id(),"visible",item.showing()); }
@@ -402,13 +448,34 @@ final class AtSpiProvider {
                     if (!item.text().isEmpty()) event(item.id(),"TextChanged","('insert', 0, "+item.text().codePointCount(0,item.text().length())+", <"+Ffm.quote(item.text())+">, @a{sv} {})");
                 }
                 if (old.caret()!=item.caret()) event(item.id(),"TextCaretMoved","('', "+item.caret()+", 0, <0>, @a{sv} {})");
-                for (String child : old.children()) if (!item.children().contains(child) || old.children().indexOf(child)!=item.children().indexOf(child)) childEvent(item.id(),"remove",old.children().indexOf(child),child);
             }
-            for (String child : item.children()) if (old==null || !old.children().contains(child) || old.children().indexOf(child)!=item.children().indexOf(child)) childEvent(item.id(),"add",item.children().indexOf(child),child);
+            childEvents(item.id(), old == null ? List.of() : old.children(), item.children(), old == null);
         }
-        for (String id : before.nodes().keySet()) if (!after.nodes().containsKey(id)) {
+        for (String id : ids) if (before.get(id) != null && after.get(id) == null) {
             signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id);
         }
+    }
+    /**
+     * A child that left or changed position is removed at its old index, and one that arrived or changed position is
+     * added at its new index. Index maps keep this linear in the number of children.
+     */
+    private void childEvents(String id, List<String> before, List<String> after, boolean created) {
+        if (!created && before.equals(after)) return;
+        var oldIndex = indexes(before);
+        var newIndex = indexes(after);
+        for (int i = 0; i < before.size(); i++) {
+            var at = newIndex.get(before.get(i));
+            if (at == null || at != i) childEvent(id, "remove", i, before.get(i));
+        }
+        for (int i = 0; i < after.size(); i++) {
+            var at = oldIndex.get(after.get(i));
+            if (at == null || at != i) childEvent(id, "add", i, after.get(i));
+        }
+    }
+    private static Map<String, Integer> indexes(List<String> children) {
+        var indexes = HashMap.<String, Integer>newHashMap(children.size());
+        for (int i = 0; i < children.size(); i++) indexes.put(children.get(i), i);
+        return indexes;
     }
     private void childEvent(String id,String type,int index,String child) {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
