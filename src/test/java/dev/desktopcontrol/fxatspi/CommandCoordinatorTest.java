@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -422,6 +423,72 @@ class CommandCoordinatorTest {
         assertSame(Rejected.STILL_RUNNING, answers.get(command.id()).failure());
         coordinator.drain(this::answer);
         assertEquals(1, coordinator.lateCompletions());
+        assertTrue(duplicates.isEmpty());
+    }
+    /**
+     * The FX thread claims the command and stalls before its boundary check (the hook holds it there); the provider
+     * sweeps past the deadline first. Whatever clock value the FX thread then sees, it must neither run the action nor
+     * post a completion, and the request is answered once as expired.
+     */
+    @Test void providerExpiresAClaimedCommandWhileTheFxThreadIsStalled() {
+        for (var resumeBeforeDeadline : new boolean[] {true, false}) {
+            answers.clear(); duplicates.clear();
+            var holder = new CommandCoordinator[1];
+            var phaseWhileHeld = new AtomicReference<Phase>();
+            var commandRef = new AtomicReference<CommandCoordinator.Command>();
+            // Readings: 0 admission, 1 pre-check, 2 boundary (held by the hook), 3 the provider's sweep inside the hook.
+            var clock = new ScriptedClock(0, 10 * MS, resumeBeforeDeadline ? 20 * MS : 150 * MS, 150 * MS).before(2, () -> {
+                phaseWhileHeld.set(commandRef.get().phase());
+                holder[0].expire(this::answer);
+            });
+            var coordinator = holder[0] = new CommandCoordinator(SHORT, clock);
+            var ran = new AtomicBoolean();
+            var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+            commandRef.set(command);
+            coordinator.run(command);
+            assertEquals(Phase.STARTING, phaseWhileHeld.get(), "the provider must see the command claimed but not started");
+            assertFalse(ran.get(), "a command the provider expired must never execute");
+            assertEquals(Phase.EXPIRED, command.phase());
+            assertSame(Rejected.EXPIRED, answers.get(command.id()).failure());
+            assertEquals(0, coordinator.outstandingCount(), "the slot must be released by the provider's expiry");
+            assertEquals(0, coordinator.queuedCompletions(), "the resumed FX task must not post a second completion");
+            coordinator.drain(this::answer);
+            coordinator.expire(this::answer);
+            coordinator.cancelAll(this::answer);
+            assertEquals(1, answers.size());
+            assertTrue(duplicates.isEmpty());
+            assertEquals(0, coordinator.droppedCompletions());
+        }
+    }
+    /** Opposite order: the FX thread reaches RUNNING first, so the provider must not report a queued expiry. */
+    @Test void commandThatStartedBeforeItsDeadlineIsNeverReportedAsExpired() {
+        var holder = new CommandCoordinator[1];
+        // Readings: admission, pre-check, boundary at 20 ms, then a sweep inside the action at 150 ms
+        // (past the 100 ms queue deadline, before the 500 ms running reply timeout).
+        var clock = new ScriptedClock(0, 10 * MS, 20 * MS, 150 * MS);
+        var coordinator = holder[0] = new CommandCoordinator(SHORT, clock);
+        var command = coordinator.admit("a", () -> {
+            holder[0].expire(this::answer);
+            assertTrue(answers.isEmpty(), "a running command is neither expired nor timed out yet");
+            return true;
+        });
+        coordinator.run(command);
+        coordinator.drain(this::answer);
+        assertEquals(new Answer(true, null), answers.get(command.id()));
+        assertTrue(duplicates.isEmpty());
+    }
+    /** Shutdown while the FX thread is stalled after its claim: the command is cancelled and never starts. */
+    @Test void shutdownWhileAClaimedCommandIsStalledPreventsExecution() {
+        var holder = new CommandCoordinator[1];
+        var clock = new ScriptedClock(0, 10 * MS, 20 * MS).before(2, () -> holder[0].cancelAll(this::answer));
+        var coordinator = holder[0] = new CommandCoordinator(SHORT, clock);
+        var ran = new AtomicBoolean();
+        var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+        coordinator.run(command);
+        assertFalse(ran.get(), "a claimed command must not start once shutdown cancelled it");
+        assertEquals(Phase.CANCELLED, command.phase());
+        assertSame(Rejected.STOPPED, answers.get(command.id()).failure());
+        assertEquals(0, coordinator.queuedCompletions());
         assertTrue(duplicates.isEmpty());
     }
     @Test void unknownCompletionIdsAreIgnored() {

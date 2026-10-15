@@ -31,8 +31,10 @@ import java.util.function.LongSupplier;
  */
 final class CommandCoordinator {
     /**
-     * {@code STARTING} means the FX thread has claimed a queued command but has not invoked it yet; only the FX thread
-     * moves it on, to {@code RUNNING}, {@code EXPIRED} or {@code CANCELLED}.
+     * {@code STARTING} means the FX thread has claimed a queued command but has not invoked it yet. Every transition
+     * out of it is a compare-and-set: the FX thread moves it to {@code RUNNING} (the linearization point of the start)
+     * or {@code EXPIRED}/{@code CANCELLED}, and the provider thread may still move an overdue one to {@code EXPIRED} or
+     * cancel it at shutdown, so a stalled FX thread cannot keep a command that never started from being answered.
      */
     enum Phase { QUEUED, STARTING, RUNNING, COMPLETED, FAILED, EXPIRED, CANCELLED }
     @FunctionalInterface interface Mutation { boolean apply(); }
@@ -123,16 +125,16 @@ final class CommandCoordinator {
             return;
         }
         if (!command.phase.compareAndSet(Phase.QUEUED, Phase.STARTING)) return; // the provider expired or cancelled it
-        // Start boundary: the FX thread may have been suspended since the checks above.
-        if (closed) { command.phase.set(Phase.CANCELLED); return; } // shutdown answers every command, so just stop
+        // Start boundary: the FX thread may have been suspended since the checks above. Each transition below fails when
+        // the provider has meanwhile expired or cancelled the command; it has then answered it, so just stop.
+        if (closed) { command.phase.compareAndSet(Phase.STARTING, Phase.CANCELLED); return; } // shutdown answers it
         var started = clock.getAsLong();
         if (started - command.queueDeadline >= 0) {
-            command.phase.set(Phase.EXPIRED);
-            post(new Completion(command.id, false, Rejected.EXPIRED));
+            if (command.phase.compareAndSet(Phase.STARTING, Phase.EXPIRED)) post(new Completion(command.id, false, Rejected.EXPIRED));
             return;
         }
-        command.startedAt = started;
-        command.phase.set(Phase.RUNNING); // volatile write publishes startedAt to the provider's running-timeout check
+        command.startedAt = started; // published by the transition below to the provider's running-timeout check
+        if (!command.phase.compareAndSet(Phase.STARTING, Phase.RUNNING)) return;
         depth++;
         var accepted = false;
         Throwable failure = null;
@@ -173,15 +175,17 @@ final class CommandCoordinator {
         var now = clock.getAsLong();
         for (var iterator = outstanding.values().iterator(); iterator.hasNext();) {
             var command = iterator.next();
-            switch (command.phase.get()) {
-                case QUEUED -> {
-                    if (now - command.queueDeadline >= 0 && command.phase.compareAndSet(Phase.QUEUED, Phase.EXPIRED)) {
+            var phase = command.phase.get();
+            switch (phase) {
+                // Not started yet, whether or not the FX thread has claimed it: past its deadline it never runs.
+                case QUEUED, STARTING -> {
+                    if (now - command.queueDeadline >= 0 && command.phase.compareAndSet(phase, Phase.EXPIRED)) {
                         iterator.remove();
                         answer(command, Rejected.EXPIRED, replies);
                     }
                 }
                 case RUNNING -> { if (now - command.startedAt >= runningNanos) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
-                default -> { /* STARTING has not run yet; others have posted, or are about to post, a completion. */ }
+                default -> { /* A completion is posted or about to be; drain answers it. */ }
             }
         }
         outstandingSize = outstanding.size();
@@ -206,7 +210,8 @@ final class CommandCoordinator {
         close();
         drain(replies);
         for (var command : outstanding.values()) {
-            command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED);
+            // A claimed command that has not started must not start either.
+            if (!command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED)) command.phase.compareAndSet(Phase.STARTING, Phase.CANCELLED);
             answer(command, Rejected.STOPPED, replies);
         }
         outstanding.clear();

@@ -10,11 +10,11 @@ Fedora 44, kernel 7.2.9-201.fc44, Zulu JDK 27 (27+35), JavaFX 27 per Gradle, Gra
 
 | Command | Result |
 |---|---|
-| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 23 + 5 tests (after all reviews), 0 failures (no native library or toolkit needed) |
+| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 26 + 5 tests (after all reviews), 0 failures (no native library or toolkit needed) |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 20 tests (after both reviews), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 9 tests (after both reviews), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ModalActionTest'` | 1 test, 0 failures; printed `modal-read-latency-ms (gdbus process included) p50=10 max=12` over 20 reads |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, 92 after the Codex review fixes (`38204fd`), 94 after the local review fixes (`58e1b3d`), **97 tests** after the follow-up review fix; 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, 92 after the Codex review fixes (`38204fd`), 94 after the local review fixes (`58e1b3d`), 97 after the first follow-up fix, **100 tests** after the `STARTING` expiry fix; 0 failures, 0 skipped |
 | `./gradlew javadoc` | no warnings for the library (the 6 warnings are in `examples/fx-lab`, unchanged) |
 | `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | 98 tests OK (skipped=1, optional Atspi bindings), unchanged scripts |
 
@@ -125,6 +125,30 @@ The desktop smoke was not rerun for these changes: they do not alter the applica
 - The three mutants fail as listed.
 - `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check`: 97 tests, 0 failures, 0 skipped.
 - The desktop smoke was not rerun: the change is confined to the coordinator's start path, which `ModalActionTest` and the D-Bus provider tests exercise.
+
+## Follow-up review on `33d94d5` (P2: a `STARTING` action could evade queue expiry)
+
+**Finding (confirmed).** `expire()` handled only `QUEUED` and `RUNNING`. An FX thread that won `QUEUED → STARTING` and then stalled before its boundary check left the request unanswered for as long as it stalled. The request kept its outstanding entry, its completion slot and its native invocation.
+
+**Fix.**
+- Every transition out of `STARTING` is a compare-and-set:
+  - the provider's sweep expires an overdue `STARTING` command (`STARTING → EXPIRED`, answered `Action expired before it started`, slot released);
+  - shutdown cancels it (`STARTING → CANCELLED`);
+  - on the FX side, the closure, boundary-expiry and start transitions all check their result.
+- The FX thread's `STARTING → RUNNING` compare-and-set is the linearization point of the start. If the provider already expired or cancelled the command, the FX thread neither invokes the action nor posts a completion.
+- A `RUNNING` command keeps the running-timeout semantics only.
+
+| Test (deterministic, scripted clock) | Ordering | Mutant that makes it fail |
+|---|---|---|
+| `providerExpiresAClaimedCommandWhileTheFxThreadIsStalled` (two variants: the FX thread resumes before or after the deadline) | FX claims; a hook holds it at the boundary clock read (phase asserted `STARTING`); the provider sweeps past the deadline; then FX continues. One `Rejected.EXPIRED`, zero invocations, zero outstanding, zero queued completions, and nothing more after drain, sweep and shutdown | `expire()` ignoring `STARTING`; `STARTING → RUNNING` as a plain set; FX boundary expiry as a plain set (would post a completion for an already-released slot) |
+| `commandThatStartedBeforeItsDeadlineIsNeverReportedAsExpired` | FX reaches `RUNNING` at 20 ms; the provider sweeps at 150 ms (past the queue deadline, before the reply timeout). No answer during the action, then its real result | regression guard for the opposite order |
+| `shutdownWhileAClaimedCommandIsStalledPreventsExecution` | FX claims; `cancelAll` runs while it is held; it never starts and is answered `Provider stopped` once | `cancelAll` not cancelling `STARTING`; `STARTING → RUNNING` as a plain set |
+
+**Results.**
+- `./gradlew cleanTest test --tests '*CommandCoordinatorTest'`: 26 tests, 0 failures. All 23 earlier coordinator tests pass unchanged, including `claimedButUnstartedCommandIsNeverTreatedAsRunning`, `runningStartTimeIsTakenAtTheStartBoundary` and the 300-round race.
+- The four mutants fail as listed.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check`: 100 tests, 0 failures, 0 skipped.
+- The change stays inside the coordinator. Nothing in the SC-06 dispatch loop changed.
 
 ## CI failure on `ec34045`: replies lost at connection close
 
