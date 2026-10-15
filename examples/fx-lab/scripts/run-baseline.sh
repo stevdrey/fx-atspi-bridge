@@ -58,8 +58,8 @@ else
   {
     print_environment "$root" "$head_sha" "$profile" "$limits" "$java_bin" "${plan[@]}"
     echo "workload=warmup:$warmup,samples:$samples,idle:$idle_seconds,installChurn:$install_churn"
-    echo "command=$(display_path "$root" "$script_dir/${0##*/}") $(display_path "$root" "$out_abs") $profile"
-  } > "$out_abs/environment.txt"
+    command_line "$root" "$script_dir/${0##*/}" "$out_abs" "$profile"
+  } | write_environment "$out_abs/environment.txt"
 fi
 for entry in "${plan[@]}"; do
   IFS=: read -r nodes reps dirties structural <<< "$entry"

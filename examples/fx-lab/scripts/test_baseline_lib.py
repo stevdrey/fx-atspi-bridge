@@ -62,19 +62,26 @@ class RedactionTest(unittest.TestCase):
 
 
 class RecordedPathTest(unittest.TestCase):
-    def test_home_is_replaced_only_as_a_whole_path_prefix(self):
-        lines = ("java_bin=/home/u/.sdkman/java/bin/java", "    java.home = /home/u/jdk", "home=/home/u",
-                 "cp=/home/u:/opt /home/u /x", "other=/home/u2/x", "plain=/usr/lib/jvm")
-        out = bash("printf '%s\\n' " + " ".join(f"'{line}'" for line in lines) + " | redact_home", env={"HOME": "/home/u/"})
-        self.assertEqual(out.stdout.splitlines(), ["java_bin=$HOME/.sdkman/java/bin/java", "    java.home = $HOME/jdk",
-                                                   "home=$HOME", "cp=$HOME:/opt $HOME /x", "other=/home/u2/x",
-                                                   "plain=/usr/lib/jvm"])
+    SCRIPTS = pathlib.Path(__file__).parent
+
+    def redact(self, lines, home="/home/u/"):
+        out = bash("printf '%s\\n' " + " ".join(f"'{line}'" for line in lines) + " | redact_home", env={"HOME": home})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.splitlines()
+
+    def test_home_is_replaced_only_as_a_whole_path(self):
+        cases = {"java_bin=/home/u/.sdkman/java/bin/java": "java_bin=$HOME/.sdkman/java/bin/java",
+                 "    java.home = /home/u/jdk": "    java.home = $HOME/jdk", "home=/home/u": "home=$HOME",
+                 "cp=/home/u:/opt /home/u /x": "cp=$HOME:/opt $HOME /x", "-Dx=/home/u,": "-Dx=$HOME,",
+                 '"/home/u"': '"$HOME"', "(/home/u)": "($HOME)", "/home/u/backup/home/u": "$HOME/backup/home/u",
+                 "other=/home/u2/x": "other=/home/u2/x", "/srv/home/u/x": "/srv/home/u/x",
+                 "plain=/usr/lib/jvm": "plain=/usr/lib/jvm"}
+        self.assertEqual(self.redact(list(cases)), list(cases.values()))
 
     def test_without_a_usable_home_nothing_changes(self):
         for home in ("", "/"):
             with self.subTest(home=home):
-                out = bash("printf 'java_bin=/usr/bin/java\\n' | redact_home", env={"HOME": home})
-                self.assertEqual(out.stdout, "java_bin=/usr/bin/java\n")
+                self.assertEqual(self.redact(["java_bin=/usr/bin/java"], home), ["java_bin=/usr/bin/java"])
 
     def test_display_path_is_repository_relative_or_hides_the_parent(self):
         cases = (("/repo /repo", "."), ("/repo /repo/docs/data/x", "docs/data/x"), ("/repo/ /repo/x/", "x"),
@@ -83,7 +90,22 @@ class RecordedPathTest(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(bash(f"display_path {args}").stdout, expected + "\n")
 
-    def test_print_environment_records_no_home_directory(self):
+    def test_command_line_records_no_absolute_paths(self):
+        script = "/home/u/repo/examples/fx-lab/scripts/run-baseline.sh"
+        for out_abs, expected in (("/tmp/claude-1000/-home-u-repo/0f1e/scratchpad/quick-after", "<out>/quick-after"),
+                                  ("/home/u/repo/build/quick", "build/quick")):
+            with self.subTest(out_abs=out_abs):
+                out = bash(f'command_line /home/u/repo "{script}" "{out_abs}" quick', env={"HOME": "/home/u"})
+                self.assertEqual(out.stdout, f"command=examples/fx-lab/scripts/run-baseline.sh {expected} quick\n")
+
+    def test_write_environment_redacts_every_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f"{{ echo plan=p:1; echo tool=/home/u/bin/x; }} | write_environment '{target}'", env={"HOME": "/home/u"})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(target.read_text(), "plan=p:1\ntool=$HOME/bin/x\n")
+
+    def test_print_environment_written_through_write_environment_records_no_home_directory(self):
         with tempfile.TemporaryDirectory() as d:
             home = pathlib.Path(d, "home", "collector")
             root = pathlib.Path(d, "repo")
@@ -97,12 +119,23 @@ class RecordedPathTest(unittest.TestCase):
             java.write_text(f"#!/bin/sh\necho '    java.home = {home}/.sdkman/java' >&2\n"
                             "echo '    java.specification.version = 27' >&2\necho 'openjdk version \"27\"' >&2\n")
             java.chmod(0o755)
-            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100"', env={"HOME": str(home)})
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100" | write_environment "{target}"',
+                       env={"HOME": str(home)})
+            text = target.read_text()
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertNotIn(str(home), out.stdout)
-        self.assertIn("java_bin=$HOME/.sdkman/java/bin/java", out.stdout)
-        self.assertIn("    java.home = $HOME/.sdkman/java", out.stdout)
-        self.assertIn("plan=100:3:1:100", out.stdout)
+        self.assertNotIn(str(home), text)
+        self.assertIn("java_bin=$HOME/.sdkman/java/bin/java", text)
+        self.assertIn("    java.home = $HOME/.sdkman/java", text)
+        self.assertIn("plan=100:3:1:100", text)
+
+    def test_collections_write_environment_only_through_write_environment(self):
+        for script in ("run-baseline.sh", "run-memory-diag.sh"):
+            with self.subTest(script=script):
+                text = (self.SCRIPTS / script).read_text()
+                self.assertIn('| write_environment "$out_abs/environment.txt"', text)
+                self.assertNotRegex(text, r'[^>]> *"\$out_abs/environment\.txt"')
+                self.assertNotIn("command=$0", text)
 
 
 class CleanTreeTest(unittest.TestCase):

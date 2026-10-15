@@ -60,19 +60,31 @@ redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 # --- recorded paths ------------------------------------------------------------------------------------------------
 # docs/verification/README.md: captured values are sanitized. Recorded paths must not carry the collector's home
 # directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
-# redact_home -> stdin with the home directory replaced by the literal $HOME where it is a whole path prefix
-# ("$HOME", "$HOME/...", "$HOME " or "$HOME:"; "/home/u2" is left alone for HOME=/home/u). No-op without a usable HOME.
+# redact_home -> stdin with the home directory replaced by the literal $HOME wherever it appears as a whole path: the
+# character before it is the line start or not a path character, the one after it is the line end or not a name
+# character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without
+# a usable HOME (unset, empty or "/"). HOME is read through ENVIRON so backslashes in it are not interpreted.
 redact_home() {
-  local line home="${HOME:-}"
+  local home="${HOME:-}"
   home="${home%/}"
   if [ -z "$home" ]; then cat; return; fi
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line//"$home"\//\$HOME/}"
-    line="${line//"$home" /\$HOME }"
-    line="${line//"$home":/\$HOME:}"
-    [[ "$line" == *"$home" ]] && line="${line%"$home"}\$HOME"
-    printf '%s\n' "$line"
-  done
+  REDACT_HOME="$home" awk '
+    BEGIN { home = ENVIRON["REDACT_HOME"]; n = length(home) }
+    {
+      out = ""; rest = $0
+      while ((i = index(rest, home)) > 0) {
+        before = substr(rest, i - 1, 1)
+        if (i == 1) before = substr(out, length(out), 1)
+        after = substr(rest, i + n, 1)
+        if ((before == "" || before !~ /[A-Za-z0-9._\/-]/) && (after == "" || after !~ /[A-Za-z0-9._-]/)) {
+          out = out substr(rest, 1, i - 1) "$HOME"
+        } else {
+          out = out substr(rest, 1, i - 1 + n)
+        }
+        rest = substr(rest, i + n)
+      }
+      print out rest
+    }'
 }
 
 # display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>.
@@ -83,6 +95,17 @@ display_path() {
     "$root"/*) echo "${path#"$root"/}" ;;
     *) echo "<out>/${path##*/}" ;;
   esac
+}
+
+# command_line ROOT SCRIPT OUT_ABS PROFILE -> the command= line of environment.txt, with display_path paths only.
+command_line() {
+  echo "command=$(display_path "$1" "$2") $(display_path "$1" "$3") $4"
+}
+
+# write_environment FILE -> writes stdin to FILE through redact_home. Every collection writes environment.txt only
+# through this function, so no line of it (print_environment or the script's own) can carry the home directory.
+write_environment() {
+  redact_home > "$1"
 }
 
 # --- clean tree ----------------------------------------------------------------------------------------------------
@@ -140,13 +163,9 @@ require_fresh_or_resumable() {
 
 # print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
 # commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
-# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. The home directory is
-# recorded as $HOME (redact_home).
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. Callers pipe it into
+# write_environment, which records the home directory as $HOME.
 print_environment() {
-  print_environment_raw "$@" | redact_home
-}
-
-print_environment_raw() {
   local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
   shift 5
   echo "date=$(date -u +%FT%TZ)"

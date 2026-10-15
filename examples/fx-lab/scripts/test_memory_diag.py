@@ -177,7 +177,7 @@ class SummaryTest(unittest.TestCase):
             text = memory_diag.summary(root)
         self.assertIn("Source: `<out>/install10k-after`.", text)
         self.assertNotIn(d, text)
-        repository = pathlib.Path(d, "repo")
+        repository = pathlib.Path(d, "repo").resolve()
         self.assertEqual(memory_diag.display_path(repository / "docs/data/x", repository), "docs/data/x")
 
     def test_a_missing_artifact_rejects_the_collection_and_names_the_file(self):

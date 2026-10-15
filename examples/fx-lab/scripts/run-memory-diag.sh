@@ -68,7 +68,7 @@ else
     echo "allocator_env=default (GLIBC_TUNABLES, LD_PRELOAD and MALLOC_* unset; variants are set per cell)"
     echo "glib2=$(rpm -q glib2 2>/dev/null || echo unknown)"
     echo "pmap=$(pmap -V 2>&1 | head -1)"
-  } > "$out_abs/environment.txt"
+  } | write_environment "$out_abs/environment.txt"
 fi
 
 for entry in "${plan[@]}"; do

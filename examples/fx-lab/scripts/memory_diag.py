@@ -312,9 +312,10 @@ def load(data):
 
 
 def display_path(data, root=REPOSITORY):
+    """data relative to root (an absolute, resolved path), or <out>/<name> when it lies outside it."""
     data = pathlib.Path(data).resolve()
     try:
-        return data.relative_to(root.resolve()).as_posix()
+        return data.relative_to(root).as_posix()
     except ValueError:
         return f"<out>/{data.name}"
 
