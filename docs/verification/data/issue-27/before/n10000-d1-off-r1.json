@@ -1,0 +1,1 @@
+{"bridge":"off","pulseCadenceP50Ms":15.954464,"nodes":10000,"warmup":50,"samples":200,"dirty":1,"idleSeconds":0,"heapAfterWarmupGcBytes":173582800,"rssAfterWarmupKb":751176,"latencyMaxMs":403.882879,"latencyP50Ms":24.044111,"latencyP95Ms":27.669157,"latencyP99Ms":35.796066,"allocationMethod":"total","allocatedBytesPerSample":859163,"threadCount":15}

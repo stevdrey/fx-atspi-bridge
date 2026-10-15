@@ -1,0 +1,36 @@
+date=2026-10-15T17:25:44Z
+git=c984c2973a03811ce4a62afd40f27040748042b6
+tree=clean
+profile=install10k
+idle_inhibit=1
+plan=install:10000:5:on:plain,nmt,arena2:30:100
+limits_sha256=3e133b237f7ceecad3c58350faada314a56616a3bd51042e61b2e0f3ad19ec0e
+Gradle 9.8.1
+Launcher JVM:  27 (Azul Systems, Inc. 27+35)
+fd9aacc8a9ea3d428aeccc85765b08851405b193a6e62dd5aceb1bed563bdd26  fx-atspi-bridge-0.1.0-SNAPSHOT.jar
+ae3b22cc1c23109b9c0350efc0d82c06cce0f1d27b830c2e4ea3f79c5dafcfe4  fx-lab.jar
+47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d  javafx-base-27-linux.jar
+6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8  javafx-controls-27-linux.jar
+93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0  javafx-graphics-27-linux.jar
+java_bin=/home/stevdrey/.sdkman/candidates/java/current/bin/java
+JAVA_TOOL_OPTIONS_effective=
+JDK_JAVA_OPTIONS_effective=
+_JAVA_OPTIONS_effective=
+JAVA_OPTS_effective=
+FX_LAB_OPTS_effective=
+    java.home = /home/stevdrey/.sdkman/candidates/java/27.0.0+35-zulu
+    java.specification.version = 27
+openjdk version "27" 2026-09-15
+OpenJDK Runtime Environment Zulu27.28+101-CA (build 27+35)
+OpenJDK 64-Bit Server VM Zulu27.28+101-CA (build 27+35, mixed mode, sharing)
+session=wayland wayland=wayland-0 display=:0
+Linux 7.2.9-201.fc44.x86_64 x86_64
+cpus=16
+model name	: AMD Ryzen 7 7730U with Radeon Graphics
+MemTotal:       15690536 kB
+workload=warmup:50,samples:200,idle:10
+variants=plain:none,nmt:-XX:NativeMemoryTracking=summary,arena2:MALLOC_ARENA_MAX=2
+glibc=ldd (GNU libc) 2.43
+allocator_env=default (GLIBC_TUNABLES, LD_PRELOAD and MALLOC_* unset; variants are set per cell)
+glib2=glib2-2.88.4-1.fc44.x86_64
+pmap=pmap from procps-ng 4.0.6
