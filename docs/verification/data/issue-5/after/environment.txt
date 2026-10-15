@@ -14,13 +14,13 @@ ae3b22cc1c23109b9c0350efc0d82c06cce0f1d27b830c2e4ea3f79c5dafcfe4  fx-lab.jar
 47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d  javafx-base-27-linux.jar
 6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8  javafx-controls-27-linux.jar
 93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0  javafx-graphics-27-linux.jar
-java_bin=/home/stevdrey/.sdkman/candidates/java/current/bin/java
+java_bin=$HOME/.sdkman/candidates/java/current/bin/java
 JAVA_TOOL_OPTIONS_effective=
 JDK_JAVA_OPTIONS_effective=
 _JAVA_OPTIONS_effective=
 JAVA_OPTS_effective=
 FX_LAB_OPTS_effective=
-    java.home = /home/stevdrey/.sdkman/candidates/java/27.0.0+35-zulu
+    java.home = $HOME/.sdkman/candidates/java/27.0.0+35-zulu
     java.specification.version = 27
 openjdk version "27" 2026-09-15
 OpenJDK Runtime Environment Zulu27.28+101-CA (build 27+35)
@@ -31,4 +31,4 @@ cpus=16
 model name	: AMD Ryzen 7 7730U with Radeon Graphics
 MemTotal:       15690532 kB
 workload=warmup:50,samples:200,idle:10,installChurn:100
-command=examples/fx-lab/scripts/run-baseline.sh /tmp/claude-1000/-home-stevdrey-Projects-Java-fx-atspi-bridge/2101af77-b39e-4c24-90cb-771add30eec9/scratchpad/bench/after quick
+command=examples/fx-lab/scripts/run-baseline.sh <out>/after quick
