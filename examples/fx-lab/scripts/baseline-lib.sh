@@ -60,41 +60,63 @@ redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 # --- recorded paths ------------------------------------------------------------------------------------------------
 # docs/verification/README.md: captured values are sanitized. Recorded paths must not carry the collector's home
 # directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
-# redact_home -> stdin with the home directory replaced by the literal $HOME wherever it appears as a whole path: the
-# character before it is the line start or not a path character, the one after it is the line end or not a name
-# character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without
-# a usable HOME (unset, empty or only slashes). HOME is read through ENVIRON so backslashes in it are not interpreted.
-redact_home() {
+# home_forms -> the distinct forms of HOME that a tool may print, one per line: the value without trailing slashes, its
+# logical normalization (realpath -ms: //, /. and .. collapsed, links kept) and its physical path (realpath -m: links
+# resolved, e.g. /home -> /var/home). A relative, empty or root HOME yields nothing; realpath is used only when it exists.
+home_forms() {
   local home="${HOME:-}"
   while [ "${home%/}" != "$home" ]; do home="${home%/}"; done  # every trailing slash: /home/u// is /home/u
-  if [ -z "$home" ]; then cat; return; fi
-  REDACT_HOME="$home" awk '
-    BEGIN { home = ENVIRON["REDACT_HOME"]; n = length(home) }
+  case "$home" in /?*) ;; *) return 0 ;; esac  # only an absolute, non-root HOME is usable
+  {
+    printf '%s\n' "$home"
+    if command -v realpath >/dev/null 2>&1; then
+      realpath -ms -- "$home" 2>/dev/null || true
+      realpath -m -- "$home" 2>/dev/null || true
+    fi
+  } | awk 'length($0) > 0 && $0 != "/" && !seen[$0]++'
+}
+
+# redact_home -> stdin with every home_forms value replaced by the literal $HOME wherever it appears as a whole path:
+# the character before it is the line start or not a path character, the one after it is the line end or not a name
+# character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without
+# a usable HOME (unset, empty, relative or only slashes). The forms reach awk through ENVIRON, so backslashes are not interpreted.
+redact_home() {
+  local forms
+  forms="$(home_forms)"
+  if [ -z "$forms" ]; then cat; return; fi
+  REDACT_HOMES="$forms" awk '
+    BEGIN { count = split(ENVIRON["REDACT_HOMES"], homes, "\n") }
     {
-      out = ""; rest = $0
-      while ((i = index(rest, home)) > 0) {
-        before = substr(rest, i - 1, 1)
-        if (i == 1) before = substr(out, length(out), 1)
-        after = substr(rest, i + n, 1)
-        if ((before == "" || before !~ /[A-Za-z0-9._\/-]/) && (after == "" || after !~ /[A-Za-z0-9._-]/)) {
-          out = out substr(rest, 1, i - 1) "$HOME"
-        } else {
-          out = out substr(rest, 1, i - 1 + n)
+      line = $0
+      for (h = 1; h <= count; h++) {
+        home = homes[h]; n = length(home); out = ""; rest = line
+        while ((i = index(rest, home)) > 0) {
+          before = substr(rest, i - 1, 1)
+          if (i == 1) before = substr(out, length(out), 1)
+          after = substr(rest, i + n, 1)
+          if ((before == "" || before !~ /[A-Za-z0-9._\/-]/) && (after == "" || after !~ /[A-Za-z0-9._-]/)) {
+            out = out substr(rest, 1, i - 1) "$HOME"
+          } else {
+            out = out substr(rest, 1, i - 1 + n)
+          }
+          rest = substr(rest, i + n)
         }
-        rest = substr(rest, i + n)
+        line = out rest
       }
-      print out rest
+      print line
     }'
 }
 
-# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>.
+# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>. Control
+# characters become "?", so a directory name cannot inject lines (e.g. "profile=") into environment.txt.
 display_path() {
-  local root="${1%/}" path="${2%/}"
+  local root="${1%/}" path="${2%/}" shown
   case "$path" in
-    "$root") printf '%s\n' . ;;
-    "$root"/*) printf '%s\n' "${path#"$root"/}" ;;  # printf: a directory named -n or -e must not become an echo option
-    *) printf '%s\n' "<out>/${path##*/}" ;;
+    "$root") shown=. ;;
+    "$root"/*) shown="${path#"$root"/}" ;;
+    *) shown="<out>/${path##*/}" ;;
   esac
+  printf '%s\n' "${shown//[[:cntrl:]]/?}"  # printf: a directory named -n or -e must not become an echo option
 }
 
 # command_line ROOT SCRIPT OUT_ABS PROFILE -> the command= line of environment.txt, with display_path paths only.

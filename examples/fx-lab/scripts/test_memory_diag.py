@@ -179,6 +179,7 @@ class SummaryTest(unittest.TestCase):
         self.assertNotIn(d, text)
         repository = pathlib.Path(d, "repo").resolve()
         self.assertEqual(memory_diag.display_path(repository / "docs/data/x", repository), "docs/data/x")
+        self.assertEqual(memory_diag.display_path(pathlib.Path(d, "a`b\nc"), repository), "<out>/a?b?c")
 
     def test_a_missing_artifact_rejects_the_collection_and_names_the_file(self):
         with tempfile.TemporaryDirectory() as d:

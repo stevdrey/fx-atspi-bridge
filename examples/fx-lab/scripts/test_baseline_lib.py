@@ -79,7 +79,7 @@ class RecordedPathTest(unittest.TestCase):
         self.assertEqual(self.redact(list(cases)), list(cases.values()))
 
     def test_without_a_usable_home_nothing_changes(self):
-        for home in ("", "/", "//"):
+        for home in ("", "/", "//", ".", "relative/home"):
             with self.subTest(home=home):
                 self.assertEqual(self.redact(["java_bin=/usr/bin/java"], home), ["java_bin=/usr/bin/java"])
 
@@ -88,10 +88,25 @@ class RecordedPathTest(unittest.TestCase):
             with self.subTest(home=home):
                 self.assertEqual(self.redact(["java_bin=/home/u/x", "home=/home/u"], home), ["java_bin=$HOME/x", "home=$HOME"])
 
+    def test_logical_aliases_of_home_are_redacted(self):
+        for home in ("/home//u", "/home/u/.", "/home/x/../u"):
+            with self.subTest(home=home):
+                self.assertEqual(self.redact(["java_bin=/home/u/x", "/srv/home/u/x"], home), ["java_bin=$HOME/x", "/srv/home/u/x"])
+
+    def test_the_physical_path_of_a_symlinked_home_is_redacted(self):
+        with tempfile.TemporaryDirectory() as d:
+            real = pathlib.Path(d, "real", "u")
+            real.mkdir(parents=True)
+            link = pathlib.Path(d, "link")
+            link.symlink_to(real)
+            lines = self.redact([f"java_bin={link}/jdk/bin/java", f"    java.home = {real.resolve()}/jdk"], str(link))
+        self.assertEqual(lines, ["java_bin=$HOME/jdk/bin/java", "    java.home = $HOME/jdk"])
+
     def test_display_path_is_repository_relative_or_hides_the_parent(self):
         cases = (("/repo /repo", "."), ("/repo /repo/docs/data/x", "docs/data/x"), ("/repo/ /repo/x/", "x"),
                  ("/repo /tmp/claude-1000/abc/scratchpad/quick-after", "<out>/quick-after"), ("/repo /repo2/x", "<out>/x"),
-                 ("/repo /repo/-n", "-n"), ("/repo /repo/-e", "-e"), ("/repo /repo/-E", "-E"))
+                 ("/repo /repo/-n", "-n"), ("/repo /repo/-e", "-e"), ("/repo /repo/-E", "-E"),
+                 ("/repo $'/tmp/x/smoke\\nprofile=full'", "<out>/smoke?profile=full"), ("/repo $'/repo/a\\tb'", "a?b"))
         for args, expected in cases:
             with self.subTest(args=args):
                 self.assertEqual(bash(f"display_path {args}").stdout, expected + "\n")
@@ -99,9 +114,10 @@ class RecordedPathTest(unittest.TestCase):
     def test_command_line_records_no_absolute_paths(self):
         script = "/home/u/repo/examples/fx-lab/scripts/run-baseline.sh"
         for out_abs, expected in (("/tmp/claude-1000/-home-u-repo/0f1e/scratchpad/quick-after", "<out>/quick-after"),
-                                  ("/home/u/repo/build/quick", "build/quick"), ("/home/u/repo/-n", "-n")):
+                                  ("/home/u/repo/build/quick", "build/quick"), ("/home/u/repo/-n", "-n"),
+                                  ("/tmp/x/smoke\nprofile=full", "<out>/smoke?profile=full")):
             with self.subTest(out_abs=out_abs):
-                out = bash(f'command_line /home/u/repo "{script}" "{out_abs}" quick', env={"HOME": "/home/u"})
+                out = bash(f'command_line /home/u/repo "{script}" "$OUT" quick', env={"HOME": "/home/u", "OUT": out_abs})
                 self.assertEqual(out.stdout, f"command=examples/fx-lab/scripts/run-baseline.sh {expected} quick\n")
 
     def test_write_environment_redacts_every_line(self):

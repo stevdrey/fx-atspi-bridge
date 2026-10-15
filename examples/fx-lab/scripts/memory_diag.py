@@ -20,6 +20,8 @@ JAVAFX_MODULE = re.compile(r"^javafx\.")
 # The summary may be committed (docs/verification/README.md: captured values are sanitized): the data directory is shown
 # relative to the repository, or as <out>/<name> when it lies outside it.
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
+# Control characters and backticks in a directory name would break the `Source:` code span of the summary.
+UNSAFE_IN_CODE_SPAN = re.compile(r"[\x00-\x1f\x7f`]")
 WATCHED_CLASSES = ("javafx.scene.control.TextField", "javafx.scene.control.Button", "javafx.scene.Scene",
                    "javafx.scene.layout.VBox")
 # Phase -> (checkpoint before, checkpoints after) whose differences are reported.
@@ -312,12 +314,14 @@ def load(data):
 
 
 def display_path(data, root=REPOSITORY):
-    """data relative to root (an absolute, resolved path), or <out>/<name> when it lies outside it."""
+    """data relative to root (an absolute, resolved path), or <out>/<name> outside it; control characters and backticks
+    become "?"."""
     data = pathlib.Path(data).resolve()
     try:
-        return data.relative_to(root).as_posix()
+        shown = data.relative_to(root).as_posix()
     except ValueError:
-        return f"<out>/{data.name}"
+        shown = f"<out>/{data.name}"
+    return UNSAFE_IN_CODE_SPAN.sub("?", shown)
 
 
 def label(key):
