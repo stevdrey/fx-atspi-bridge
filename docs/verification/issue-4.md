@@ -10,11 +10,11 @@ Fedora 44, kernel 7.2.9-201.fc44, Zulu JDK 27 (27+35), JavaFX 27 per Gradle, Gra
 
 | Command | Result |
 |---|---|
-| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 20 + 5 tests (after the Codex review), 0 failures (no native library or toolkit needed) |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 19 tests (after the Codex review), 0 failures, 0 skipped |
-| `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 8 tests (after the Codex review), 0 failures, 0 skipped |
+| `./gradlew test --tests '*CommandCoordinatorTest' --tests '*ActionLimitsTest'` | 20 + 5 tests (after both reviews), 0 failures (no native library or toolkit needed) |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ProviderLifecycleTest'` | 20 tests (after both reviews), 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 ./gradlew test --tests '*ActionExecutorTest'` | 9 tests (after both reviews), 0 failures, 0 skipped |
 | `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest test --tests '*ModalActionTest'` | 1 test, 0 failures; printed `modal-read-latency-ms (gdbus process included) p50=10 max=12` over 20 reads |
-| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, **92 tests** after the Codex review fixes; 0 failures, 0 skipped |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew cleanTest check` | BUILD SUCCESSFUL; 86 tests on `d7d596b`, 92 after the Codex review fixes (`38204fd`), **94 tests** after the local review fixes; 0 failures, 0 skipped |
 | `./gradlew javadoc` | no warnings for the library (the 6 warnings are in `examples/fx-lab`, unchanged) |
 | `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | 98 tests OK (skipped=1, optional Atspi bindings), unchanged scripts |
 
@@ -85,6 +85,20 @@ Four findings, all confirmed against the code and fixed. Each fix has a test tha
 | P1: `while (ffi.iterate(context)) {}` was unbounded, so continuous bus traffic could starve drain and expiry | at most 64 ready iterations per loop pass (`dispatchBatch`), then drain/expire/reconcile; the 5 ms sleep only when the context went idle | `glibDispatchIsBoundedSoProviderWorkIsNotStarved` |
 
 **Starvation reproduction attempt (not kept).** A PyGObject client keeping 512 `GetRole` calls pipelined for 6 s did not keep the provider's context continuously ready: with the old unbounded loop and with the new batch, a queued action with a 200 ms deadline was answered as expired in 237–255 ms (3 runs each) while the flood was still running. The test could not tell the two loops apart, so it was dropped. The fix is verified by the unit test and by construction, not by an end-to-end reproduction of the starvation.
+
+## Local `/code-review` (high effort) on `38204fd`
+
+Five findings against the PR diff (`origin/main...HEAD`); all fixed.
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| Correctness: only `stop()` closed the coordinator. On registration failure or bus loss it was closed only in `cancelAll`, after `drainEmbed` (up to ~1 s), so a queued action could still start after the provider had stopped itself. The removed `runOnFx` `running` check used to refuse it | One `halt()` (clears `running`, closes the coordinator) used by `stop()`, the registration-failure callback, the bus-loss branch and the first line of teardown, always before the status report | `queuedActionNeverStartsAfterARegistrationFailure`: a stalled registry is killed so the pending `Embed` fails with `NoReply`, and the held FX task is released from the failure status callback. Mutant (failure paths only set `running = false`): failed **5/5** runs with `expected: <0> but was: <1>` presses. Fixed code: passed 5/5. The test depends on the status thread running after the provider thread reached teardown, so it is strong evidence but not a proof for every interleaving |
+| Correctness: an unowned `WINDOW_MODAL` stage (modeless in JavaFX) counted as a newer modal and escaped an application-modal dialog | `effectiveModality(Stage)` (unowned window-modal → `NONE`), used by `blockedByModal` and `supersededBy` | `unownedWindowModalStageIsModelessAndStaysBlocked` (fails when `effectiveModality` returns the raw modality) |
+| Simplification: teardown drained before `cancelAll`, which drains after closing | standalone drain removed | existing shutdown tests |
+| Simplification: the FX-side same-target refusal (`runningTargets`) was unreachable, because admission never admits a second command for a queued or running target | set and branch removed; only the depth refusal remains on the FX side | `sameTargetConflictsWhileQueuedOrRunning`, `nestedActionOnTheDialogRunsAndDeeperNestingIsRefusedOnTheFxThread` |
+| Efficiency: a capturing lambda was allocated on every provider loop pass | the `BooleanSupplier` is created once before the loop | no behavior change; full suite |
+
+The desktop smoke was not rerun for these changes: they do not alter the application-modal scenario, the replies or the loop timing it exercises.
 
 ## Measurement against SC-01
 

@@ -16,10 +16,8 @@
 package dev.desktopcontrol.fxatspi;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,7 +62,6 @@ final class CommandCoordinator {
     private long nextId; // provider thread only
     private volatile boolean closed;
     private int depth; // FX thread only
-    private final Set<String> runningTargets = new HashSet<>(); // FX thread only
     private final AtomicLong lateCompletions = new AtomicLong(), droppedCompletions = new AtomicLong();
 
     CommandCoordinator(ActionLimits limits, LongSupplier clock) {
@@ -111,10 +108,10 @@ final class CommandCoordinator {
             if (command.phase.compareAndSet(Phase.QUEUED, Phase.EXPIRED)) post(new Completion(command.id, false, Rejected.EXPIRED));
             return;
         }
-        // Admission already checked both, but a command queued before another one started can reach a nested loop.
-        var refusal = depth >= maxNested ? Rejected.NESTING : runningTargets.contains(command.target) ? Rejected.CONFLICT : null;
-        if (refusal != null) {
-            if (command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED)) post(new Completion(command.id, false, refusal));
+        // Admission counted running commands, but one queued before another started can reach a deeper nested loop.
+        // (A second command for a running target is never admitted, so only the depth needs checking here.)
+        if (depth >= maxNested) {
+            if (command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED)) post(new Completion(command.id, false, Rejected.NESTING));
             return;
         }
         command.startedAt = now;
@@ -122,12 +119,11 @@ final class CommandCoordinator {
         // Shutdown may have begun between the check above and the transition; it answers every command, so just stop.
         if (closed) { command.phase.set(Phase.CANCELLED); return; }
         depth++;
-        runningTargets.add(command.target);
         var accepted = false;
         Throwable failure = null;
         try { accepted = command.operation.apply(); }
         catch (Throwable error) { failure = error; }
-        finally { depth--; runningTargets.remove(command.target); }
+        finally { depth--; }
         command.phase.set(failure == null ? Phase.COMPLETED : Phase.FAILED);
         post(new Completion(command.id, accepted, failure));
     }

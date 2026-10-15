@@ -482,4 +482,36 @@ class ProviderLifecycleTest {
             assertTrue(statuses.stream().noneMatch(s -> s.contains("registrar")), statuses.toString());
         } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
     }
+    /**
+     * The registry dies with the Embed call pending, so registration fails and the provider stops by itself. The
+     * queued FX task is released from the failure status callback: by then the provider must refuse to start it.
+     */
+    @Test void queuedActionNeverStartsAfterARegistrationFailure() throws Exception {
+        var script = Files.createTempFile("stalled-registry", ".py");
+        var registry = startStalledRegistry(script);
+        try {
+            var heldTasks = new CopyOnWriteArrayList<Runnable>();
+            var port = new CountingPort();
+            var ranFromStatus = new CountDownLatch(1);
+            Consumer<String> status = message -> {
+                statuses.add(message);
+                if (message.contains("registrar")) { heldTasks.forEach(Runnable::run); ranFromStatus.countDown(); }
+            };
+            var provider = new AtSpiProvider(status, () -> buttons("button1"), port, ffi -> address, true,
+                    heldTasks::add, new ActionLimits(4, 2, Duration.ofSeconds(60), Duration.ofSeconds(60)));
+            providers.add(provider);
+            provider.start();
+            await(provider, State.RUNNING);
+            awaitEmbedOutstanding(provider);
+            var call = doAction(provider, "button1");
+            awaitTrue(() -> heldTasks.size() == 1, "the action must be queued before registration fails");
+            PrivateBus.terminate(registry); // the bus answers the pending Embed with NoReply
+            assertTrue(ranFromStatus.await(WAIT_SECONDS, TimeUnit.SECONDS), "registration failure must be reported");
+            awaitTermination(provider);
+            assertEquals(State.FAILED, provider.state());
+            assertEquals(0, port.presses.get(), "a queued action must not start once the provider has stopped itself");
+            assertTrue(output(call).contains("Provider stopped"));
+            assertEquals(provider.pendingAcquired(), provider.pendingReleased());
+        } finally { PrivateBus.terminate(registry); Files.deleteIfExists(script); }
+    }
 }

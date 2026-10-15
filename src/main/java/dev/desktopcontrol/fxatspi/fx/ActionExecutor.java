@@ -72,7 +72,7 @@ public final class ActionExecutor implements ActionPort {
         var windows = Window.getWindows();
         for (int i = 0; i < windows.size(); i++) {
             if (!(windows.get(i) instanceof Stage modal) || modal == window || !modal.isShowing()) continue;
-            var modality = modal.getModality();
+            var modality = effectiveModality(modal);
             if (modality == Modality.NONE || ownedBy(window, modal) || supersededBy(window, i, windows)) continue;
             if (modality == Modality.APPLICATION_MODAL || ownedBy(modal, window)) return true;
         }
@@ -82,10 +82,16 @@ public final class ActionExecutor implements ActionPort {
     /** True when {@code window} or one of its owners is a showing modal stage shown after position {@code modal}. */
     private static boolean supersededBy(Window window, int modal, List<Window> windows) {
         for (var current = window; current != null; current = owner(current)) {
-            if (current instanceof Stage stage && stage.isShowing() && stage.getModality() != Modality.NONE
+            if (current instanceof Stage stage && stage.isShowing() && effectiveModality(stage) != Modality.NONE
                     && windows.indexOf(stage) > modal) return true;
         }
         return false;
+    }
+
+    /** JavaFX treats a window-modal stage without an owner as modeless. */
+    private static Modality effectiveModality(Stage stage) {
+        var modality = stage.getModality();
+        return modality == Modality.WINDOW_MODAL && stage.getOwner() == null ? Modality.NONE : modality;
     }
 
     /** True when {@code ancestor} is in the owner chain of {@code window}. */

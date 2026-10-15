@@ -151,11 +151,15 @@ final class AtSpiProvider {
     }
     /** Nonblocking and idempotent. Never touches GLib: the provider thread performs all native cleanup. */
     void stop() {
-        running = false;
-        commands.close(); // queued FX tasks cancel themselves; teardown answers them
+        halt();
         if (state.compareAndSet(State.NEW, State.CLOSED)) { complete(); return; }
         state.updateAndGet(current -> current == State.STARTING || current == State.RUNNING ? State.STOPPING : current);
     }
+    /**
+     * Stops accepting work: new requests are rejected and queued FX tasks no longer start (teardown answers them).
+     * Every way the provider stops goes through here before anything else happens. Any thread.
+     */
+    private void halt() { running = false; commands.close(); }
     private MemorySegment stub(String method, MemoryLayout result, int count) throws ReflectiveOperationException {
         var parameters = new Class<?>[count]; Arrays.fill(parameters, MemorySegment.class);
         var layouts = new MemoryLayout[count]; Arrays.fill(layouts, ADDRESS);
@@ -186,13 +190,14 @@ final class AtSpiProvider {
                 if (embed) embedWithRegistry();
                 state.compareAndSet(State.STARTING, State.RUNNING);
                 var loopContext = context;
+                BooleanSupplier dispatch = () -> ffi.iterate(loopContext);
                 while (running) {
-                    if (busClosed()) { failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
+                    if (busClosed()) { halt(); failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
                     commands.drain(this::answer);
                     commands.expire(this::answer);
                     reconcile();
                     // Bounded so continuous bus traffic cannot starve completion, expiry and reconcile work.
-                    if (!dispatchBatch(() -> ffi.iterate(loopContext))) Thread.sleep(5);
+                    if (!dispatchBatch(dispatch)) Thread.sleep(5);
                 }
             } finally {
                 teardown(context, pushed);
@@ -279,12 +284,11 @@ final class AtSpiProvider {
     }
     /** Runs on the provider thread; every step is independent so one failure cannot skip the rest. */
     private void teardown(MemorySegment context, boolean pushed) {
-        running = false; registered = false; // from here on mutate() rejects new work
+        halt(); registered = false; // from here on mutate() rejects new work and queued actions never start
         drainEmbed(context);
         EMBED_TARGETS.remove(embedId);
         if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
-        guarded(() -> commands.drain(this::answer));
-        guarded(() -> commands.cancelAll(this::answer));
+        guarded(() -> commands.cancelAll(this::answer)); // drains finished actions first, after closing
         for (var invocation : List.copyOf(pending.values())) {
             guarded(() -> error(invocation, Rejected.STOPPED));
             guarded(() -> releaseInvocation(invocation));
@@ -394,7 +398,7 @@ final class AtSpiProvider {
             System.err.println("FX AT-SPI Lab ready: " + busName + " " + ROOT_PATH);
         } catch (Throwable error) {
             if (!running) return; // a cancelled or failed completion during shutdown is expected
-            registrationFailure = error; running = false; report("Error al registrar AT-SPI2: " + code(error), true);
+            registrationFailure = error; halt(); report("Error al registrar AT-SPI2: " + code(error), true);
         }
     }
     private static MemorySegment sync(Ffm nativeApi, MemorySegment bus, String destination, String path, String iface, String method, String parameters) {

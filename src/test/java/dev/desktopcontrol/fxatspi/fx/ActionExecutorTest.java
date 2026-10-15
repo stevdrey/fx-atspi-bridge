@@ -159,6 +159,17 @@ class ActionExecutorTest {
             return null;
         });
     }
+    @Test void unownedWindowModalStageIsModelessAndStaysBlocked() throws Exception {
+        onFx(() -> {
+            var fixture = new Fixture();
+            fixture.dialog(Modality.APPLICATION_MODAL, null);
+            var unowned = fixture.dialog(Modality.WINDOW_MODAL, null); // JavaFX treats it as Modality.NONE
+            assertTrue(ActionExecutor.blockedByModal(unowned), "a modeless window cannot supersede an application-modal dialog");
+            var ok = (Button) ((VBox) unowned.getScene().getRoot()).getChildren().getFirst();
+            assertFalse(fixture.executor.press(fixture.id(ok)));
+            return null;
+        });
+    }
     @Test void nestedModalDialogSupersedesTheEarlierOne() throws Exception {
         onFx(() -> {
             var fixture = new Fixture();
