@@ -169,6 +169,27 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| structural n=100 bridge on plain | structuralBefore | 0.01 (0.01–0.01) | 309 (309–309) |", text)
         self.assertNotIn("--secret-path", text)
 
+    def test_the_source_line_records_no_absolute_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "install10k-after")
+            root.mkdir()
+            self.write_reps(root)
+            text = memory_diag.summary(root)
+        self.assertIn("Source: `<out>/install10k-after`.", text)
+        self.assertNotIn(d, text)
+        repository = pathlib.Path(d, "repo").resolve()
+        self.assertEqual(memory_diag.display_path(repository / "docs/data/x", repository), "docs/data/x")
+        self.assertEqual(memory_diag.display_path(pathlib.Path(d, "a`b\nc"), repository), "<out>/a?b?c")
+
+    def test_a_carriage_return_in_another_record_adds_no_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root)
+            environment = root / "environment.txt"
+            environment.write_bytes(environment.read_bytes() + b"    java.home = /opt/jdk\rplan=structural:100:9:on:plain:5:0\n")
+            text = memory_diag.summary(root)
+        self.assertIn("| structural n=100 bridge on plain | 3 | structural |", text)
+
     def test_a_missing_artifact_rejects_the_collection_and_names_the_file(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)

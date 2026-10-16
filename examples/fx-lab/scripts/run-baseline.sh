@@ -41,6 +41,7 @@ bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
   require_allowed_opts "$opts_var" "${!opts_var:-}" || exit 1
 done
+require_safe_home || exit 1
 
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd -P)"  # physical path: a symlinked output directory must not hide stale results
@@ -58,8 +59,8 @@ else
   {
     print_environment "$root" "$head_sha" "$profile" "$limits" "$java_bin" "${plan[@]}"
     echo "workload=warmup:$warmup,samples:$samples,idle:$idle_seconds,installChurn:$install_churn"
-    echo "command=$0 $*"
-  } > "$out_abs/environment.txt"
+    command_line "$root" "$script_dir/${0##*/}" "$out_abs" "$profile"
+  } | write_environment "$out_abs/environment.txt"
 fi
 for entry in "${plan[@]}"; do
   IFS=: read -r nodes reps dirties structural <<< "$entry"

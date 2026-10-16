@@ -57,6 +57,146 @@ require_default_allocator() {
 # The JVM echoes "[NOTE: ]Picked up <VAR>: <value>"; never let that value reach a retained file.
 redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 
+# --- recorded paths ------------------------------------------------------------------------------------------------
+# docs/verification/README.md: captured values are sanitized. Recorded paths must not carry the collector's home
+# directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
+# strip_trailing_slashes VALUE -> VALUE without any trailing "/" ("/opt/jdk//" is "/opt/jdk", "/" is ""), no newline.
+strip_trailing_slashes() {
+  local value="$1"
+  while [ "${value%/}" != "$value" ]; do value="${value%/}"; done
+  printf '%s' "$value"
+}
+
+# home_forms -> the distinct forms of HOME that a tool may print, one per line: the value without trailing slashes, its
+# logical normalization (realpath -ms: //, /. and .. collapsed, links kept) and its physical path (realpath -m: links
+# resolved, e.g. /home -> /var/home). A relative, empty or root HOME, or one containing a control character (the forms
+# are newline-separated, so a newline in HOME would split it into fake forms), yields nothing; realpath is used only
+# when it exists.
+home_forms() {
+  local home
+  home="$(strip_trailing_slashes "${HOME:-}")"  # every trailing slash: /home/u// is /home/u
+  case "$home" in /?*) ;; *) return 0 ;; esac  # only an absolute, non-root HOME is usable
+  case "$home" in *[[:cntrl:]]*) return 0 ;; esac
+  {
+    printf '%s\n' "$home"
+    if command -v realpath >/dev/null 2>&1; then
+      realpath -ms -- "$home" 2>/dev/null || true
+      realpath -m -- "$home" 2>/dev/null || true
+    fi
+  } | awk 'length($0) > 0 && $0 != "/" && !seen[$0]++'
+}
+
+# require_safe_home -> 1 (message on stderr, value never printed) when HOME contains a control character. Such a HOME
+# cannot be redacted (home_forms would split it), and a JDK or path beneath it would still reach environment.txt with
+# only its control characters encoded, so the collection is refused instead of silently recording it.
+require_safe_home() {
+  case "${HOME:-}" in
+    *[[:cntrl:]]*)
+      echo "Refusing to run: HOME contains a control character (value not printed); it cannot be redacted from environment.txt. Run with a HOME without control characters." >&2
+      return 1 ;;
+  esac
+}
+
+# redact_home -> stdin with every home_forms value replaced by the literal $HOME wherever it appears as a whole path:
+# the character before it is the line start or not a path character, the one after it is the line end or not a name
+# character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without
+# a usable HOME (unset, empty, relative or only slashes). The forms reach awk through ENVIRON, so backslashes are not interpreted.
+redact_home() {
+  local forms
+  forms="$(home_forms)"
+  if [ -z "$forms" ]; then cat; return; fi
+  REDACT_HOMES="$forms" LC_ALL=C awk '
+    BEGIN { count = split(ENVIRON["REDACT_HOMES"], homes, "\n") }
+    {
+      line = $0
+      for (h = 1; h <= count; h++) {
+        home = homes[h]; n = length(home); out = ""; rest = line
+        while ((i = index(rest, home)) > 0) {
+          before = substr(rest, i - 1, 1)
+          if (i == 1) before = substr(out, length(out), 1)
+          after = substr(rest, i + n, 1)
+          if ((before == "" || before !~ /[A-Za-z0-9._\/-]/) && (after == "" || after !~ /[A-Za-z0-9._-]/)) {
+            out = out substr(rest, 1, i - 1) "$HOME"
+          } else {
+            out = out substr(rest, 1, i - 1 + n)
+          }
+          rest = substr(rest, i + n)
+        }
+        line = out rest
+      }
+      print line
+    }'
+}
+
+# one_line VALUE -> VALUE with every control character replaced by "?". Every value environment.txt takes from the
+# environment or a path goes through it, so a newline in it cannot inject records such as "profile=" or "plan=" that
+# resume_matches compares.
+one_line() {
+  local value="$1"
+  printf '%s\n' "${value//[[:cntrl:]]/?}"  # printf: a value such as -n or -e must not become an echo option
+}
+
+# display_path ROOT PATH -> PATH relative to ROOT when it lies inside it, otherwise <out>/<last component>, as one line.
+display_path() {
+  local root="${1%/}" path="${2%/}" shown
+  case "$path" in
+    "$root") shown=. ;;
+    "$root"/*) shown="${path#"$root"/}" ;;
+    *) shown="<out>/${path##*/}" ;;
+  esac
+  one_line "$shown"
+}
+
+# command_line ROOT SCRIPT OUT_ABS PROFILE -> the command= line of environment.txt, with display_path paths only.
+command_line() {
+  printf 'command=%s %s %s\n' "$(display_path "$1" "$2")" "$(display_path "$1" "$3")" "$4"
+}
+
+# one_record_per_line -> stdin with every character that a reader may treat as a line break, other than "\n", replaced
+# by "?": C0 controls except tab (\r, \v, \f, \x1c-\x1e ...), DEL, and the UTF-8 forms of U+0085, U+2028 and U+2029,
+# which Python's str.splitlines() also splits on. Tab stays; it is part of recorded lines such as "model name\t:".
+one_record_per_line() {
+  LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); gsub(/\302\205|\342\200\250|\342\200\251/, "?"); print }'
+}
+
+# sanitize_records -> stdin through redact_home and one_record_per_line: the home directory as $HOME, one record per line.
+sanitize_records() {
+  redact_home | one_record_per_line
+}
+
+# uncovered_absolute_path_lines FILE -> the numbers of the lines of FILE that hold an absolute path no placeholder
+# covers, one per line. A "/" is decided by the byte BEFORE it, never by what follows (so "//x", "/~x", "/éx" and a bare
+# "/" all count): it is covered only after an ASCII name character [A-Za-z0-9._-] (a relative path component, or $HOME),
+# ">" (<jdk>/, <out>/, <socket>/), another "/" (a//b inside a relative path) or a non-ASCII byte (a relative component
+# such as café/). Any other "/", including one at the start of a line, starts an uncovered absolute path.
+uncovered_absolute_path_lines() {
+  LC_ALL=C awk '/(^|[^A-Za-z0-9._>\/\200-\377-])\// { print NR }' "$1"
+}
+
+# write_environment FILE -> writes stdin to FILE through sanitize_records, then fails closed: when a line still holds an
+# absolute path outside the placeholders ($HOME, <jdk>, <out>, <socket>), FILE is removed and 1 returned, naming only
+# the line number. Every collection writes environment.txt only through this function, so a new line that prints a path
+# (print_environment, a child process such as the JVM, or a script's own) refuses the collection instead of leaking.
+write_environment() {
+  local file="$1" lines
+  sanitize_records > "$file"
+  lines="$(uncovered_absolute_path_lines "$file" | tr '\n' ' ')"
+  if [ -n "$lines" ]; then
+    rm -f "$file"
+    echo "Refusing to run: environment.txt line(s) ${lines% } would record an absolute path outside \$HOME, <jdk>, <out> and <socket> (values not printed). Sanitize that source in baseline-lib.sh." >&2
+    return 1
+  fi
+}
+
+# socket_display VALUE -> a display name for environment.txt: names such as wayland-0 or :0 unchanged, an absolute
+# socket path (WAYLAND_DISPLAY or DISPLAY may be one, e.g. /run/user/1000/<session>/wayland-0) as <socket>/<last
+# component>, so no user- or session-specific directory is recorded.
+socket_display() {
+  local value="$1"
+  case "$value" in */*) value="<socket>/${value##*/}" ;; esac
+  printf '%s' "$value"
+}
+
 # --- clean tree ----------------------------------------------------------------------------------------------------
 # check_clean_tree ROOT OUT_ABS -> 0 when tracked/untracked files outside OUT_ABS match HEAD. The exclusion is a literal
 # pathspec (glob characters in the directory name must not widen it) and a failing git is never read as "clean".
@@ -110,9 +250,40 @@ require_fresh_or_resumable() {
   return 1
 }
 
+# jdk_bin_display JAVA_BIN -> the java launcher without the directories above the JDK: <jdk>/<JDK directory>/bin/java
+# for .../<JDK directory>/bin/java, <jdk>/<name> for another path, and "java" (a PATH lookup) as it is. A JDK may live
+# in a user- or session-specific place outside HOME (/mnt/users/<user>/jdks/27, /tmp/<session>/jdk), and its version
+# is recorded by java -version, so no JDK parent directory is recorded.
+jdk_bin_display() {
+  local bin="$1" name
+  case "$bin" in
+    */bin/java) name="$(strip_trailing_slashes "${bin%/bin/java}")"; name="${name##*/}"; one_line "<jdk>${name:+/$name}/bin/java" ;;
+    */*) one_line "<jdk>/${bin##*/}" ;;
+    *) one_line "$bin" ;;
+  esac
+}
+
+# jdk_home_display -> stdin with the value of every "java.home = " line reduced to <jdk>/<JDK directory>, for the
+# same reason as jdk_bin_display; other lines unchanged.
+jdk_home_display() {
+  local line value name
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *"java.home = "*)
+        value="$(strip_trailing_slashes "${line#*java.home = }")"
+        name="${value##*/}"
+        line="${line%%java.home = *}java.home = <jdk>${name:+/$name}" ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+
 # print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
 # commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
-# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware.
+# view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. Values taken from the
+# environment go through one_line; the java.home line is filtered by grep, so a newline in it cannot add a record.
+# JDK locations keep only the JDK directory name (jdk_bin_display, jdk_home_display). Callers pipe it into
+# write_environment, which records the home directory as $HOME.
 print_environment() {
   local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
   shift 5
@@ -120,18 +291,18 @@ print_environment() {
   echo "git=$head_sha"
   echo "tree=clean"
   echo "profile=$profile"
-  echo "idle_inhibit=${BASELINE_INHIBITED:-no}"
+  one_line "idle_inhibit=${BASELINE_INHIBITED:-no}"
   for entry in "$@"; do echo "plan=$entry"; done
   echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
-  echo "java_bin=$java_bin"
+  printf 'java_bin=%s\n' "$(jdk_bin_display "$java_bin")"
   for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
-    echo "${opts_var}_effective=${!opts_var:-}"
+    one_line "${opts_var}_effective=${!opts_var:-}"
   done
-  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
-  "$java_bin" -version 2>&1 | redact_picked_up | head -3
-  echo "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
+  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version" | jdk_home_display
+  "$java_bin" -version 2>&1 | redact_picked_up | head -3 | jdk_home_display
+  one_line "session=${XDG_SESSION_TYPE:-unknown} wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")"
   uname -srm
   echo "cpus=$(nproc)"
   grep -m1 'model name' /proc/cpuinfo || true
@@ -141,7 +312,8 @@ print_environment() {
 # --- one benchmark cell --------------------------------------------------------------------------------------------
 # run_cell MAX_ATTEMPTS NAME OUT_DIR COMMAND... -> runs COMMAND, stores its redacted output in OUT_DIR/NAME.log and
 # retries only when it exits with 3 (the harness' "invalid run": throttled display, stall). Every retry is appended to
-# OUT_DIR/retries.txt so it stays visible in the evidence. Any other failure (2, timeouts, ...) is returned untouched.
+# OUT_DIR/retries.txt so it stays visible in the evidence; retries.txt may be committed, so its lines go through one_line and
+# sanitize_records like environment.txt. Any other failure (2, timeouts, ...) is returned untouched.
 run_cell() {
   local max="$1" name="$2" out="$3" attempt=1 rc raw reason
   shift 3
@@ -152,7 +324,7 @@ run_cell() {
     rm -f "$raw"
     if [ "$rc" -eq 3 ] && [ "$attempt" -lt "$max" ]; then
       reason="$(grep -m1 'bench invalid' "$out/$name.log" || true)"
-      printf '%s attempt=%d exit=3 %s\n' "$name" "$attempt" "${reason:-no reason logged}" >> "$out/retries.txt"
+      one_line "$name attempt=$attempt exit=3 ${reason:-no reason logged}" | sanitize_records >> "$out/retries.txt"
       attempt=$((attempt + 1))
       continue
     fi

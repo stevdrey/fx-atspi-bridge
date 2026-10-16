@@ -38,7 +38,7 @@ MAX_STRUCTURAL_S_PER_CYCLE = LIMITS["MAX_STRUCTURAL_S_PER_CYCLE"]
 def read_plan():
     """plan=nodes:reps:dirty-list:structural-cycles lines written by run-baseline.sh."""
     plan = {}
-    for line in open(f"{DATA}/environment.txt"):
+    for line in open(f"{DATA}/environment.txt", newline="\n"):  # records end only at \n, not at \r
         if line.startswith("plan="):
             nodes, reps, dirties, structural = line.strip().split("=", 1)[1].split(":")
             plan[int(nodes)] = (int(reps), tuple(int(d) for d in dirties.split(",")), int(structural))
@@ -59,7 +59,7 @@ WAIVER_MANIFEST = pathlib.Path(DATA) / "legacy-waiver.sha256"
 
 
 def environment_value(key):
-    for line in open(f"{DATA}/environment.txt"):
+    for line in open(f"{DATA}/environment.txt", newline="\n"):
         if line.startswith(key + "="):
             return line.strip().split("=", 1)[1]
     return None

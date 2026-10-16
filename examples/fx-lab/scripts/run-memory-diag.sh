@@ -46,6 +46,7 @@ for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LA
   case "${!opts_var:-}" in *NativeMemoryTracking*) echo "Refusing to run: $opts_var sets NativeMemoryTracking; the script sets it per cell." >&2; exit 1 ;; esac
 done
 require_default_allocator || exit 1
+require_safe_home || exit 1
 command -v pmap >/dev/null || { echo "Refusing to run: pmap (procps-ng) is required." >&2; exit 1; }
 
 mkdir -p "$out"
@@ -68,7 +69,7 @@ else
     echo "allocator_env=default (GLIBC_TUNABLES, LD_PRELOAD and MALLOC_* unset; variants are set per cell)"
     echo "glib2=$(rpm -q glib2 2>/dev/null || echo unknown)"
     echo "pmap=$(pmap -V 2>&1 | head -1)"
-  } > "$out_abs/environment.txt"
+  } | write_environment "$out_abs/environment.txt"
 fi
 
 for entry in "${plan[@]}"; do

@@ -17,6 +17,11 @@ import sys
 CELL = re.compile(r"^(?P<kind>[a-z]+)-n(?P<nodes>\d+)-(?P<bridge>on|off)-(?P<variant>[a-z0-9]+)-r(?P<rep>\d+)$")
 BRIDGE_MODULE = "dev.desktopcontrol.fxatspi"
 JAVAFX_MODULE = re.compile(r"^javafx\.")
+# The summary may be committed (docs/verification/README.md: captured values are sanitized): the data directory is shown
+# relative to the repository, or as <out>/<name> when it lies outside it.
+REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
+# Control characters and backticks in a directory name would break the `Source:` code span of the summary.
+UNSAFE_IN_CODE_SPAN = re.compile(r"[\x00-\x1f\x7f`]")
 WATCHED_CLASSES = ("javafx.scene.control.TextField", "javafx.scene.control.Button", "javafx.scene.Scene",
                    "javafx.scene.layout.VBox")
 # Phase -> (checkpoint before, checkpoints after) whose differences are reported.
@@ -274,7 +279,7 @@ def planned_runs(environment):
     """Run names the collection planned: plan=kind:nodes:reps:bridges:variants:structural:install lines written by
     run-memory-diag.sh into environment.txt."""
     names = set()
-    for line in environment.splitlines():
+    for line in environment.split("\n"):  # records end only at \n: splitlines() would also split at \r, \x85, U+2028 ...
         if not line.startswith("plan="):
             continue
         fields = line.split("=", 1)[1].strip().split(":")
@@ -293,7 +298,8 @@ def load(data):
     environment = data / "environment.txt"
     if not environment.is_file():
         sys.exit(f"{environment} is missing; refusing to summarise a collection whose plan is unknown")
-    planned = planned_runs(environment.read_text())
+    with open(environment, newline="\n") as file:  # no universal-newline translation of \r
+        planned = planned_runs(file.read())
     if not planned:
         sys.exit(f"{environment} has no plan= lines; refusing to summarise a collection whose plan is unknown")
     found = {path.stem for path in data.glob("*.json")}
@@ -308,6 +314,17 @@ def load(data):
     return cells
 
 
+def display_path(data, root=REPOSITORY):
+    """data relative to root (an absolute, resolved path), or <out>/<name> outside it; control characters and backticks
+    become "?"."""
+    data = pathlib.Path(data).resolve()
+    try:
+        shown = data.relative_to(root).as_posix()
+    except ValueError:
+        shown = f"<out>/{data.name}"
+    return UNSAFE_IN_CODE_SPAN.sub("?", shown)
+
+
 def label(key):
     kind, nodes, bridge, variant = key
     return f"{kind} n={nodes} bridge {bridge} {variant}"
@@ -317,7 +334,7 @@ def summary(data):
     data = pathlib.Path(data)
     cells = load(data)
     artifacts = load_artifacts(data, cells)
-    out = [f"# Memory diagnostics summary\n\nSource: `{data}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
+    out = [f"# Memory diagnostics summary\n\nSource: `{display_path(data)}`. Values: median (min–max) over repetitions; MB = 1024 KB.\n"]
 
     out.append("## Phase deltas (MB, after − before)\n")
     out.append("Snapshot cost: RSS added by the diagnostic snapshots taken inside the interval (the phase's own \"before\" "

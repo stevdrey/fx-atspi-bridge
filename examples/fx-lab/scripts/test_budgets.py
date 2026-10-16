@@ -245,6 +245,11 @@ class BudgetsTest(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("mixed collection", out.stderr + out.stdout)
 
+    def test_a_carriage_return_in_another_record_adds_no_plan(self):
+        out = self.collect(self.runs([20.0, 20.0], 0), plan=self.ENV + "    java.home = /opt/jdk\rplan=1000:2:10:10\n")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn("1,000 nodes", out.stdout)
+
     def test_directory_without_plan_is_rejected(self):
         out = self.collect(self.runs([20.0, 20.0], 0), plan="git=abc123\nprofile=quick\nreps=2\n")
         self.assertNotEqual(out.returncode, 0)
