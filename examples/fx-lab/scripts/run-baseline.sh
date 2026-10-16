@@ -41,6 +41,7 @@ bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
   require_allowed_opts "$opts_var" "${!opts_var:-}" || exit 1
 done
+require_safe_home || exit 1
 
 mkdir -p "$out"
 out_abs="$(cd "$out" && pwd -P)"  # physical path: a symlinked output directory must not hide stale results

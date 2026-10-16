@@ -79,6 +79,17 @@ home_forms() {
   } | awk 'length($0) > 0 && $0 != "/" && !seen[$0]++'
 }
 
+# require_safe_home -> 1 (message on stderr, value never printed) when HOME contains a control character. Such a HOME
+# cannot be redacted (home_forms would split it), and a JDK or path beneath it would still reach environment.txt with
+# only its control characters encoded, so the collection is refused instead of silently recording it.
+require_safe_home() {
+  case "${HOME:-}" in
+    *[[:cntrl:]]*)
+      echo "Refusing to run: HOME contains a control character (value not printed); it cannot be redacted from environment.txt. Run with a HOME without control characters." >&2
+      return 1 ;;
+  esac
+}
+
 # redact_home -> stdin with every home_forms value replaced by the literal $HOME wherever it appears as a whole path:
 # the character before it is the line start or not a path character, the one after it is the line end or not a name
 # character ("/home/u/x", "=/home/u,", "\"/home/u\"" are redacted; "/srv/home/u" and "/home/u2" are not). No-op without

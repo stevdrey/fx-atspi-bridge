@@ -190,6 +190,23 @@ class RecordedPathTest(unittest.TestCase):
         self.assertEqual(text, "git=abc\nprofile=quick\nplan=p:1\n")
         self.assertEqual(resumable.returncode, 0)
 
+    def test_a_home_that_cannot_be_redacted_refuses_the_collection_without_printing_it(self):
+        for home in ("/home/al\nice", "/home/al\rice", "/home/al\tice"):
+            with self.subTest(home=repr(home)):
+                out = bash("require_safe_home", env={"HOME": home})
+                self.assertEqual(out.returncode, 1)
+                self.assertIn("HOME contains a control character", out.stderr)
+                self.assertNotIn(home, out.stdout + out.stderr)
+                self.assertNotIn("ice", out.stdout + out.stderr)
+        for home in ("/home/alice", "", "relative/home"):
+            with self.subTest(home=home):
+                self.assertEqual(bash("require_safe_home", env={"HOME": home}).returncode, 0)
+
+    def test_collections_refuse_a_home_that_cannot_be_redacted(self):
+        for script in ("run-baseline.sh", "run-memory-diag.sh"):
+            with self.subTest(script=script):
+                self.assertIn("\nrequire_safe_home || exit 1\n", (self.SCRIPTS / script).read_text())
+
     def test_line_breaks_from_a_child_process_cannot_add_records(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d, "repo")
