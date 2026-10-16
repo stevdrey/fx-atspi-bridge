@@ -179,6 +179,54 @@ class RecordedPathTest(unittest.TestCase):
         self.assertIn(f"java_bin={d}/jdk?profile=full?plan=x:1/bin/java", lines)
         self.assertEqual(resumable.returncode, 0)
 
+    def test_a_home_with_a_newline_is_not_split_into_fake_forms(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f"printf 'git=abc\\nprofile=quick\\nplan=p:1\\n' | write_environment '{target}'",
+                       env={"HOME": "/tmp/h\nprofile"})
+            text = target.read_text()
+            resumable = bash(f'resume_matches "{target}" "git=abc" "profile=quick" "plan=p:1"')
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(text, "git=abc\nprofile=quick\nplan=p:1\n")
+        self.assertEqual(resumable.returncode, 0)
+
+    def test_line_breaks_from_a_child_process_cannot_add_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "repo")
+            lib = root / "examples/fx-lab/build/install/fx-lab/lib"
+            lib.mkdir(parents=True)
+            (lib / "a.jar").write_text("x")
+            limits = root / "baseline.conf"
+            limits.write_text("K=1\n")
+            java = pathlib.Path(d, "jdk", "bin", "java")
+            java.parent.mkdir(parents=True)
+            # java.home as a JVM could print it for a JDK installed under a name with \r, U+0085 or U+2028 in it.
+            java.write_text("#!/bin/sh\nprintf '    java.home = /opt/jdk\\rplan=x:1\\302\\205plan=y:1\\342\\200\\250plan=z:1\\n' >&2\n"
+                            "echo '    java.specification.version = 27' >&2\necho 'openjdk version \"27\"' >&2\n")
+            java.chmod(0o755)
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100" | write_environment "{target}"',
+                       env={"HOME": "/nonexistent-home"})
+            data = target.read_bytes()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for separator in (b"\r", b"\xc2\x85", b"\xe2\x80\xa8"):
+            self.assertNotIn(separator, data)
+        self.assertIn(b"    java.home = /opt/jdk?plan=x:1?plan=y:1?plan=z:1\n", data)
+        self.assertEqual([line for line in data.decode().splitlines() if line.startswith("plan=")], ["plan=100:3:1:100"])
+
+    def test_socket_paths_of_the_display_are_not_recorded(self):
+        cases = (("/run/user/1000/private-session/wayland-0", "/tmp/.X11-unix/X0", "wayland=<socket>/wayland-0 display=<socket>/X0"),
+                 ("wayland-0", ":0", "wayland=wayland-0 display=:0"), ("", "", "wayland= display="))
+        for wayland, display, expected in cases:
+            with self.subTest(wayland=wayland):
+                out = bash('one_line "session=x wayland=$(socket_display "$W") display=$(socket_display "$D")"',
+                           env={"W": wayland, "D": display})
+                self.assertEqual(out.stdout, f"session=x {expected}\n")
+
+    def test_print_environment_records_socket_display_names_only(self):
+        script = (self.SCRIPTS / "baseline-lib.sh").read_text()
+        self.assertIn('wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")', script)
+
     def test_one_line_encodes_control_characters_and_options(self):
         for value, expected in (("-n", "-n"), ("a\nb\tc\rd", "a?b?c?d"), ("plain=/x", "plain=/x")):
             with self.subTest(value=value):

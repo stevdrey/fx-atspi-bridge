@@ -279,7 +279,7 @@ def planned_runs(environment):
     """Run names the collection planned: plan=kind:nodes:reps:bridges:variants:structural:install lines written by
     run-memory-diag.sh into environment.txt."""
     names = set()
-    for line in environment.splitlines():
+    for line in environment.split("\n"):  # records end only at \n: splitlines() would also split at \r, \x85, U+2028 ...
         if not line.startswith("plan="):
             continue
         fields = line.split("=", 1)[1].strip().split(":")
@@ -298,7 +298,8 @@ def load(data):
     environment = data / "environment.txt"
     if not environment.is_file():
         sys.exit(f"{environment} is missing; refusing to summarise a collection whose plan is unknown")
-    planned = planned_runs(environment.read_text())
+    with open(environment, newline="\n") as file:  # no universal-newline translation of \r
+        planned = planned_runs(file.read())
     if not planned:
         sys.exit(f"{environment} has no plan= lines; refusing to summarise a collection whose plan is unknown")
     found = {path.stem for path in data.glob("*.json")}

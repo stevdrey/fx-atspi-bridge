@@ -62,11 +62,14 @@ redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 # directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
 # home_forms -> the distinct forms of HOME that a tool may print, one per line: the value without trailing slashes, its
 # logical normalization (realpath -ms: //, /. and .. collapsed, links kept) and its physical path (realpath -m: links
-# resolved, e.g. /home -> /var/home). A relative, empty or root HOME yields nothing; realpath is used only when it exists.
+# resolved, e.g. /home -> /var/home). A relative, empty or root HOME, or one containing a control character (the forms
+# are newline-separated, so a newline in HOME would split it into fake forms), yields nothing; realpath is used only
+# when it exists.
 home_forms() {
   local home="${HOME:-}"
   while [ "${home%/}" != "$home" ]; do home="${home%/}"; done  # every trailing slash: /home/u// is /home/u
   case "$home" in /?*) ;; *) return 0 ;; esac  # only an absolute, non-root HOME is usable
+  case "$home" in *[[:cntrl:]]*) return 0 ;; esac
   {
     printf '%s\n' "$home"
     if command -v realpath >/dev/null 2>&1; then
@@ -84,7 +87,7 @@ redact_home() {
   local forms
   forms="$(home_forms)"
   if [ -z "$forms" ]; then cat; return; fi
-  REDACT_HOMES="$forms" awk '
+  REDACT_HOMES="$forms" LC_ALL=C awk '
     BEGIN { count = split(ENVIRON["REDACT_HOMES"], homes, "\n") }
     {
       line = $0
@@ -131,10 +134,27 @@ command_line() {
   printf 'command=%s %s %s\n' "$(display_path "$1" "$2")" "$(display_path "$1" "$3")" "$4"
 }
 
-# write_environment FILE -> writes stdin to FILE through redact_home. Every collection writes environment.txt only
-# through this function, so no line of it (print_environment or the script's own) can carry the home directory.
+# one_record_per_line -> stdin with every character that a reader may treat as a line break, other than "\n", replaced
+# by "?": C0 controls except tab (\r, \v, \f, \x1c-\x1e ...), DEL, and the UTF-8 forms of U+0085, U+2028 and U+2029,
+# which Python's str.splitlines() also splits on. Tab stays; it is part of recorded lines such as "model name\t:".
+one_record_per_line() {
+  LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); gsub(/\302\205|\342\200\250|\342\200\251/, "?"); print }'
+}
+
+# write_environment FILE -> writes stdin to FILE through redact_home and one_record_per_line. Every collection writes
+# environment.txt only through this function, so no line of it (print_environment, a child process such as the JVM, or
+# the script's own) can carry the home directory or split into extra records.
 write_environment() {
-  redact_home > "$1"
+  redact_home | one_record_per_line > "$1"
+}
+
+# socket_display VALUE -> a display name for environment.txt: names such as wayland-0 or :0 unchanged, an absolute
+# socket path (WAYLAND_DISPLAY or DISPLAY may be one, e.g. /run/user/1000/<session>/wayland-0) as <socket>/<last
+# component>, so no user- or session-specific directory is recorded.
+socket_display() {
+  local value="$1"
+  case "$value" in */*) value="<socket>/${value##*/}" ;; esac
+  printf '%s' "$value"
 }
 
 # --- clean tree ----------------------------------------------------------------------------------------------------
@@ -213,7 +233,7 @@ print_environment() {
   done
   "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
   "$java_bin" -version 2>&1 | redact_picked_up | head -3
-  one_line "session=${XDG_SESSION_TYPE:-unknown} wayland=${WAYLAND_DISPLAY:-} display=${DISPLAY:-}"
+  one_line "session=${XDG_SESSION_TYPE:-unknown} wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")"
   uname -srm
   echo "cpus=$(nproc)"
   grep -m1 'model name' /proc/cpuinfo || true
