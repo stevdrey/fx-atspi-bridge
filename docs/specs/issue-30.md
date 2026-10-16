@@ -31,6 +31,7 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
 | Function | Contract |
 | --- | --- |
 | `home_forms` | The distinct forms of `HOME` that a tool may print: the value without trailing slashes, its logical normalization (`realpath -ms`: `//`, `/.` and `..` collapsed, links kept) and its physical path (`realpath -m`: links resolved, e.g. `/home` → `/var/home`). A relative, empty or root `HOME`, or one containing a control character, yields nothing: the forms are newline-separated, so a newline in `HOME` would split it into fake forms (`HOME=$'/tmp/h\nprofile'` would turn `profile=quick` into `$HOME=quick`). `realpath` is used only when it exists. |
+| `require_safe_home` | Returns 1, with a message that never prints the value, when `HOME` contains a control character. `run-baseline.sh` and `run-memory-diag.sh` call it before creating the output directory and refuse to run: such a `HOME` cannot be redacted, and a JDK beneath it would otherwise be recorded with only its control characters encoded. |
 | `redact_home` (stdin → stdout) | Replaces every `home_forms` value with the literal `$HOME`, only where it appears as a whole path. The character before it must be the line start or not a path character (`[A-Za-z0-9._/-]`). The character after it must be the line end or not a name character (`[A-Za-z0-9._-]`), so `/` may follow. A `HOME` that is unset, empty, relative or only slashes makes it a no-op. Implemented in `awk`, which reads the forms through `ENVIRON` so backslashes are not interpreted. |
 | `one_line VALUE` | Prints `VALUE` on one line, with every control character replaced by `?`, through `printf`. `print_environment` passes every value it takes from the environment through it (`java_bin`, the `*_OPTS` values, `idle_inhibit`, the session line), so a newline in, for example, `JAVA_HOME` cannot inject `profile=` or `plan=` records that `resume_matches` compares. The `java.home` line is filtered by `grep`. |
 | `display_path ROOT PATH` | Returns `.` for the root itself, the path relative to `ROOT` when inside it, and otherwise `<out>/<last component>`. Prints through `one_line`, so names such as `-n` or `-e` are printed literally and control characters become `?`; a name cannot inject lines (e.g. `profile=full`) into `environment.txt`. |
@@ -73,6 +74,7 @@ The Codex review of evidence PR [#28](https://github.com/stevdrey/fx-atspi-bridg
    - option-like directory names and names that contain control characters;
    - a JDK path and session variables that contain `\nprofile=…`, without adding records;
    - a `HOME` containing a newline, a `java.home` containing `\r`, U+0085 or U+2028, and absolute display socket paths;
+   - a collection refused, without printing the value, when `HOME` contains a control character;
    - a static check that both scripts write `environment.txt` only through `write_environment`.
 5. `docs/verification/data/issue-1/environment.txt` is redacted.
 
