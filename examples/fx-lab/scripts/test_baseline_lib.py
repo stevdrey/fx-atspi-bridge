@@ -273,20 +273,33 @@ class RecordedPathTest(unittest.TestCase):
         self.assertIn("java_bin=<jdk>/jdk-27/bin/java\n", text)
         self.assertIn("    java.home = <jdk>/jdk-27\n", text)
 
+    def write_one_line(self, target, line):
+        return bash(f'printf "git=abc\\n%s\\n" "$LINE" | write_environment "{target}"', env={"HOME": "/home/u", "LINE": line})
+
     def test_an_uncovered_absolute_path_refuses_the_environment_without_printing_it(self):
+        rejected = ("tool=//mnt/users/alice/private", "tool=///tmp/private", "tool=/équipe/private", "tool=/~private/file",
+                    "tool=/", "a b /x", "path:/x", "c=(/usr/bin)", "x=a:/opt/b", "/srv/home/u", "tool=/opt/secret/x")
         with tempfile.TemporaryDirectory() as d:
             target = pathlib.Path(d, "environment.txt")
-            for line in ("tool=/opt/secret/x", "c=(/usr/bin)", "/srv/home/u", "x=a:/opt/b"):
+            for line in rejected:
                 with self.subTest(line=line):
-                    out = bash(f"printf 'git=abc\\n%s\\n' '{line}' | write_environment '{target}'", env={"HOME": "/home/u"})
+                    out = self.write_one_line(target, line)
                     self.assertEqual(out.returncode, 1)
                     self.assertFalse(target.exists())
                     self.assertIn("line(s) 2 would record an absolute path", out.stderr)
-                    self.assertNotIn(line, out.stderr)
-            for line in ("a=/home/u/x", "b=<jdk>/27", "command=examples/fx-lab/x <out>/s smoke", "w=<socket>/wayland-0", "v=nmt:-XX:N=summary"):
+                    for fragment in (line, "alice", "private", "équipe", "secret", "/usr/bin", "/opt"):
+                        self.assertNotIn(fragment, out.stdout + out.stderr)
+
+    def test_placeholders_and_relative_paths_pass_the_absolute_path_check(self):
+        accepted = ("a=/home/u/x", "a=$HOME/x", "home=$HOME", "b=<jdk>/27", "o=<out>/s", "w=<socket>/wayland-0",
+                    "command=examples/fx-lab/x <out>/s smoke", "r=café/x", "r=a//b", "v=nmt:-XX:N=summary", "no slash at all")
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d, "environment.txt")
+            for line in accepted:
                 with self.subTest(line=line):
-                    out = bash(f"printf '%s\\n' '{line}' | write_environment '{target}'", env={"HOME": "/home/u"})
+                    out = self.write_one_line(target, line)
                     self.assertEqual(out.returncode, 0, out.stderr)
+                    self.assertTrue(target.exists())
 
     def test_strip_trailing_slashes(self):
         for value, expected in (("/opt/jdk//", "/opt/jdk"), ("/opt/jdk", "/opt/jdk"), ("/", ""), ("", "")):

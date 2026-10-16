@@ -164,10 +164,14 @@ sanitize_records() {
   redact_home | one_record_per_line
 }
 
-# An absolute path that no placeholder covers: "/" at the start of a path (line start or after a character that cannot
-# end a path or placeholder) followed by a name character. "$HOME/x", "<jdk>/27", "<out>/x", "<socket>/x" and relative
-# paths such as examples/fx-lab/... do not match.
-UNCOVERED_ABSOLUTE_PATH_ERE='(^|[^A-Za-z0-9._>/$-])/[A-Za-z0-9._-]'
+# uncovered_absolute_path_lines FILE -> the numbers of the lines of FILE that hold an absolute path no placeholder
+# covers, one per line. A "/" is decided by the byte BEFORE it, never by what follows (so "//x", "/~x", "/éx" and a bare
+# "/" all count): it is covered only after an ASCII name character [A-Za-z0-9._-] (a relative path component, or $HOME),
+# ">" (<jdk>/, <out>/, <socket>/), another "/" (a//b inside a relative path) or a non-ASCII byte (a relative component
+# such as café/). Any other "/", including one at the start of a line, starts an uncovered absolute path.
+uncovered_absolute_path_lines() {
+  LC_ALL=C awk '/(^|[^A-Za-z0-9._>\/\200-\377-])\// { print NR }' "$1"
+}
 
 # write_environment FILE -> writes stdin to FILE through sanitize_records, then fails closed: when a line still holds an
 # absolute path outside the placeholders ($HOME, <jdk>, <out>, <socket>), FILE is removed and 1 returned, naming only
@@ -176,7 +180,7 @@ UNCOVERED_ABSOLUTE_PATH_ERE='(^|[^A-Za-z0-9._>/$-])/[A-Za-z0-9._-]'
 write_environment() {
   local file="$1" lines
   sanitize_records > "$file"
-  lines="$(LC_ALL=C grep -nE "$UNCOVERED_ABSOLUTE_PATH_ERE" "$file" | cut -d: -f1 | tr '\n' ' ')" || true
+  lines="$(uncovered_absolute_path_lines "$file" | tr '\n' ' ')"
   if [ -n "$lines" ]; then
     rm -f "$file"
     echo "Refusing to run: environment.txt line(s) ${lines% } would record an absolute path outside \$HOME, <jdk>, <out> and <socket> (values not printed). Sanitize that source in baseline-lib.sh." >&2
