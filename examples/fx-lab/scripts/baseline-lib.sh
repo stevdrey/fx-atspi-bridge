@@ -60,14 +60,21 @@ redact_picked_up() { sed -E 's/^(.*Picked up [A-Za-z_]+):.*/\1: [redacted]/'; }
 # --- recorded paths ------------------------------------------------------------------------------------------------
 # docs/verification/README.md: captured values are sanitized. Recorded paths must not carry the collector's home
 # directory or private scratch locations; the JDK version, jar hashes and plan keep the reproducibility information.
+# strip_trailing_slashes VALUE -> VALUE without any trailing "/" ("/opt/jdk//" is "/opt/jdk", "/" is ""), no newline.
+strip_trailing_slashes() {
+  local value="$1"
+  while [ "${value%/}" != "$value" ]; do value="${value%/}"; done
+  printf '%s' "$value"
+}
+
 # home_forms -> the distinct forms of HOME that a tool may print, one per line: the value without trailing slashes, its
 # logical normalization (realpath -ms: //, /. and .. collapsed, links kept) and its physical path (realpath -m: links
 # resolved, e.g. /home -> /var/home). A relative, empty or root HOME, or one containing a control character (the forms
 # are newline-separated, so a newline in HOME would split it into fake forms), yields nothing; realpath is used only
 # when it exists.
 home_forms() {
-  local home="${HOME:-}"
-  while [ "${home%/}" != "$home" ]; do home="${home%/}"; done  # every trailing slash: /home/u// is /home/u
+  local home
+  home="$(strip_trailing_slashes "${HOME:-}")"  # every trailing slash: /home/u// is /home/u
   case "$home" in /?*) ;; *) return 0 ;; esac  # only an absolute, non-root HOME is usable
   case "$home" in *[[:cntrl:]]*) return 0 ;; esac
   {
@@ -152,11 +159,29 @@ one_record_per_line() {
   LC_ALL=C awk '{ gsub(/[\001-\010\013-\037\177]/, "?"); gsub(/\302\205|\342\200\250|\342\200\251/, "?"); print }'
 }
 
-# write_environment FILE -> writes stdin to FILE through redact_home and one_record_per_line. Every collection writes
-# environment.txt only through this function, so no line of it (print_environment, a child process such as the JVM, or
-# the script's own) can carry the home directory or split into extra records.
+# sanitize_records -> stdin through redact_home and one_record_per_line: the home directory as $HOME, one record per line.
+sanitize_records() {
+  redact_home | one_record_per_line
+}
+
+# An absolute path that no placeholder covers: "/" at the start of a path (line start or after a character that cannot
+# end a path or placeholder) followed by a name character. "$HOME/x", "<jdk>/27", "<out>/x", "<socket>/x" and relative
+# paths such as examples/fx-lab/... do not match.
+UNCOVERED_ABSOLUTE_PATH_ERE='(^|[^A-Za-z0-9._>/$-])/[A-Za-z0-9._-]'
+
+# write_environment FILE -> writes stdin to FILE through sanitize_records, then fails closed: when a line still holds an
+# absolute path outside the placeholders ($HOME, <jdk>, <out>, <socket>), FILE is removed and 1 returned, naming only
+# the line number. Every collection writes environment.txt only through this function, so a new line that prints a path
+# (print_environment, a child process such as the JVM, or a script's own) refuses the collection instead of leaking.
 write_environment() {
-  redact_home | one_record_per_line > "$1"
+  local file="$1" lines
+  sanitize_records > "$file"
+  lines="$(LC_ALL=C grep -nE "$UNCOVERED_ABSOLUTE_PATH_ERE" "$file" | cut -d: -f1 | tr '\n' ' ')" || true
+  if [ -n "$lines" ]; then
+    rm -f "$file"
+    echo "Refusing to run: environment.txt line(s) ${lines% } would record an absolute path outside \$HOME, <jdk>, <out> and <socket> (values not printed). Sanitize that source in baseline-lib.sh." >&2
+    return 1
+  fi
 }
 
 # socket_display VALUE -> a display name for environment.txt: names such as wayland-0 or :0 unchanged, an absolute
@@ -228,7 +253,7 @@ require_fresh_or_resumable() {
 jdk_bin_display() {
   local bin="$1" name
   case "$bin" in
-    */bin/java) name="${bin%/bin/java}"; name="${name##*/}"; one_line "<jdk>${name:+/$name}/bin/java" ;;
+    */bin/java) name="$(strip_trailing_slashes "${bin%/bin/java}")"; name="${name##*/}"; one_line "<jdk>${name:+/$name}/bin/java" ;;
     */*) one_line "<jdk>/${bin##*/}" ;;
     *) one_line "$bin" ;;
   esac
@@ -241,8 +266,7 @@ jdk_home_display() {
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       *"java.home = "*)
-        value="${line#*java.home = }"
-        while [ "${value%/}" != "$value" ]; do value="${value%/}"; done
+        value="$(strip_trailing_slashes "${line#*java.home = }")"
         name="${value##*/}"
         line="${line%%java.home = *}java.home = <jdk>${name:+/$name}" ;;
     esac
@@ -284,7 +308,8 @@ print_environment() {
 # --- one benchmark cell --------------------------------------------------------------------------------------------
 # run_cell MAX_ATTEMPTS NAME OUT_DIR COMMAND... -> runs COMMAND, stores its redacted output in OUT_DIR/NAME.log and
 # retries only when it exits with 3 (the harness' "invalid run": throttled display, stall). Every retry is appended to
-# OUT_DIR/retries.txt so it stays visible in the evidence. Any other failure (2, timeouts, ...) is returned untouched.
+# OUT_DIR/retries.txt so it stays visible in the evidence; retries.txt may be committed, so its lines go through one_line and
+# sanitize_records like environment.txt. Any other failure (2, timeouts, ...) is returned untouched.
 run_cell() {
   local max="$1" name="$2" out="$3" attempt=1 rc raw reason
   shift 3
@@ -295,7 +320,7 @@ run_cell() {
     rm -f "$raw"
     if [ "$rc" -eq 3 ] && [ "$attempt" -lt "$max" ]; then
       reason="$(grep -m1 'bench invalid' "$out/$name.log" || true)"
-      printf '%s attempt=%d exit=3 %s\n' "$name" "$attempt" "${reason:-no reason logged}" >> "$out/retries.txt"
+      one_line "$name attempt=$attempt exit=3 ${reason:-no reason logged}" | sanitize_records >> "$out/retries.txt"
       attempt=$((attempt + 1))
       continue
     fi

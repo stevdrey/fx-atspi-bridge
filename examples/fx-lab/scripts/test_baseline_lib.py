@@ -241,9 +241,57 @@ class RecordedPathTest(unittest.TestCase):
                            env={"W": wayland, "D": display})
                 self.assertEqual(out.stdout, f"session=x {expected}\n")
 
+    def written_environment(self, env):
+        """environment.txt written by print_environment | write_environment with a fake JDK 27; returns (out, text)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "repo")
+            lib = root / "examples/fx-lab/build/install/fx-lab/lib"
+            lib.mkdir(parents=True)
+            (lib / "a.jar").write_text("x")
+            limits = root / "baseline.conf"
+            limits.write_text("K=1\n")
+            java = pathlib.Path(d, "jdk-27", "bin", "java")
+            java.parent.mkdir(parents=True)
+            java.write_text(f"#!/bin/sh\necho '    java.home = {java.parent.parent}' >&2\n"
+                            "echo '    java.specification.version = 27' >&2\necho 'openjdk version \"27\"' >&2\n")
+            java.chmod(0o755)
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100" | write_environment "{target}"',
+                       env={"HOME": "/nonexistent-home", **env})
+            return out, target.read_text() if target.exists() else None
+
     def test_print_environment_records_socket_display_names_only(self):
-        script = (self.SCRIPTS / "baseline-lib.sh").read_text()
-        self.assertIn('wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")', script)
+        out, text = self.written_environment({"WAYLAND_DISPLAY": "/run/user/1000/private-session/wayland-0",
+                                              "DISPLAY": "/tmp/.X11-unix/X0", "XDG_SESSION_TYPE": "wayland"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("session=wayland wayland=<socket>/wayland-0 display=<socket>/X0\n", text)
+        self.assertNotIn("private-session", text)
+
+    def test_a_real_environment_passes_the_absolute_path_check(self):
+        out, text = self.written_environment({})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("java_bin=<jdk>/jdk-27/bin/java\n", text)
+        self.assertIn("    java.home = <jdk>/jdk-27\n", text)
+
+    def test_an_uncovered_absolute_path_refuses_the_environment_without_printing_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d, "environment.txt")
+            for line in ("tool=/opt/secret/x", "c=(/usr/bin)", "/srv/home/u", "x=a:/opt/b"):
+                with self.subTest(line=line):
+                    out = bash(f"printf 'git=abc\\n%s\\n' '{line}' | write_environment '{target}'", env={"HOME": "/home/u"})
+                    self.assertEqual(out.returncode, 1)
+                    self.assertFalse(target.exists())
+                    self.assertIn("line(s) 2 would record an absolute path", out.stderr)
+                    self.assertNotIn(line, out.stderr)
+            for line in ("a=/home/u/x", "b=<jdk>/27", "command=examples/fx-lab/x <out>/s smoke", "w=<socket>/wayland-0", "v=nmt:-XX:N=summary"):
+                with self.subTest(line=line):
+                    out = bash(f"printf '%s\\n' '{line}' | write_environment '{target}'", env={"HOME": "/home/u"})
+                    self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_strip_trailing_slashes(self):
+        for value, expected in (("/opt/jdk//", "/opt/jdk"), ("/opt/jdk", "/opt/jdk"), ("/", ""), ("", "")):
+            with self.subTest(value=value):
+                self.assertEqual(bash('strip_trailing_slashes "$V"', env={"V": value}).stdout, expected)
 
     def test_a_jdk_outside_home_keeps_only_its_directory_name(self):
         with tempfile.TemporaryDirectory() as d:
@@ -271,7 +319,8 @@ class RecordedPathTest(unittest.TestCase):
 
     def test_jdk_bin_display_cases(self):
         for value, expected in (("java", "java"), ("/opt/jdk-27/bin/java", "<jdk>/jdk-27/bin/java"),
-                                ("/opt/jdk-27/bin/java27", "<jdk>/java27"), ("/bin/java", "<jdk>/bin/java")):
+                                ("/opt/jdk-27/bin/java27", "<jdk>/java27"), ("/bin/java", "<jdk>/bin/java"),
+                                ("/opt/jdk-27//bin/java", "<jdk>/jdk-27/bin/java")):
             with self.subTest(value=value):
                 self.assertEqual(bash('jdk_bin_display "$V"', env={"V": value}).stdout, expected + "\n")
 
@@ -417,6 +466,11 @@ class RunCellTest(unittest.TestCase):
                 _, out = self.run_cell(f"echo boom; exit {code}")
                 self.assertIn(f"rc={code}", out.stdout)
                 self.assertIn("attempts=1", out.stdout)
+
+    def test_a_retry_reason_is_sanitized_like_the_environment(self):
+        d, _ = self.run_cell('if [ $n -eq 1 ]; then printf "bench invalid: stalled at %s/x\\rplan=x:1\\n" "$HOME"; exit 3; fi; exit 0')
+        retries = pathlib.Path(d, "retries.txt").read_bytes()
+        self.assertEqual(retries, b"cellname attempt=1 exit=3 bench invalid: stalled at $HOME/x?plan=x:1\n")
 
     def test_log_is_redacted_and_raw_output_is_not_kept(self):
         d, _ = self.run_cell('echo "Picked up JAVA_TOOL_OPTIONS: -Dsecret=1"; exit 0')
