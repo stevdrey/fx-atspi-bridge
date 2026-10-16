@@ -9,23 +9,23 @@ Spec: [`docs/specs/issue-30.md`](../specs/issue-30.md). No new data directory: t
 | Home directory recorded as `$HOME` in `environment.txt` | **Met** | JDK locations keep only the JDK directory name, inside or outside `HOME`: `test_a_jdk_outside_home_keeps_only_its_directory_name` (`/mnt/users/alice/jdks/27` → `<jdk>/27`, no `alice`) and `test_jdk_bin_display_cases`. A `HOME` that cannot be redacted (control character) refuses the collection: `test_a_home_that_cannot_be_redacted_refuses_the_collection_without_printing_it`, and both scripts with `HOME=$'/home/al\nice'` exit 1 before creating the output directory, without printing the value. `RecordedPathTest`: boundaries, trailing slashes (also without `realpath`), logical aliases (`/home//u`, `/home/u/.`, `/home/x/../u`), a symlinked `HOME`, relative `HOME`, and `print_environment` with a fake JDK under `HOME`; smoke `environment.txt`: `java_bin=$HOME/...`, `java.home = $HOME/...` |
 | Output/data directories relative to the repository or `<out>/<name>`, in `environment.txt` and the `memory_diag.py` summary | **Met** | `display_path`, `command_line` and `test_the_source_line_records_no_absolute_path`, including names that contain a newline, a tab or a backtick (encoded as `?`); smoke: `command=examples/fx-lab/scripts/run-baseline.sh <out>/smoke30 smoke`, ``Source: `<out>/mdsmoke30` `` |
 | Parsed fields unchanged (`git=`, `profile=`, `plan=`, `variants=`, `limits_sha256=`, jar hashes); `--resume` works | **Met** | `budgets.py` and `memory_diag.py` read the smoke output; `--resume` on the smoke directory skipped both existing cells. `test_a_newline_in_an_environment_value_cannot_add_records`: a JDK path containing `\nprofile=full\nplan=x:1` and newline-carrying session variables add no `profile=`/`plan=` records, and the file still resumes. `test_a_home_with_a_newline_is_not_split_into_fake_forms`, `test_line_breaks_from_a_child_process_cannot_add_records` (a `java.home` with `\r`, U+0085, U+2028 gives one `plan=` record, also for Python `splitlines()`), and `test_a_carriage_return_in_another_record_adds_no_plan` for `memory_diag.py` and `budgets.py` |
-| Unit tests in `test_baseline_lib.py` and `test_memory_diag.py` | **Met** | 122 tests, 1 skipped (see Commands); mutation checks below |
+| Unit tests in `test_baseline_lib.py` and `test_memory_diag.py` | **Met** | 126 tests, 1 skipped (see Commands); mutation checks below |
 | `docs/verification/data/issue-1/environment.txt` redacted | **Met** | `java_bin` and `java.home` show `$HOME`. `budgets.py docs/verification/data/issue-1` still passes. `git grep -nE '/home/\|/tmp/claude' -- docs/verification/data` returns nothing |
 
 ## Environment
 
 | Item | Value |
 | --- | --- |
-| Revision | `776f789`: smoke runs, unit tests and mutation checks (clean tree; branch `30-sanitize-benchmark-environment-paths`, after merging `main` with #28 and #29) |
+| Revision | `6a7e8a5`: smoke runs, unit tests and mutation checks (clean tree; branch `30-sanitize-benchmark-environment-paths`, after merging `main` with #28 and #29) |
 | OS / desktop | Fedora 44, Linux 7.2.10-200.fc44.x86_64 (earlier rounds: 7.2.9-201), GNOME Wayland (`WAYLAND_DISPLAY=wayland-0`) |
 | JDK / build | OpenJDK 27 Zulu27.28+101-CA (build 27+35), Gradle 9.8.1 |
 | Tooling | Python 3.14.8, GNU Awk 5.3.2, GNU coreutils `realpath` 9.10, glibc 2.43 |
-| Smoke runs | 2026-10-16 01:38 UTC (`run-baseline.sh`) and 02:18 UTC (`run-memory-diag.sh`), under `gnome-session-inhibit`. The first `run-memory-diag.sh` attempt at 01:39 failed in its first install cell with `pulse did not complete` (a stalled display pulse, unrelated to the recorded fields) and was re-run from an empty directory |
+| Smoke runs | 2026-10-16 02:46 UTC (`run-baseline.sh`) and 02:46 UTC (`run-memory-diag.sh`), under `gnome-session-inhibit`; both `environment.txt` files passed the fail-closed path check. In the previous round, at `776f789`, a first `run-memory-diag.sh` attempt failed in its first install cell with `pulse did not complete`, a stalled display pulse unrelated to the recorded fields, and was re-run from an empty directory |
 
 ## Commands and results
 
 ```bash
-python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # OK: 122 tests, 1 skipped
+python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'   # OK: 126 tests, 1 skipped
 examples/fx-lab/scripts/run-baseline.sh <scratch>/smoke30 smoke          # exit 0
 examples/fx-lab/scripts/run-memory-diag.sh <scratch>/mdsmoke30 smoke     # exit 0
 python3 examples/fx-lab/scripts/budgets.py <scratch>/smoke30             # OK
@@ -34,7 +34,7 @@ examples/fx-lab/scripts/run-baseline.sh <scratch>/smoke30 smoke --resume # same 
 git grep -nE '/home/|/tmp/claude' -- docs/verification/data              # no output (exit 1)
 ```
 
-Redacted lines of the smoke `environment.txt` files at `776f789`. Neither file contains `HOME`, its physical path, the JDK's parent directories, `/tmp/claude` or `\r`:
+Redacted lines of the smoke `environment.txt` files at `6a7e8a5`. Neither file contains `HOME`, its physical path, the JDK's parent directories, `/tmp/claude` or `\r`:
 
 ```text
 java_bin=<jdk>/current/bin/java
@@ -65,6 +65,11 @@ command=examples/fx-lab/scripts/run-baseline.sh <out>/smoke30 smoke
 | `one_line "java_bin=$java_bin"` instead of `jdk_bin_display` | 3 failures |
 | no `jdk_home_display` on the `-XshowSettings` line | 1 failure |
 | no `jdk_home_display` on the `java -version` lines | 1 failure |
+| `jdk_bin_display` without `strip_trailing_slashes` | 1 failure (`JAVA_HOME` with a trailing slash) |
+| `write_environment` without the fail-closed check | 4 failures |
+| `retries.txt` written with a raw `printf` | 1 failure (`test_a_retry_reason_is_sanitized_like_the_environment`) |
+| `socket_display` returning the raw value (rechecked with the behavior test) | 2 failures; the fail-closed check also refuses the raw socket path |
+| `strip_trailing_slashes` removing a single slash | 2 failures |
 
 `./gradlew check` was not run locally because no Java changed; CI runs it on the pull request.
 
@@ -79,6 +84,7 @@ command=examples/fx-lab/scripts/run-baseline.sh <out>/smoke30 smoke
 | Codex review of `2c8d389` | 3 | Fixed in `db3131a`: <ul><li>a `HOME` containing a newline was split into fake forms (e.g. `profile`) that redacted ordinary records; `home_forms` now treats such a `HOME` as unusable;</li><li>a `java.home` printed by the JVM with `\r` (or U+0085/U+2028) bypassed `one_line` and became extra `plan=` records for Python readers; every line now goes through `one_record_per_line` in `write_environment`, and `memory_diag.py` and `budgets.py` split only at `\n`;</li><li>an absolute `WAYLAND_DISPLAY` socket path was recorded verbatim; `socket_display` records `<socket>/<name>`.</li></ul> |
 | Codex review of `66939a7` | 1 | Fixed in `800a66c`: a `HOME` containing a control character silently disabled redaction, so a JDK beneath it was recorded with only `?` in place of the control character. The new `require_safe_home` makes both collections refuse to run in that case, before creating the output directory and without printing the value. |
 | Codex review of `daa3221` | 1 | Fixed in `776f789`: a JDK in a user- or session-specific place outside `HOME` was recorded verbatim in `java_bin=` and `java.home`. Both now keep only the JDK directory name (`jdk_bin_display`, `jdk_home_display`), also on any `java -version` line. |
+| Internal `/code-review high` of `cc3f241` | 5 | Fixed in `6a7e8a5`: <ul><li>`JAVA_HOME` with a trailing slash recorded `<jdk>/bin/java` without the JDK name; `strip_trailing_slashes` is now shared by the three normalizations;</li><li>no fail-closed check: `write_environment` now refuses a line that still holds an uncovered absolute path;</li><li>`retries.txt` bypassed sanitization; its lines now go through `one_line` and `sanitize_records`;</li><li>the socket-display test only matched source text; it now runs `print_environment`.</li></ul> |
 
 ## Limitations
 
@@ -90,6 +96,7 @@ command=examples/fx-lab/scripts/run-baseline.sh <out>/smoke30 smoke
 - **A `HOME` containing a control character** refuses the collection; it cannot be redacted. Library code that calls `redact_home` directly treats such a `HOME` as unusable and redacts nothing.
 - **Display socket paths** keep only their last component (`<socket>/wayland-0`).
 - **Console output is not redacted.** It is not evidence.
+- **The fail-closed path check covers `environment.txt` only,** at the start of a collection. `retries.txt` lines are sanitized but not checked, so a retry never aborts a long collection. The committed `environment.txt` files under `docs/verification/data/` also pass the check.
 - **Not committed:** per-run logs and diagnostic snapshots, as before.
 - **History:** earlier commits and pull requests keep the unredacted values. History is not rewritten.
 - **Smoke runs validate the harness only.** They are not performance evidence.
