@@ -221,11 +221,41 @@ require_fresh_or_resumable() {
   return 1
 }
 
+# jdk_bin_display JAVA_BIN -> the java launcher without the directories above the JDK: <jdk>/<JDK directory>/bin/java
+# for .../<JDK directory>/bin/java, <jdk>/<name> for another path, and "java" (a PATH lookup) as it is. A JDK may live
+# in a user- or session-specific place outside HOME (/mnt/users/<user>/jdks/27, /tmp/<session>/jdk), and its version
+# is recorded by java -version, so no JDK parent directory is recorded.
+jdk_bin_display() {
+  local bin="$1" name
+  case "$bin" in
+    */bin/java) name="${bin%/bin/java}"; name="${name##*/}"; one_line "<jdk>${name:+/$name}/bin/java" ;;
+    */*) one_line "<jdk>/${bin##*/}" ;;
+    *) one_line "$bin" ;;
+  esac
+}
+
+# jdk_home_display -> stdin with the value of every "java.home = " line reduced to <jdk>/<JDK directory>, for the
+# same reason as jdk_bin_display; other lines unchanged.
+jdk_home_display() {
+  local line value name
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *"java.home = "*)
+        value="${line#*java.home = }"
+        while [ "${value%/}" != "$value" ]; do value="${value%/}"; done
+        name="${value##*/}"
+        line="${line%%java.home = *}java.home = <jdk>${name:+/$name}" ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+
 # print_environment ROOT HEAD_SHA PROFILE LIMITS JAVA_BIN PLAN... -> the environment.txt lines both collections record:
 # commit, profile and plan (first, in the order resume_matches reads), limits, Gradle/JDK, jar hashes, an allowlisted
 # view of the JVM option variables (the JVM's "Picked up" echo is redacted), session and hardware. Values taken from the
 # environment go through one_line; the java.home line is filtered by grep, so a newline in it cannot add a record.
-# Callers pipe it into write_environment, which records the home directory as $HOME.
+# JDK locations keep only the JDK directory name (jdk_bin_display, jdk_home_display). Callers pipe it into
+# write_environment, which records the home directory as $HOME.
 print_environment() {
   local root="$1" head_sha="$2" profile="$3" limits="$4" java_bin="$5" entry opts_var
   shift 5
@@ -238,12 +268,12 @@ print_environment() {
   echo "limits_sha256=$(sha256sum "$limits" | cut -d' ' -f1)"
   (cd "$root" && ./gradlew --version --no-daemon -q 2>/dev/null | grep -E '^(Gradle|Launcher JVM)' || true)
   (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum *.jar)
-  one_line "java_bin=$java_bin"
+  printf 'java_bin=%s\n' "$(jdk_bin_display "$java_bin")"
   for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
     one_line "${opts_var}_effective=${!opts_var:-}"
   done
-  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version"
-  "$java_bin" -version 2>&1 | redact_picked_up | head -3
+  "$java_bin" -XshowSettings:properties -version 2>&1 | grep -E "^ *java\.home|^ *java\.specification\.version" | jdk_home_display
+  "$java_bin" -version 2>&1 | redact_picked_up | head -3 | jdk_home_display
   one_line "session=${XDG_SESSION_TYPE:-unknown} wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")"
   uname -srm
   echo "cpus=$(nproc)"

@@ -152,8 +152,8 @@ class RecordedPathTest(unittest.TestCase):
             text = target.read_text()
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertNotIn(str(home), text)
-        self.assertIn("java_bin=$HOME/.sdkman/java/bin/java", text)
-        self.assertIn("    java.home = $HOME/.sdkman/java", text)
+        self.assertIn("java_bin=<jdk>/java/bin/java", text)
+        self.assertIn("    java.home = <jdk>/java", text)
         self.assertIn("plan=100:3:1:100", text)
 
     def test_a_newline_in_an_environment_value_cannot_add_records(self):
@@ -176,7 +176,8 @@ class RecordedPathTest(unittest.TestCase):
             resumable = bash(f'resume_matches "{target}" "git=abc" "profile=quick" "plan=100:3:1:100"')
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual([line for line in lines if line.startswith(("profile=", "plan="))], ["profile=quick", "plan=100:3:1:100"])
-        self.assertIn(f"java_bin={d}/jdk?profile=full?plan=x:1/bin/java", lines)
+        self.assertIn("java_bin=<jdk>/jdk?profile=full?plan=x:1/bin/java", lines)
+        self.assertNotIn(d, "\n".join(lines))
         self.assertEqual(resumable.returncode, 0)
 
     def test_a_home_with_a_newline_is_not_split_into_fake_forms(self):
@@ -228,7 +229,7 @@ class RecordedPathTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         for separator in (b"\r", b"\xc2\x85", b"\xe2\x80\xa8"):
             self.assertNotIn(separator, data)
-        self.assertIn(b"    java.home = /opt/jdk?plan=x:1?plan=y:1?plan=z:1\n", data)
+        self.assertIn(b"    java.home = <jdk>/jdk?plan=x:1?plan=y:1?plan=z:1\n", data)
         self.assertEqual([line for line in data.decode().splitlines() if line.startswith("plan=")], ["plan=100:3:1:100"])
 
     def test_socket_paths_of_the_display_are_not_recorded(self):
@@ -243,6 +244,36 @@ class RecordedPathTest(unittest.TestCase):
     def test_print_environment_records_socket_display_names_only(self):
         script = (self.SCRIPTS / "baseline-lib.sh").read_text()
         self.assertIn('wayland=$(socket_display "${WAYLAND_DISPLAY:-}") display=$(socket_display "${DISPLAY:-}")', script)
+
+    def test_a_jdk_outside_home_keeps_only_its_directory_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d, "repo")
+            lib = root / "examples/fx-lab/build/install/fx-lab/lib"
+            lib.mkdir(parents=True)
+            (lib / "a.jar").write_text("x")
+            limits = root / "baseline.conf"
+            limits.write_text("K=1\n")
+            jdk = pathlib.Path(d, "mnt", "users", "alice", "jdks", "27")
+            java = jdk / "bin" / "java"
+            java.parent.mkdir(parents=True)
+            java.write_text(f"#!/bin/sh\necho '    java.home = {jdk}' >&2\necho '    java.specification.version = 27' >&2\n"
+                            "echo 'openjdk version \"27\"' >&2\n")
+            java.chmod(0o755)
+            target = pathlib.Path(d, "environment.txt")
+            out = bash(f'print_environment "{root}" abc quick "{limits}" "{java}" "100:3:1:100" | write_environment "{target}"',
+                       env={"HOME": "/nonexistent-home"})
+            text = target.read_text()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("java_bin=<jdk>/27/bin/java\n", text)
+        self.assertIn("    java.home = <jdk>/27\n", text)
+        self.assertNotIn("alice", text)
+        self.assertNotIn(d, text)
+
+    def test_jdk_bin_display_cases(self):
+        for value, expected in (("java", "java"), ("/opt/jdk-27/bin/java", "<jdk>/jdk-27/bin/java"),
+                                ("/opt/jdk-27/bin/java27", "<jdk>/java27"), ("/bin/java", "<jdk>/bin/java")):
+            with self.subTest(value=value):
+                self.assertEqual(bash('jdk_bin_display "$V"', env={"V": value}).stdout, expected + "\n")
 
     def test_one_line_encodes_control_characters_and_options(self):
         for value, expected in (("-n", "-n"), ("a\nb\tc\rd", "a?b?c?d"), ("plain=/x", "plain=/x")):
