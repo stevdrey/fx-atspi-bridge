@@ -10,17 +10,22 @@ The script does not change desktop settings, terminate unrelated processes or cl
 
 ## SC-01 quick collection
 
-`quick/` contains 44 runs from the clean checkout of `da3210e`, paired bridge off/on, with the workload and jar hashes in `environment.txt`. The final collection resumed after a user interruption; the unconfirmed result was excluded and repeated. No data from the earlier `658f1e8` collection are mixed in. No invalid-run retries were needed. Runtime package versions are in `runtime.txt`.
+The 44 raw runs are published unchanged in [evidence-only PR #34](https://github.com/stevdrey/fx-atspi-bridge/pull/34), commit `6b997fccd532d937b4b4806e3b85856a561391ca`, separately from functional PR #33. They measure the clean checkout of `da3210e`, paired bridge off/on. This checkout retains `quick/environment.txt`, aggregate reports and the integrity manifest. The final collection resumed after a user interruption; the unconfirmed result was excluded and repeated. No data from the earlier `658f1e8` collection are mixed in. No invalid-run retries were needed. Runtime package versions are in `runtime.txt`.
 
 - `summary.md`: the existing `budgets.py` output (including observed-value-derived candidate budgets, which are not adopted as release criteria).
 - `comparison-sc01.json`: comparison against the fixed provisional SC-01 thresholds at `617d2e0`; two exceedances are retained explicitly.
 - `validation.json`: completed-run, provider-liveness, churn and error counts.
 
-Reproduce from the repository root:
+Recover the immutable run files and combine them with this checkout's retained metadata in a temporary directory, then reproduce from the repository root:
 
 ```bash
-python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-7/quick
-python3 docs/verification/data/issue-7/compare_sc01.py docs/verification/data/issue-7/quick
+git fetch origin refs/pull/34/head
+evidence_dir=$(mktemp -d)
+git archive HEAD docs/verification/data/issue-7 | tar -x -C "$evidence_dir"
+git archive 6b997fccd532d937b4b4806e3b85856a561391ca docs/verification/data/issue-7/quick | tar -x -C "$evidence_dir"
+(cd "$evidence_dir/docs/verification/data/issue-7" && sha256sum -c MANIFEST.sha256)
+python3 examples/fx-lab/scripts/budgets.py "$evidence_dir/docs/verification/data/issue-7/quick"
+python3 docs/verification/data/issue-7/compare_sc01.py "$evidence_dir/docs/verification/data/issue-7/quick"
 ```
 
-`compare_sc01.py` uses only the standard library and regenerates the two JSON reports. Run the full harness validator first. Ignored process logs were checked for successful completion before copying; they are not needed for reproducing the calculations from the retained JSON. See `docs/verification/issue-7.md` for interpretation and limits. The manifest covers retained evidence/helpers except itself and ignored logs/cache files.
+`compare_sc01.py` uses only the standard library and regenerates the two JSON reports. Run the full harness validator first. Ignored process logs were checked for successful completion before copying; they are not needed for reproducing the calculations from the retained JSON. See `docs/verification/issue-7.md` for interpretation and limits. The manifest covers 58 evidence/helper files, including the 44 external run JSONs; verify it against the combined temporary directory. It excludes itself and ignored logs/cache files. [QA #35](https://github.com/stevdrey/fx-atspi-bridge/issues/35) tracks merged-head measurement and investigation of both provisional exceedances, separately from full baseline #15.

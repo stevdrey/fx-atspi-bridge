@@ -42,11 +42,13 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     private static final AtomicReference<FxAtSpiBridge> ACTIVE = new AtomicReference<>();
     private final Executor fxExecutor;
+    private final UpdateCompletion updates;
     private boolean closed;
     private long policyRevision;
     private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, BridgeOptions options,
                           Executor observerScheduler) {
         this.fxExecutor = fxExecutor;
+        updates = new UpdateCompletion(fxExecutor);
         registry = new TargetRegistry();
         observer = new SceneObserver(registry, observerScheduler, options);
         provider = AtSpiProvider.pushed(status, observer::synchronize,
@@ -70,6 +72,7 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     private void released() {
         ACTIVE.compareAndSet(this, null);
+        updates.stop(false);
         // A provider that failed on its own still holds the observer and registry; the FX executor releases them.
         try { fxExecutor.execute(this::closeOnFx); }
         catch (RuntimeException rejected) { /* The executor refused the task; nothing static keeps this bridge reachable. */ }
@@ -133,8 +136,12 @@ public final class FxAtSpiBridge implements AutoCloseable {
     }
     /**
      * FX-only policy update. Completion confirms provider reconciliation and removal of old exports, not revocation
-     * of data already received by clients. One update may be pending. Never block FX on this stage; it completes on
-     * the FX thread, so dependent actions run there and never on the provider thread, and must not block. Limits apply to subsequent
+     * of data already received by clients. One public update may be pending. Delivery normally completes on FX;
+     * after a provider result, unavailable FX delivery fails on an independent daemon within five seconds
+     * (immediately on executor rejection). Delivery failure does not roll back applied options. The bridge never
+     * completes this stage on the provider thread. Non-async continuations registered after completion may run
+     * on their registering thread; use an explicit FX executor for UI affinity. Continuations must not block.
+     * Never wait on FX. The delivery deadline does not time out native reconciliation. Limits apply to subsequent
      * admissions; existing commands retain deadlines. Excluded nodes require an explicit update for reinclusion.
      * @throws IllegalStateException when stopped, off FX, or another update is pending
      */
@@ -143,12 +150,15 @@ public final class FxAtSpiBridge implements AutoCloseable {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Update on the FX application thread");
         if (closed || !observer.active()) throw new IllegalStateException("Provider stopped");
         var revision = policyRevision + 1;
-        var completion = provider.prepareUpdate(revision);
+        var delivery = updates.reserve();
+        CompletionStage<Void> completion;
+        try { completion = provider.prepareUpdate(revision); }
+        catch (RuntimeException | Error failure) { delivery.abandon(); throw failure; }
         policyRevision = revision;
         try { observer.updateOptions(options, revision); }
         catch (RuntimeException | Error failure) { closeOnFx(); throw failure; }
-        // The provider completes the barrier on its own thread; application continuations must never run there.
-        return completion.whenCompleteAsync((ignored, failure) -> {}, fxExecutor);
+        completion.whenComplete(delivery::providerResult);
+        return delivery.stage();
     }
     /**
      * Installs the bridge with status messages written to standard error.
@@ -166,7 +176,7 @@ public final class FxAtSpiBridge implements AutoCloseable {
     }
     /** FX-confined disposal; callers guarantee they run on the FX thread (public close checks, released() uses the FX executor). */
     private void closeOnFx() {
-        if (!closed) { closed=true; observer.close(); provider.stop(); }
+        if (!closed) { closed=true; observer.close(); provider.stop(); updates.stop(true); }
     }
     boolean closeRequested() { return closed; }
     boolean observerActive() { return observer.active(); }

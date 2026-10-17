@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -211,6 +212,63 @@ class ConfigurationTest {
         onFx(() -> { bridge.close(); assertThrows(IllegalStateException.class, () -> bridge.updateOptions(BridgeOptions.defaults())); return null; });
         release.countDown();
         assertThrows(ExecutionException.class, () -> completion.toCompletableFuture().get(15, TimeUnit.SECONDS));
+    }
+    @Test void closeSettlesAnUpdateWhoseFxDeliveryWasDiscarded() throws Exception {
+        var deliveries = new CopyOnWriteArrayList<Runnable>();
+        bridge = onFx(() -> FxAtSpiBridge.installConfigured(BridgeOptions.defaults(), statuses::add,
+                ffi -> bus.address(), false, deliveries::add, Platform::runLater));
+        await(() -> bridge.provider.state() == AtSpiProvider.State.RUNNING);
+        var completion = onFx(() -> bridge.updateOptions(BridgeOptions.builder().applicationName("updated").build()))
+                .toCompletableFuture();
+        await(() -> bridge.provider.publishedSnapshot().policyRevision() == 1 && !deliveries.isEmpty());
+        deliveries.clear(); // toolkit shutdown may accept and then discard a runLater task
+        onFx(() -> { bridge.close(); return null; });
+        assertTrue(completion.isDone(), "close must settle the public stage independently of queued FX delivery");
+        assertThrows(ExecutionException.class, () -> completion.get(15, TimeUnit.SECONDS));
+    }
+    @Test void reconciledUpdateRemainsBusyUntilItsPublicDeliverySettles() throws Exception {
+        var deliveries = new CopyOnWriteArrayList<Runnable>();
+        bridge = onFx(() -> FxAtSpiBridge.installConfigured(BridgeOptions.defaults(), statuses::add,
+                ffi -> bus.address(), false, deliveries::add, Platform::runLater));
+        await(() -> bridge.provider.state() == AtSpiProvider.State.RUNNING);
+        onFx(() -> bridge.updateOptions(BridgeOptions.builder().applicationName("first").build()));
+        await(() -> bridge.provider.publishedSnapshot().policyRevision() == 1 && !deliveries.isEmpty());
+        onFx(() -> {
+            assertThrows(IllegalStateException.class, () -> bridge.updateOptions(BridgeOptions.builder().applicationName("second").build()));
+            assertEquals("first", bridge.provider.publishedSnapshot().get("root").name());
+            return null;
+        });
+    }
+    @Test void globalDeliverySaturationRejectsBeforeChangingOptions() throws Exception {
+        install(BridgeOptions.defaults());
+        var reservations = new ArrayList<UpdateCompletion.Ticket>();
+        try {
+            for (int i = 0; i < UpdateCompletion.CAPACITY; i++)
+                reservations.add(new UpdateCompletion(task -> {}).reserve());
+            onFx(() -> {
+                assertThrows(IllegalStateException.class, () -> bridge.updateOptions(BridgeOptions.builder().applicationName("blocked").build()));
+                assertEquals(0, bridge.provider.publishedSnapshot().policyRevision());
+                assertEquals("JavaFX AT-SPI Lab", bridge.provider.publishedSnapshot().get("root").name());
+                return null;
+            });
+        } finally { reservations.forEach(UpdateCompletion.Ticket::abandon); }
+        update(BridgeOptions.builder().applicationName("available").build());
+        assertEquals("available", bridge.provider.publishedSnapshot().get("root").name());
+    }
+    @Test void rejectedDeliveryDoesNotExecuteContinuationsOnTheProvider() throws Exception {
+        var release = new CountDownLatch(1);
+        try {
+            bridge = onFx(() -> FxAtSpiBridge.installConfigured(BridgeOptions.defaults(), statuses::add,
+                    ffi -> { try { release.await(15, TimeUnit.SECONDS); } catch (InterruptedException error) { throw new AssertionError(error); }
+                        return bus.address(); }, false,
+                    task -> { throw new RejectedExecutionException("SECRETMARKER"); }, Platform::runLater));
+            var observed = new CompletableFuture<String>();
+            var completion = onFx(() -> bridge.updateOptions(BridgeOptions.builder().applicationName("updated").build())
+                    .whenComplete((value, failure) -> observed.complete(Thread.currentThread().getName())));
+            release.countDown();
+            assertThrows(ExecutionException.class, () -> completion.toCompletableFuture().get(15, TimeUnit.SECONDS));
+            assertEquals("fx-atspi-update-completion", observed.get(15, TimeUnit.SECONDS));
+        } finally { release.countDown(); }
     }
     @Test void anExplicitlyAllowedPersistentSenderCanAct() throws Exception {
         var presses = new AtomicInteger();
