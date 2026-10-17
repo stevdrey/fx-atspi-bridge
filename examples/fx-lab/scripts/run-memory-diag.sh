@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Issue 17: memory characterization runs (NMT, smaps_rollup, malloc_info, class histograms, pmap). One JVM per cell.
-# Usage: run-memory-diag.sh <output-dir> [smoke|diag] [--resume]   (default profile: diag)
+# Usage: run-memory-diag.sh <output-dir> [smoke|diag|scaling-smoke|scaling] [--resume]   (default profile: diag)
 #   smoke (~2 min): 100 nodes, short phases, one cell per kind. Validates the tooling; NEVER use it as evidence.
 #   diag  (~1 h):   structural churn at 10,000 nodes (30 cycles), bridge off/on x 3 reps, without and with NMT;
 #                   install/close churn at 1,000 nodes (100 cycles), bridge on x 3 reps: default malloc, NMT, and
@@ -35,7 +35,9 @@ warmup=50; samples=200; idle_seconds=10; max_attempts=2
 case "$profile" in
   smoke) plan=("structural:100:1:off,on:plain,nmt:5:0" "install:100:1:on:plain,nmt,arena2:0:5"); warmup=10; samples=30; idle_seconds=2 ;;
   diag)  plan=("structural:10000:3:off,on:plain,nmt:30:0" "install:1000:3:on:plain,nmt,arena2:0:100") ;;
-  *) echo "Unknown profile '$profile' (smoke|diag)" >&2; exit 1 ;;
+  scaling-smoke) plan=("scaling:100:1:off,on:plain,nmt:0:0"); warmup=10; samples=30; idle_seconds=2 ;;
+  scaling) plan=("scaling:100:5:off,on:plain,nmt:0:0" "scaling:1000:5:off,on:plain,nmt:0:0" "scaling:10000:5:off,on:plain,nmt:0:0") ;;
+  *) echo "Unknown profile '$profile' (smoke|diag|scaling-smoke|scaling)" >&2; exit 1 ;;
 esac
 root="$(cd "$script_dir/../../.." && pwd -P)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
@@ -58,6 +60,26 @@ check_clean_tree "$root" "$out_abs" || exit 1
 head_sha="$(git -C "$root" rev-parse HEAD)"
 require_fresh_or_resumable "$out_abs" "$resume" "$head_sha" "$profile" "${plan[@]}" || exit 1
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
+# Fingerprint only comparison contracts, excluding the bridge/harness revision being compared.
+scaling_fingerprint=""
+if [[ "$profile" = scaling* ]]; then
+  scaling_fingerprint="$({
+    "$java_bin" -version 2>&1
+    uname -srm
+    rpm -q glibc glib2 at-spi2-core 2>/dev/null || true
+    nproc
+    grep -m1 'model name' /proc/cpuinfo
+    echo "session=${XDG_SESSION_TYPE:-unknown} workload=$warmup,$samples,$idle_seconds"
+    for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
+      printf '%s=%s\n' "$opts_var" "${!opts_var:-}"
+    done
+    (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum javafx-*.jar)
+    sha256sum "$limits" | cut -d' ' -f1
+  } | sha256sum | cut -d' ' -f1)"
+  if [ "$resume" -eq 1 ] && ! grep -qx "scaling_environment_sha256=$scaling_fingerprint" "$out_abs/environment.txt"; then
+    echo "Refusing to resume: scaling environment differs." >&2; exit 1
+  fi
+fi
 if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
   echo "resumed=$(date -u +%FT%TZ)" >> "$out_abs/environment.txt"
 else
@@ -69,6 +91,10 @@ else
     echo "allocator_env=default (GLIBC_TUNABLES, LD_PRELOAD and MALLOC_* unset; variants are set per cell)"
     echo "glib2=$(rpm -q glib2 2>/dev/null || echo unknown)"
     echo "pmap=$(pmap -V 2>&1 | head -1)"
+    if [[ "$profile" = scaling* ]]; then
+      echo "scaling_contract=1 checkpoint:afterIdleGc order:alternating-on-off no-churn"
+      echo "scaling_environment_sha256=$scaling_fingerprint"
+    fi
   } | write_environment "$out_abs/environment.txt"
 fi
 
@@ -76,7 +102,9 @@ for entry in "${plan[@]}"; do
   IFS=: read -r kind nodes reps bridges variants structural install <<< "$entry"
   for rep in $(seq 1 "$reps"); do
     for variant in ${variants//,/ }; do
-      for bridge in ${bridges//,/ }; do
+      bridge_order="${bridges//,/ }"
+      if [ "$kind" = scaling ] && (( rep % 2 == 0 )); then bridge_order="on off"; fi
+      for bridge in $bridge_order; do
         name="${kind}-n${nodes}-${bridge}-${variant}-r${rep}"
         if [ -f "$out_abs/$name.json" ]; then echo "skip $name (result exists)"; continue; fi
         rm -rf "${out_abs:?}/$name"
@@ -100,4 +128,13 @@ for entry in "${plan[@]}"; do
     done
   done
 done
+if [[ "$profile" = scaling* ]]; then
+  mkdir -p "$out_abs/audit"
+  for entry in "${plan[@]}"; do
+    IFS=: read -r kind nodes rest <<< "$entry"
+    python3 "$script_dir/scaling_audit.py" --bin "$bin" --nodes "$nodes" --out "$out_abs/audit/n$nodes.json"
+  done
+  echo "Summarize with: python3 $script_dir/scaling_diag.py $out"
+  exit 0
+fi
 echo "Summarize with: python3 $script_dir/memory_diag.py $out"
