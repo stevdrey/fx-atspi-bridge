@@ -12,3 +12,9 @@ Target requirements, not a security certification of the prototype.
 8. Owner-thread native cleanup exactly once. Keep upcall stubs/arenas live until deregistration and invocation completion. Validate ABI/platform before unsafe work.
 9. Bus or callback failures trigger controlled bridge degradation/teardown; application must remain usable. Native segmentation faults cannot be recovered by Java exception handling.
 10. CI has minimal permissions, pinned actions, no secret values in source/logs and no wiki writes from pull requests. Never lower security controls to improve benchmarks.
+
+## SC-07 implementation contract
+
+`BridgeOptions` applies before snapshots, with runtime/null failures producing an empty inert projection. Password metadata is generic and no password values reach the redactor. Application redactors are trusted and must cover aliases in titles, labels and IDs; no automatic cross-control secret detection is claimed. Sensitive/transformed text has projected offsets, zero caret and no mutation capability. Limits and sender settings in snapshots contain no FX objects/callbacks.
+
+Update completion is a provider reconciliation barrier, not revocation of already received data. Privacy/interface/failure changes rotate references rather than sending deleted old text. Exclusion disposes descendants and their listeners; reintroduction creates fresh identities. State/capability/sender checks occur at admission and again before FX effects; denials are fixed AccessDenied errors. Optional unique-name sender allowlists affect mutations only; same-session reads remain available and no authentication is claimed. Reducing action capacity never cancels admitted work or shortens its captured deadlines.

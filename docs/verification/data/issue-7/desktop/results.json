@@ -1,0 +1,28 @@
+{
+  "checks": {
+    "initial_names_password_safe": true,
+    "libatspi_reads_application_name": true,
+    "libatspi_reads_window_name": true,
+    "redaction_rotates_reference": true,
+    "projected_text_readonly": true,
+    "excluded_target_removed": true,
+    "reinclusion_renews_reference": true,
+    "sender_denied": true,
+    "reads_available_to_denied_sender": true,
+    "allowed_action": true,
+    "cache_safe": true,
+    "events_received": true,
+    "events_no_raw_or_old_text": true,
+    "logs_safe": true
+  },
+  "session": "wayland",
+  "desktop": "GNOME",
+  "atspi": [
+    2,
+    60,
+    7
+  ],
+  "other_same_process_providers": 1,
+  "javafx_backend": "xwayland",
+  "result": "passed"
+}

@@ -1,0 +1,18 @@
+[
+  "('/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'AddAccessible', GLib.Variant('(((so)(so)(so)iiassusau))', (((':1.37', '/org/a11y/atspi/accessible/object6'), (':1.37', '/org/a11y/atspi/accessible/root'), (':1.37', '/org/a11y/atspi/accessible/object2'), 0, 0, ['org.a11y.atspi.Accessible', 'org.a11y.atspi.Text'], 'Field', 79, 'Experimental JavaFX AT-SPI provider', [1191188736, 0]),)))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object3')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object6')>, {})))",
+  "('/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'RemoveAccessible', GLib.Variant('((so))', ((':1.37', '/org/a11y/atspi/accessible/object3'),)))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object6')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 1, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object4')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 2, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object5')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object4')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 1, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object5')>, {})))",
+  "('/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'RemoveAccessible', GLib.Variant('((so))', ((':1.37', '/org/a11y/atspi/accessible/object6'),)))",
+  "('/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'AddAccessible', GLib.Variant('(((so)(so)(so)iiassusau))', (((':1.37', '/org/a11y/atspi/accessible/object7'), (':1.37', '/org/a11y/atspi/accessible/root'), (':1.37', '/org/a11y/atspi/accessible/object2'), 0, 0, ['org.a11y.atspi.Accessible', 'org.a11y.atspi.Text'], 'Field', 79, 'Experimental JavaFX AT-SPI provider', [1191188736, 0]),)))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object4')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('remove', 1, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object5')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 0, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object7')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 1, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object4')>, {})))",
+  "('/org/a11y/atspi/accessible/object2', 'org.a11y.atspi.Event.Object', 'ChildrenChanged', GLib.Variant('(siiva{sv})', ('add', 2, 0, <(':1.37', objectpath '/org/a11y/atspi/accessible/object5')>, {})))"
+]

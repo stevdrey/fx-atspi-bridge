@@ -170,9 +170,9 @@ class ModalActionTest {
         assertTrue(sorted[READS - 1] < 5_000, "reads must stay responsive while the modal is open: " + Arrays.toString(latencies));
 
         var again = output(doAction(deleteId));
-        assertTrue(again.contains("Action conflicts with an action in progress"), again);
+        assertTrue(again.contains("AccessDenied"), again);
         var blocked = output(doAction(otherId));
-        assertTrue(blocked.contains("(false,)"), "a control blocked by the modal dialog must be refused: " + blocked);
+        assertTrue(blocked.contains("AccessDenied"), "a control blocked by the modal dialog must be refused: " + blocked);
         var confirmed = output(doAction(okId));
         assertTrue(confirmed.contains("(true,)"), "the dialog's own button must stay actionable: " + confirmed);
         var result = output(first);
@@ -183,7 +183,7 @@ class ModalActionTest {
         assertTrue(locksInHandler.stream().allMatch(List::isEmpty), "no bridge lock may be held around fire()/showAndWait(): " + locksInHandler);
         awaitTrue(() -> bridge.provider.outstandingCount() == 0, "every slot must be freed");
         assertEquals(bridge.provider.pendingAcquired(), bridge.provider.pendingReleased());
-        assertEquals(3, bridge.provider.pendingAcquired(), "Delete, Other and OK were admitted; the conflict took no reference");
+        assertEquals(2, bridge.provider.pendingAcquired(), "Only Delete and OK were admitted; modal denials take no reference");
     }
     private static final class AtomicStage { volatile Stage stage; }
 }

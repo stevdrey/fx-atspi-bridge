@@ -15,6 +15,8 @@
  */
 package dev.desktopcontrol.fxatspi.fx;
 
+import dev.desktopcontrol.fxatspi.BridgeOptions;
+import dev.desktopcontrol.fxatspi.BridgeOptions.ContentKind;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.NodeStore;
@@ -77,13 +79,16 @@ public final class SceneObserver {
     /** Ids added, changed or removed since the last publication, in the order they changed. */
     private final Set<String> touched = new LinkedHashSet<>();
     /**
-     * Targets whose projection threw (for example a property bound to a failing application value). They keep their
-     * last published record and are projected again with the next batch; they never schedule a flush by themselves,
+     * Targets whose projection threw (for example a property bound to a failing application value). They publish an
+     * inert, empty replacement and are projected again with the next batch; they never schedule a flush by themselves,
      * so a getter that always fails cannot cause a busy loop.
      */
     private final Set<Observed> retry = new LinkedHashSet<>();
     /** Showing state per target, valid during one flush: each ancestor chain is read at most once per batch. */
     private final IdentityHashMap<Observed, Boolean> showing = new IdentityHashMap<>();
+    private BridgeOptions options = BridgeOptions.defaults();
+    private long policyRevision;
+    private final IdentityHashMap<Window, Boolean> modal = new IdentityHashMap<>();
     private Sink sink;
     private boolean active, closed, scheduled;
     private long publications, projectionFailures;
@@ -94,10 +99,39 @@ public final class SceneObserver {
         this.scheduler = scheduler;
     }
 
+    public SceneObserver(TargetRegistry registry, Executor scheduler, BridgeOptions options) {
+        this(registry, scheduler);
+        this.options = options;
+    }
+
+    public BridgeOptions options() { return options; }
+
+    /** FX-only explicit invalidation of captured policy state, with a publication barrier even for an unchanged tree. */
+    public void updateOptions(BridgeOptions value, long revision) {
+        var renew = options.customRedaction() || value.customRedaction();
+        options = value;
+        policyRevision = revision;
+        for (var entry : observed.values()) {
+            entry.renew |= renew && entry.target != APPLICATION;
+            restructured.add(entry);
+            dirty.add(entry);
+        }
+        touched.add(Snapshot.ROOT_ID);
+        flush();
+    }
+
+    /** Only sanitized, successfully projected nodes authorize an FX mutation. */
+    public boolean permits(String id, Capability capability) {
+        var item = model.get(id);
+        return item != null && item.actionEligible() && item.has(capability) && !item.redacted()
+                && (capability != Capability.EDITABLE_TEXT || item.editable());
+    }
+
     /** One observed target: its id, its observed parent and children, and the listener it registered. */
     private final class Observed implements InvalidationListener {
         final Object target;
-        final String id;
+        String id;
+        boolean renew, failed;
         Observed parent;
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
@@ -119,6 +153,8 @@ public final class SceneObserver {
 
         @Override public void invalidated(Observable source) {
             if (!attached || !active) return;
+            if (target == APPLICATION && source == structure) markSubtree(this); // modal membership affects every window
+            if (options.filtersTargets() && parent != null) restructured.add(parent);
             if (source == structure || scene != null && source == scene.rootProperty()) restructured.add(this);
             else if (source == inherited) markSubtree(this);
             else dirty.add(this);
@@ -217,7 +253,7 @@ public final class SceneObserver {
     /** Generations published so far; read-only, for tests that check idle behavior. */
     public long publications() { return publications; }
 
-    /** Projections that threw and were kept for the next batch; read-only, for tests. */
+    /** Failed projections queued for retry with the next batch; read-only, for tests. */
     public long projectionFailures() { return projectionFailures; }
 
     /** Removes every listener and releases every target; idempotent. FX thread only. */
@@ -233,7 +269,9 @@ public final class SceneObserver {
         touched.clear();
         retry.clear();
         showing.clear();
+        modal.clear();
         registry.clear();
+        options = BridgeOptions.defaults(); // release application callback captures after disposal
     }
 
     /** Any thread: asks the FX thread to close; used when the receiver stopped without anyone closing this observer. */
@@ -265,29 +303,57 @@ public final class SceneObserver {
         }
         for (var entry : retry) if (entry.attached) { entry.resubscribe(); dirty.add(entry); }
         retry.clear();
-        var projections = List.copyOf(dirty);
-        dirty.clear();
         try {
-            for (var entry : projections) {
+            while (!dirty.isEmpty()) {
+                var iterator = dirty.iterator();
+                var entry = iterator.next();
+                iterator.remove();
                 if (!entry.attached) continue;
                 AccessibleNode node;
+                var failed = false;
                 try { node = project(entry); }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
                     projectionFailures++;
                     retry.add(entry);
-                    if (model.get(entry.id) != null) continue; // keep the last published record
-                    node = placeholder(entry); // a new target must exist for the parent that lists it
+                    failed = true;
+                    node = placeholder(entry);
                 }
                 if (!entry.unsubscribed.isEmpty()) retry.add(entry); // projected, but a listener is still missing
+                var old = model.get(entry.id);
+                if (entry.target != APPLICATION && old != null && (entry.renew && (!old.name().equals(node.name()) || !old.text().equals(node.text())) || failed != entry.failed
+                        || old.redacted() != node.redacted() || !old.capabilities().equals(node.capabilities()))) {
+                    rotate(entry);
+                    node = identity(node, entry);
+                }
+                entry.renew = false;
+                entry.failed = failed;
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
             }
-        } finally { showing.clear(); }
+        } finally { showing.clear(); modal.clear(); }
         if (touched.isEmpty()) return;
         var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
         publications++;
-        if (!sink.publish(new Snapshot(model.freeze()), changed)) close();
+        if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
+    }
+
+    /** Changes only an export incarnation; structural observation and application object identity stay intact. */
+    private void rotate(Observed entry) {
+        if (model.remove(entry.id) != null) touched.add(entry.id);
+        registry.release(entry.target);
+        entry.id = registry.register(entry.target);
+        if (entry.parent != null) dirty.add(entry.parent);
+        for (var child : entry.children) {
+            var descendant = observed.get(child);
+            if (descendant != null && descendant.parent == entry) dirty.add(descendant);
+        }
+    }
+
+    private AccessibleNode identity(AccessibleNode node, Observed entry) {
+        return new AccessibleNode(entry.id, node.name(), node.role(), node.text(), node.editable(), node.enabled(),
+                node.showing(), node.focused(), node.focusable(), node.caret(), entry.parent.id, childIds(entry),
+                node.capabilities(), node.actionEligible(), node.redacted());
     }
 
     private record Removal(Object child, Observed former) {}
@@ -342,6 +408,9 @@ public final class SceneObserver {
         }
         entry.unsubscribe();
         observed.remove(entry.target);
+        dirty.remove(entry);
+        restructured.remove(entry);
+        retry.remove(entry);
         registry.release(entry.target);
         if (model.remove(entry.id) != null) touched.add(entry.id);
     }
@@ -354,8 +423,8 @@ public final class SceneObserver {
         }
     }
 
-    private static List<?> liveChildren(Observed entry) {
-        return switch (entry.target) {
+    private List<?> liveChildren(Observed entry) {
+        var candidates = switch (entry.target) {
             case Window window -> {
                 entry.observeScene(window.getScene());
                 var root = entry.scene == null ? null : entry.scene.getRoot();
@@ -366,6 +435,15 @@ public final class SceneObserver {
             case Node _ -> List.of();
             default -> Window.getWindows();
         };
+        if (!options.filtersTargets()) return candidates;
+        var included = new ArrayList<Object>(candidates.size());
+        for (var candidate : candidates) {
+            try {
+                if (candidate instanceof Window window ? options.includedWindows().test(window)
+                        : !options.excludedNodes().test((Node) candidate)) included.add(candidate);
+            } catch (RuntimeException failure) { projectionFailures++; } // fail closed; never log callback data
+        }
+        return included;
     }
 
     private List<String> childIds(Observed entry) {
@@ -403,11 +481,11 @@ public final class SceneObserver {
         return switch (entry.target) {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
-                yield new AccessibleNode(entry.id, title, Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
+                yield new AccessibleNode(entry.id, options.redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
                         Snapshot.ROOT_ID, children, NONE);
             }
             case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children);
-            default -> new AccessibleNode(Snapshot.ROOT_ID, "JavaFX AT-SPI Lab", Role.APPLICATION, "", false, true, !children.isEmpty(),
+            default -> new AccessibleNode(Snapshot.ROOT_ID, options.redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
     }
@@ -415,27 +493,38 @@ public final class SceneObserver {
     /** Inert stand-in for a new target whose projection failed: no name, text or capability, not showing. */
     private AccessibleNode placeholder(Observed entry) {
         var ancestor = entry.parent == null ? "" : entry.parent.id;
-        return new AccessibleNode(entry.id, "", Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
+        return new AccessibleNode(entry.id, "", entry.target == APPLICATION ? Role.APPLICATION : Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
     }
 
-    private static AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children) {
-        var accessibleText = node.getAccessibleText();
-        var nodeId = node.getId();
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children) {
+        var password = node instanceof PasswordField;
+        var sensitive = password || options.sensitiveNodes().test(node);
+        var accessibleText = password ? null : node.getAccessibleText();
+        var nodeId = password ? null : node.getId();
         var labeled = node instanceof Labeled control ? control.getText() : null;
-        var name = accessibleText != null ? accessibleText : node instanceof Labeled ? labeled : nodeId;
+        var name = password ? "[password]" : options.redact(ContentKind.NODE_NAME, sensitive,
+                accessibleText != null ? accessibleText : node instanceof Labeled ? labeled : nodeId);
         // Password contents must never be published through the experiment.
         var input = node instanceof TextInputControl field && !(node instanceof PasswordField) ? field : null;
-        var text = input != null ? input.getText() : "";
-        if (text == null) text = "";
+        var original = input != null ? input.getText() : "";
+        if (original == null) original = "";
+        var text = password ? "" : options.redact(ContentKind.NODE_TEXT, sensitive, original);
         var caretPosition = input != null ? input.getCaretPosition() : 0;
-        var caret = input != null ? text.codePointCount(0, Math.min(caretPosition, text.length())) : 0;
-        var editable = input != null && input.isEditable();
+        var transformed = sensitive || !text.equals(original);
+        var caret = input != null && !transformed ? text.codePointCount(0, Math.min(caretPosition, text.length())) : 0;
+        var editableProperty = input != null && input.isEditable();
+        var editable = editableProperty && !transformed && options.textWriteAllowed().test(node);
         var role = node instanceof ButtonBase ? Role.PUSH_BUTTON : node instanceof TextArea ? Role.TEXT_AREA
                 : node instanceof TextInputControl ? Role.ENTRY : node instanceof Label ? Role.LABEL : Role.PANEL;
-        var capabilities = node instanceof ButtonBase ? ACTION : input != null ? TEXT_INPUT : NONE;
+        var capabilities = node instanceof ButtonBase && !sensitive && options.pressAllowed().test(node) ? ACTION
+                : input != null ? !transformed && options.textWriteAllowed().test(node) ? TEXT_INPUT : Set.of(Capability.TEXT) : NONE;
         var focusable = node instanceof ButtonBase || node instanceof TextInputControl;
         var enabled = !node.isDisabled();
         var focused = node.isFocused();
-        return new AccessibleNode(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children, capabilities);
+        var scene = node.getScene();
+        var window = scene == null ? null : scene.getWindow();
+        var blocked = window == null || modal.computeIfAbsent(window, ActionExecutor::blockedByModal);
+        return new AccessibleNode(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
+                capabilities, enabled && showing && !blocked && !sensitive && !transformed, sensitive || transformed);
     }
 }
