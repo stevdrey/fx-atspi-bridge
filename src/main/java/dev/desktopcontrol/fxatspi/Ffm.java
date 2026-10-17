@@ -139,33 +139,47 @@ final class Ffm implements AutoCloseable {
         open();
         try { mainContextWakeup.invokeExact(context); } catch (Throwable error) { throw failed("g_main_context_wakeup", error); }
     }
-    /** Provider-owned one-shot source attached to this context; destroy and unref it even after it fires. */
+    /** Provider-owned one-shot source attached to this context; release it with {@link #releaseSource}, even after it fires. */
     MemorySegment timeoutSource(MemorySegment context, long delayNanos) {
         open();
         // Round up without overflowing; our action deadlines are bounded to at most 120 seconds.
         var positive = Math.max(0L, delayNanos);
         var millis = (int) Math.min(Integer.MAX_VALUE, positive / 1_000_000L + (positive % 1_000_000L == 0 ? 0 : 1));
+        var callback = timeoutCallback();
         MemorySegment source;
         try { source = (MemorySegment) timeoutSourceNew.invokeExact(millis); }
         catch (Throwable error) { throw failed("g_timeout_source_new", error); }
         try {
-            if (timeoutCallback.address() == 0) {
-                var handle = MethodHandles.lookup().findStatic(Ffm.class, "timeoutElapsed", MethodType.methodType(int.class, MemorySegment.class));
-                timeoutCallback = Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.of(JAVA_INT, ADDRESS), arena);
-            }
-            sourceSetCallback.invokeExact(source, timeoutCallback, NIL, NIL);
-            var id = (int) sourceAttach.invokeExact(source, context);
-            if (id == 0) throw new IllegalStateException("Source attachment failed");
+            try { sourceSetCallback.invokeExact(source, callback, NIL, NIL); }
+            catch (Throwable error) { throw failed("g_source_set_callback", error); }
+            int id;
+            try { id = (int) sourceAttach.invokeExact(source, context); }
+            catch (Throwable error) { throw failed("g_source_attach", error); }
+            if (id == 0) throw failed("g_source_attach", null);
             return source;
-        } catch (Throwable error) {
-            try { destroySource(source); } finally { unrefSource(source); }
-            throw failed("g_source_attach", error);
+        } catch (RuntimeException failure) {
+            try { releaseSource(source); }
+            catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
         }
+    }
+    /** One stub per native API, created on first use in its arena. Provider only. */
+    private MemorySegment timeoutCallback() {
+        if (timeoutCallback.address() != 0) return timeoutCallback;
+        try {
+            var handle = MethodHandles.lookup().findStatic(Ffm.class, "timeoutElapsed", MethodType.methodType(int.class, MemorySegment.class));
+            return timeoutCallback = Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.of(JAVA_INT, ADDRESS), arena);
+        } catch (ReflectiveOperationException error) { throw failed("timeout upcall", error); }
     }
     private static int timeoutElapsed(MemorySegment ignored) { return 0; } // G_SOURCE_REMOVE; no application callback
     boolean sourceDestroyed(MemorySegment source) {
         open();
         try { return (int) sourceIsDestroyed.invokeExact(source) != 0; } catch (Throwable error) { throw failed("g_source_is_destroyed", error); }
+    }
+    /** Detaches the source from its context (if still attached) and drops this reference, even if the destroy fails. */
+    void releaseSource(MemorySegment source) {
+        try { destroySource(source); }
+        finally { unrefSource(source); }
     }
     void destroySource(MemorySegment source) {
         open();
@@ -175,12 +189,16 @@ final class Ffm implements AutoCloseable {
         open();
         try { sourceUnref.invokeExact(source); } catch (Throwable error) { throw failed("g_source_unref", error); }
     }
-    long connectClosed(MemorySegment connection, MemorySegment callback) {
+    /** Connects a GObject signal; a zero handler id (unknown signal or instance) is a failure, never an inert handler. */
+    long connectSignal(MemorySegment instance, String signal, MemorySegment callback) {
         open();
+        long handler;
         try (var temporary = Arena.ofConfined()) {
-            try { return (long) signalConnectData.invokeExact(connection, temporary.allocateFrom("closed"), callback, NIL, NIL, 0); }
+            try { handler = (long) signalConnectData.invokeExact(instance, temporary.allocateFrom(signal), callback, NIL, NIL, 0); }
             catch (Throwable error) { throw failed("g_signal_connect_data", error); }
         }
+        if (handler == 0) throw failed("g_signal_connect_data", null);
+        return handler;
     }
     void disconnectSignal(MemorySegment connection, long handler) {
         open();

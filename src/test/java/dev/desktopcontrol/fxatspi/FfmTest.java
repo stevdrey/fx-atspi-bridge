@@ -15,11 +15,17 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import static java.lang.foreign.ValueLayout.ADDRESS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -88,8 +94,7 @@ class FfmTest {
                 assertFalse(api.iterate(context, true), "a pre-wake returns without dispatching the timeout");
                 assertFalse(api.sourceDestroyed(timeout));
             } finally {
-                api.destroySource(timeout);
-                api.unrefSource(timeout);
+                api.releaseSource(timeout);
                 api.mainContextUnref(context);
             }
         }
@@ -103,8 +108,7 @@ class FfmTest {
                 while (!api.sourceDestroyed(timeout)) api.iterate(context, true);
                 assertFalse(api.iterate(context), "a one-shot source must not stay ready or repeat");
             } finally {
-                api.destroySource(timeout);
-                api.unrefSource(timeout);
+                api.releaseSource(timeout);
                 api.mainContextUnref(context);
             }
         }
@@ -129,12 +133,28 @@ class FfmTest {
                 assertFalse(api.sourceDestroyed(timeout), "the wake must return before the safety timeout fires");
             } finally {
                 done.set(true);
-                api.destroySource(timeout);
-                api.unrefSource(timeout);
+                api.releaseSource(timeout);
                 api.mainContextUnref(context);
             }
         }
     }
+
+    @Test void signalConnectionReturnsAHandlerOrFailsInsteadOfStayingInert() throws Exception {
+        try (var api = new Ffm()) {
+            var handle = MethodHandles.lookup().findStatic(FfmTest.class, "ignoreSignal",
+                    MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class));
+            var stub = Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), api.arena);
+            var cancellable = api.newCancellable();
+            try {
+                var handler = api.connectSignal(cancellable, "cancelled", stub);
+                assertTrue(handler != 0);
+                api.disconnectSignal(cancellable, handler);
+                var failure = assertThrows(IllegalStateException.class, () -> api.connectSignal(cancellable, "no-such-signal", stub));
+                assertEquals("g_signal_connect_data", failure.getMessage());
+            } finally { api.unref(cancellable); }
+        }
+    }
+    private static void ignoreSignal(MemorySegment instance, MemorySegment data) {}
 
     @Test void nodeInfoParsesAndReleases() {
         try (var api = new Ffm()) {

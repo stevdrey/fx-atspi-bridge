@@ -15,17 +15,22 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * One native wake callback, guarded against context disposal. Callers publish work before {@link #signal}; the
  * provider captures {@link #sequence} before draining work and rechecks it immediately before blocking. A wake after
  * that check interrupts the blocking iteration even if GLib has not entered its wait yet. The callback must only call
- * nonblocking g_main_context_wakeup: it must never iterate, release resources or call application code.
+ * nonblocking g_main_context_wakeup: it must never iterate, release resources or call application code. The sequence
+ * is read without the monitor; only the native wake is serialized with attachment and detachment.
  */
 final class ProviderWakeup {
-    private long sequence;
+    private final AtomicLong sequence = new AtomicLong(), failedWakes = new AtomicLong();
     private Runnable wake;
 
-    synchronized long sequence() { return sequence; }
+    long sequence() { return sequence.get(); }
+    /** Native wakes that threw; their work was still published and is seen by the provider's next recheck. */
+    long failedWakes() { return failedWakes.get(); }
 
     /** Provider only, after context creation. Initial work is drained before the first wait. */
     synchronized void attach(Runnable callback) {
@@ -33,9 +38,14 @@ final class ProviderWakeup {
         wake = callback;
     }
 
-    synchronized void signal() {
-        sequence++;
-        if (wake != null) wake.run();
+    /** Any thread; never throws, so a failed wake cannot strand the caller's own work (for example a RUNNING action). */
+    void signal() {
+        sequence.incrementAndGet(); // before the wake: a provider that misses the wake still sees the new sequence
+        synchronized (this) {
+            if (wake == null) return;
+            try { wake.run(); }
+            catch (Throwable failure) { failedWakes.incrementAndGet(); }
+        }
     }
 
     /** Provider only, before freeing the context or closing the native arena. Waits for an in-flight wake to return. */

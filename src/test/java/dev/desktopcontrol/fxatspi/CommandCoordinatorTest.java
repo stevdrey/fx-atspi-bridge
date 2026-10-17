@@ -55,6 +55,22 @@ class CommandCoordinatorTest {
         if (answers.putIfAbsent(id, new Answer(accepted, failure)) != null) duplicates.add(id);
     }
 
+    @Test void failingNativeWakeNeitherStrandsARunningActionNorLosesItsCompletion() {
+        var gate = new ProviderWakeup();
+        gate.attach(() -> { throw new IllegalStateException("Native API closed"); });
+        var coordinator = new CommandCoordinator(new ActionLimits(4, 2, Duration.ofSeconds(60), Duration.ofSeconds(60)), now::get, gate::signal);
+        var ran = new AtomicBoolean();
+        var command = coordinator.admit("a", () -> { ran.set(true); return true; });
+        coordinator.run(command);
+        assertTrue(ran.get(), "the action runs even though the RUNNING wake failed");
+        assertEquals(Phase.COMPLETED, command.phase());
+        assertEquals(1, coordinator.queuedCompletions(), "the completion is queued even though its wake failed");
+        assertEquals(2, gate.failedWakes());
+        assertEquals(2, gate.sequence(), "the provider's recheck still sees both notifications");
+        coordinator.drain(this::answer);
+        assertEquals(new Answer(true, null), answers.get(command.id()));
+        assertEquals(0, coordinator.outstandingCount());
+    }
     @Test void nearestDeadlineChangesOnStartAndDisappearsAfterRunningReplyTimeout() {
         var notifications = new AtomicInteger();
         var coordinator = new CommandCoordinator(new ActionLimits(4, 2, Duration.ofSeconds(60), Duration.ofMillis(10)), now::get,

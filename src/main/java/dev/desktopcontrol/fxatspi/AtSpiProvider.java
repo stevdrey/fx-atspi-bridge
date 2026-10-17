@@ -120,9 +120,9 @@ final class AtSpiProvider {
     private final ProviderWakeup wakeup = new ProviderWakeup();
     private volatile boolean busLost;
     private long closedHandler;
-    private MemorySegment deadlineSource = Ffm.NIL;
+    /** Provider writes only; volatile so tests can observe whether a deadline source is retained. */
+    private volatile MemorySegment deadlineSource = Ffm.NIL;
     private long armedDeadline;
-    private volatile boolean deadlineArmed;
     private final AtomicLong deadlineSourcesAcquired = new AtomicLong(), deadlineSourcesReleased = new AtomicLong();
     private record Export(List<Integer> registrations, MemorySegment info) {}
     private final Map<String,Export> exports = new LinkedHashMap<>();
@@ -234,7 +234,7 @@ final class AtSpiProvider {
     long exportsAcquired() { return exportsAcquired.get(); }
     long exportsReleased() { return exportsReleased.get(); }
     long reconciledChanges() { return reconciledChanges.get(); }
-    boolean deadlineArmed() { return deadlineArmed; }
+    boolean deadlineArmed() { return deadlineSource.address() != 0; }
     long deadlineSourcesAcquired() { return deadlineSourcesAcquired.get(); }
     long deadlineSourcesReleased() { return deadlineSourcesReleased.get(); }
     /** Starts the provider thread once; later calls and calls after stop are ignored. */
@@ -278,7 +278,7 @@ final class AtSpiProvider {
                         MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class)).bindTo(this);
                 var closedStub = Linker.nativeLinker().upcallStub(closedCallback,
                         FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), ffi.arena);
-                closedHandler = ffi.connectClosed(connection, closedStub);
+                closedHandler = ffi.connectSignal(connection, "closed", closedStub);
                 busName = ffi.uniqueName(connection);
                 // GDBusInterfaceVTable: 3 function pointers + 8 reserved pointers (Linux x86_64).
                 vtable = ffi.arena.allocate(88, 8);
@@ -294,19 +294,13 @@ final class AtSpiProvider {
                 state.compareAndSet(State.STARTING, State.RUNNING);
                 var loopContext = context;
                 BooleanSupplier dispatch = () -> ffi.iterate(loopContext);
+                BooleanSupplier lostBus = () -> busLost || busClosed();
+                Runnable javaWork = () -> { commands.drain(this::answer); commands.expire(this::answer); reconcile(); };
+                Runnable arm = () -> armDeadline(loopContext, commands.nextDeadline());
+                BooleanSupplier pendingJava = () -> !running || busLost || desired.get() != null || commands.queuedCompletions() != 0;
+                Runnable block = () -> ffi.iterate(loopContext, true);
                 while (running) {
-                    var observed = wakeup.sequence(); // before any drain/dispatch can consume a native wake
-                    if (busLost || busClosed()) { halt(); failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
-                    commands.drain(this::answer);
-                    commands.expire(this::answer);
-                    reconcile();
-                    // Bounded so continuous bus traffic cannot starve completion, expiry and reconcile work.
-                    if (dispatchBatch(dispatch)) continue;
-                    armDeadline(context, commands.nextDeadline());
-                    if (!running || busLost || desired.get() != null || commands.queuedCompletions() != 0
-                            || observed != wakeup.sequence()) continue;
-                    // No lock held. Work arriving after the recheck wakes this iteration, even before it begins.
-                    ffi.iterate(context, true);
+                    if (idlePass(wakeup, lostBus, javaWork, dispatch, arm, pendingJava, block)) { halt(); failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
                 }
             } finally {
                 teardown(context, pushed);
@@ -368,27 +362,27 @@ final class AtSpiProvider {
     }
     /** GObject upcall; never reads the peer GError or destroys native resources. */
     private void connectionClosed(MemorySegment bus, int vanished, MemorySegment error, MemorySegment data) {
-        try { busLost = true; wakeup.signal(); }
-        catch (Throwable failure) { System.err.println("AT-SPI connection callback failed: " + code(failure)); }
+        busLost = true;
+        wakeup.signal(); // never throws
     }
     /** Provider only; retain one source, and never a periodic timer. */
     private void armDeadline(MemorySegment context, OptionalLong next) {
         if (next.isEmpty()) { clearDeadline(); return; }
         var deadline = next.getAsLong();
-        if (deadlineSource.address() != 0 && armedDeadline == deadline && !ffi.sourceDestroyed(deadlineSource)) return;
+        // GLib never fires the rounded-up source before its deadline, so the native check is needed only after it.
+        if (deadlineSource.address() != 0 && armedDeadline == deadline
+                && (System.nanoTime() - deadline < 0 || !ffi.sourceDestroyed(deadlineSource))) return;
         clearDeadline();
         deadlineSource = ffi.timeoutSource(context, deadline - System.nanoTime());
         deadlineSourcesAcquired.incrementAndGet();
         armedDeadline = deadline;
-        deadlineArmed = true;
     }
     private void clearDeadline() {
         var previous = deadlineSource;
         deadlineSource = Ffm.NIL;
-        deadlineArmed = false;
         if (previous.address() == 0) return;
-        try { ffi.destroySource(previous); }
-        finally { deadlineSourcesReleased.incrementAndGet(); ffi.unrefSource(previous); }
+        try { ffi.releaseSource(previous); }
+        finally { deadlineSourcesReleased.incrementAndGet(); }
     }
     /**
      * The Embed completion is delivered through the main context, so cancel it and iterate the context briefly so the
@@ -402,10 +396,7 @@ final class AtSpiProvider {
         var timeout = ffi.timeoutSource(context, EMBED_DRAIN_NANOS);
         try {
             while (embedOutstanding && System.nanoTime() - deadline < 0) ffi.iterate(context, true);
-        } finally {
-            try { ffi.destroySource(timeout); }
-            finally { ffi.unrefSource(timeout); }
-        }
+        } finally { ffi.releaseSource(timeout); }
     }
     /**
      * Replies once and releases once. Provider thread only: it owns every invocation reference, and whoever removes
@@ -481,6 +472,24 @@ final class AtSpiProvider {
             catch (InterruptedException again) { interrupted = true; }
         }
         if (interrupted) Thread.currentThread().interrupt();
+    }
+    /**
+     * One provider loop pass. The sequence is captured before any Java drain or nonblocking dispatch can consume a
+     * native wake, and rechecked after arming the deadline, immediately before the blocking iteration. No lock is held
+     * while blocking; a signal after the recheck is latched by GLib and ends that iteration even before it begins.
+     * @return true when the bus was lost (checked after the capture, before any work)
+     */
+    static boolean idlePass(ProviderWakeup wakeup, BooleanSupplier busLost, Runnable drainJavaWork, BooleanSupplier dispatchReady,
+                            Runnable armDeadline, BooleanSupplier javaWorkPending, Runnable blockingIteration) {
+        var observed = wakeup.sequence();
+        if (busLost.getAsBoolean()) return true;
+        drainJavaWork.run();
+        // Bounded so continuous bus traffic cannot starve completion, expiry and reconcile work.
+        if (dispatchBatch(dispatchReady)) return false;
+        armDeadline.run();
+        if (javaWorkPending.getAsBoolean() || observed != wakeup.sequence()) return false;
+        blockingIteration.run();
+        return false;
     }
     /** Ready GLib iterations dispatched before the provider loop returns to its own work. */
     static final int DISPATCH_BATCH = 64;

@@ -61,6 +61,24 @@ def find_input(pid, process):
     raise RuntimeError("fixture not discovered")
 
 
+def atspi_version(atspi=Atspi, run=subprocess.check_output):
+    """Best effort and portable: the runtime library first, then RPM, then Debian packages; never aborts collection."""
+    get_version = getattr(atspi, "get_version", None)
+    if get_version is not None:
+        try:
+            return "libatspi " + ".".join(str(part) for part in get_version())
+        except (TypeError, ValueError, GLib.Error):
+            pass
+    for command in (["rpm", "-q", "at-spi2-core"], ["dpkg-query", "-W", "-f", "${Version}", "libatspi2.0-0"]):
+        try:
+            value = run(command, text=True, stderr=subprocess.DEVNULL).strip()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        if value:
+            return f"{command[0]} {value}"
+    return "unknown"
+
+
 def measure(binary, directory, repetition):
     latencies = []
     state = {"expected": None, "started": 0, "elapsed": None}
@@ -136,7 +154,7 @@ def main():
                 "glib": f"{GLib.MAJOR_VERSION}.{GLib.MINOR_VERSION}.{GLib.MICRO_VERSION}",
                 "clientSha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
                 "jars": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(libraries.glob("*.jar"))}}
-    metadata["libatspi"] = subprocess.check_output(["rpm", "-q", "at-spi2-core"], text=True).strip()
+    metadata["libatspi"] = atspi_version()
     (directory / "environment.json").write_text(json.dumps(metadata, indent=2) + "\n")
     Atspi.set_timeout(2000, 5000)
     for repetition in range(1, REPETITIONS + 1):

@@ -172,17 +172,21 @@ final class CommandCoordinator {
         var found = false;
         long nearest = 0;
         for (var command : outstanding.values()) {
-            if (command.answered) continue;
             var phase = command.phase.get();
-            long deadline;
-            switch (phase) {
-                case QUEUED, STARTING -> deadline = command.queueDeadline;
-                case RUNNING -> deadline = command.startedAt + command.runningNanos;
-                default -> { continue; } // the completion producer will wake us after enqueueing
-            }
+            // Finished phases have no deadline: the completion producer wakes us after enqueueing.
+            if (command.answered || !hasDeadline(phase)) continue;
+            var deadline = deadline(command, phase);
             if (!found || deadline - now < nearest - now) { nearest = deadline; found = true; }
         }
         return found ? OptionalLong.of(nearest) : OptionalLong.empty();
+    }
+
+    private static boolean hasDeadline(Phase phase) {
+        return phase == Phase.QUEUED || phase == Phase.STARTING || phase == Phase.RUNNING;
+    }
+    /** The single deadline rule shared by {@link #expire} and {@link #nextDeadline}; only for phases with a deadline. */
+    private static long deadline(Command command, Phase phase) {
+        return phase == Phase.RUNNING ? command.startedAt + command.runningNanos : command.queueDeadline;
     }
 
     /** Provider thread. Answers every posted completion and frees its slot. */
@@ -209,12 +213,12 @@ final class CommandCoordinator {
             switch (phase) {
                 // Not started yet, whether or not the FX thread has claimed it: past its deadline it never runs.
                 case QUEUED, STARTING -> {
-                    if (now - command.queueDeadline >= 0 && command.phase.compareAndSet(phase, Phase.EXPIRED)) {
+                    if (now - deadline(command, phase) >= 0 && command.phase.compareAndSet(phase, Phase.EXPIRED)) {
                         iterator.remove();
                         answer(command, Rejected.EXPIRED, replies);
                     }
                 }
-                case RUNNING -> { if (now - command.startedAt >= command.runningNanos) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
+                case RUNNING -> { if (now - deadline(command, phase) >= 0) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
                 default -> { /* A completion is posted or about to be; drain answers it. */ }
             }
         }

@@ -79,7 +79,9 @@ the cause of the tail change and does not support a claim that all FX latency im
 The independent client uses the existing **small fx-lab form**, not the node-size matrix. For each of five fresh
 JVMs per revision it performs 50 warmups and 200 measured serial synthetic text writes, selects the exact child
 PID, and waits for each matching libatspi insert event. Values are synthetic and are not logged. Request-to-event
-latency includes request transport, FX action/projection and client event dispatch:
+latency includes request transport, FX action/projection and client event dispatch. After this collection the client
+changed only in environment capture (a portable `libatspi` version lookup instead of `rpm -q`); measurement is
+unchanged, and each artifact's recorded `clientSha256` identifies the client that produced it:
 
 | Metric | Before median (range), ms | After median (range), ms |
 | --- | --- | --- |

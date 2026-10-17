@@ -16,10 +16,13 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -74,25 +77,62 @@ class ProviderWakeupTest {
         } finally { release.countDown(); }
     }
 
-    @Test void workBetweenRecheckAndBlockIsLatchedInsteadOfDependingOnAWaitingFlag() throws Exception {
+    @Test void failingNativeWakeIsContainedAndStillAdvancesTheSequence() {
         var gate = new ProviderWakeup();
-        var rechecked = new CountDownLatch(1);
-        var enterWait = new CountDownLatch(1);
-        var nativeWake = new CountDownLatch(1); // models GLib's persistent wakeup token
-        gate.attach(nativeWake::countDown);
-        try (var worker = Executors.newSingleThreadExecutor()) {
-            var waiter = worker.submit(() -> {
-                var beforeDrain = gate.sequence();
-                assertEquals(beforeDrain, gate.sequence());
-                rechecked.countDown();
-                assertTrue(enterWait.await(10, TimeUnit.SECONDS));
-                assertTrue(nativeWake.await(10, TimeUnit.SECONDS));
-                return null;
-            });
-            assertTrue(rechecked.await(10, TimeUnit.SECONDS));
-            gate.signal(); // after the final Java check, before the actual native wait
-            enterWait.countDown();
-            waiter.get(10, TimeUnit.SECONDS);
-        } finally { enterWait.countDown(); gate.detach(); }
+        gate.attach(() -> { throw new IllegalStateException("Native API closed"); });
+        gate.signal();
+        assertEquals(1, gate.sequence(), "the provider's recheck still sees the published work");
+        assertEquals(1, gate.failedWakes());
+    }
+
+    /** Records which steps of one provider pass ran; each test injects a signal at a different point. */
+    private static final class Pass {
+        final ProviderWakeup gate = new ProviderWakeup();
+        final List<String> steps = new ArrayList<>();
+        Runnable onDrain = () -> {}, onDispatch = () -> {};
+        boolean busLost, pending, busy;
+
+        boolean run() {
+            return AtSpiProvider.idlePass(gate, () -> busLost, () -> { steps.add("drain"); onDrain.run(); },
+                    () -> { steps.add("dispatch"); onDispatch.run(); return busy; }, () -> steps.add("arm"),
+                    () -> pending, () -> steps.add("block"));
+        }
+    }
+
+    @Test void quietPassArmsTheDeadlineAndBlocksExactlyOnce() {
+        var pass = new Pass();
+        assertFalse(pass.run());
+        assertEquals(List.of("drain", "dispatch", "arm", "block"), pass.steps);
+    }
+
+    @Test void wakeConsumedByNonblockingDispatchStillPreventsBlocking() {
+        var pass = new Pass();
+        pass.onDispatch = pass.gate::signal; // GLib acknowledged the native wake during the nonblocking batch
+        assertFalse(pass.run());
+        assertEquals(List.of("drain", "dispatch", "arm"), pass.steps, "the sequence must be captured before dispatch");
+    }
+
+    @Test void workPublishedDuringDrainPreventsBlocking() {
+        var pass = new Pass();
+        pass.onDrain = pass.gate::signal;
+        assertFalse(pass.run());
+        assertFalse(pass.steps.contains("block"));
+    }
+
+    @Test void pendingJavaWorkOrBusyDispatchOrBusLossNeverBlocks() {
+        var pending = new Pass();
+        pending.pending = true;
+        assertFalse(pending.run());
+        assertEquals(List.of("drain", "dispatch", "arm"), pending.steps);
+        var busy = new Pass();
+        busy.busy = true;
+        assertFalse(busy.run());
+        assertEquals(AtSpiProvider.DISPATCH_BATCH, busy.steps.stream().filter("dispatch"::equals).count());
+        assertFalse(busy.steps.contains("arm"), "a full batch returns to Java work without arming or blocking");
+        assertFalse(busy.steps.contains("block"));
+        var lost = new Pass();
+        lost.busLost = true;
+        assertTrue(lost.run());
+        assertEquals(List.of(), lost.steps, "bus loss is checked before any work");
     }
 }
