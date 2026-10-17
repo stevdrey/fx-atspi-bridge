@@ -1,0 +1,7 @@
+Original collection qualification: measured revision 9dbc5fb4a9d083dbd5bdbf9cef4b9bd5285fc540
+Chronology reconstructed from original raw afterWarmupGc artifact and result JSON mtimes,
+checked against all recorded resume timestamps; startNs is first warmup snapshot, not process start.
+Harness jar hash matches original environment; tracked sources/build/wrapper match measured Git revision.
+Launcher identity reconstructed from unchanged Gradle configuration/wrapper and installed output.
+No original launcher hash was captured at campaign start. New collections capture it before launch.
+Missing receipts requiring both modes to be rerun: none

@@ -1,0 +1,20 @@
+{
+  "cells": [
+    {
+      "endNs": 1792278396546736521,
+      "name": "scaling-n100-on-nmt-r4",
+      "session": "original-session-0",
+      "sha256": "175e5e51fbff6d4f20125b5da1b1ddaea9b2b348bada5534585b733e0c182108",
+      "startNs": 1792278381072777938
+    },
+    {
+      "endNs": 1792278417224681175,
+      "name": "scaling-n100-off-nmt-r4",
+      "session": "original-session-0",
+      "sha256": "856524ce9f63bfdd43cbb823fa9209674d06e79ec133ae6f359eed36d61283b2",
+      "startNs": 1792278401894722207
+    }
+  ],
+  "provenance": "original-artifact-mtimes",
+  "version": 1
+}

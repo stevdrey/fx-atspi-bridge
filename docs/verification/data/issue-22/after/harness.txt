@@ -1,0 +1,13 @@
+{
+  "inputs": {
+    "examples/fx-lab/build.gradle": "2f952124a9fad783c8e6dfff3a75e7ea23db6159373326e74910f081fad4a95e",
+    "examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/BenchApp.java": "1d2454f456a6de0de2d5555dc4afb8843f47a7ff8d9defe17e655a065e43864c",
+    "examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/FxLab.java": "69013b3aea1083924076d2b6cb6588ca6a09ffac3c1c750c5adcca348cfdbad9",
+    "examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/Launcher.java": "a3eb2ca156aa2274b75c53d12fb8fe944be18d8d0929e1dee7f463ddb30577c7",
+    "examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/MemoryDiagnostics.java": "0c58c79fd435aba0ddb277272dcd9ca7eb1b0dc18cc32b3fe07ef71299d45185",
+    "examples/fx-lab/src/main/java/module-info.java": "8a685a6c1eb1385c243456d6394f389932816ae5462754929d4eb69f28649d7c",
+    "installed/fx-lab.jar": "ae3b22cc1c23109b9c0350efc0d82c06cce0f1d27b830c2e4ea3f79c5dafcfe4",
+    "installed/launcher": "86e3fee105119795ca7b7615264cf59f30b9953e2607d5536c28b5c0c57a37db"
+  },
+  "version": 1
+}

@@ -1,0 +1,20 @@
+{
+  "cells": [
+    {
+      "endNs": 1792279224371520359,
+      "name": "scaling-n10000-off-plain-r3",
+      "session": "original-session-0",
+      "sha256": "f0b041cbdd39cb10a73444a9144f78bb389a8c042fedba44c3f086f1eb3b218f",
+      "startNs": 1792279201686581102
+    },
+    {
+      "endNs": 1792279276430380963,
+      "name": "scaling-n10000-on-plain-r3",
+      "session": "original-session-0",
+      "sha256": "a2d3b320483b75af54cf0ec5d1ec4efb186d9cf3f92edf87786c5c6c6d51d3e7",
+      "startNs": 1792279247434458605
+    }
+  ],
+  "provenance": "original-artifact-mtimes",
+  "version": 1
+}

@@ -1,7 +1,7 @@
 # Verification — Issue 22: native registration scaling
 
 Issue: [#22](https://github.com/stevdrey/fx-atspi-bridge/issues/22). Spec: [issue-22](../specs/issue-22.md).
-This first PR adds measurement/analysis and a design decision; production Java is unchanged from `60b7a82`.
+Measurement PR #37 adds measurement/analysis and a design decision; its production Java is unchanged from `60b7a82`.
 It does not retrospectively change #17 or replace #15's broader baseline.
 
 ## Environment and attribution
@@ -159,3 +159,8 @@ Verification after review: 152 Python tests, no skips; real audit preflight; she
 (four JVMs/two completed receipts plus audit); strict rejection before pair repair, full validation after repair;
 raw/export parsed equality and reproducible retained summary. Java/desktop tests reuse prior passing evidence because
 production and Java benchmark are unchanged. No simultaneous desktop benchmark ran during pair repair or smoke.
+
+## Qualified optimization follow-up
+
+The separate [shared-introspection report](issue-22-optimization.md) records the measured candidate, lifecycle/protocol
+regressions and passed publication criterion. The reference results above remain the measurement PR’s baseline.
