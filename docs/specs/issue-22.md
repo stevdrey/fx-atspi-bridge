@@ -23,7 +23,7 @@ Original smoke/diag profiles are unchanged. Existing bench FX/provider ownership
 
 Use afterIdleGc. Report arena system/free/in-use, direct mmap separately, RSS/anonymous/file PSS, used heap,
 all NMT categories, absolute on/off and paired differences. Report mean, sample SD, median and range,
-cost per actual accessible, interval slopes and OLS intercept/slope/residuals/R². Three sizes cannot establish
+cost per actual accessible, arena+mmap totals (to expose shifts between allocation mechanisms), interval slopes and OLS intercept/slope/residuals/R². Three sizes cannot establish
 universal linearity. NMT adds allocator overhead: principal malloc comparisons use plain cells only.
 
 Separate audit JVMs query Cache.GetItems and representative introspection through Gio. Count application/window/panel

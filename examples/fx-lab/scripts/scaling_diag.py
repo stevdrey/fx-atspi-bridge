@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 import memory_diag as md
 
 CP = 'afterIdleGc'
-MALLOC_FIELDS = ('system', 'free', 'inUse', 'mmap')
+MALLOC_FIELDS = ('system', 'free', 'inUse', 'mmap', 'totalInUse', 'totalHeld')
 
 
 def describe(xs):
@@ -71,7 +71,8 @@ def malloc(text):
     mapped = one("total[@type='mmap']")
     if system <= 0 or free > system:
         raise ValueError('inconsistent malloc_info totals')
-    return {'system': system, 'free': free, 'inUse': system-free, 'mmap': mapped}
+    return {'system': system, 'free': free, 'inUse': system-free, 'mmap': mapped,
+            'totalInUse': system-free+mapped, 'totalHeld': system+mapped}
 
 
 def records(path):
@@ -183,20 +184,23 @@ def summary(path, before=None):
                 on = [values.get(metric, 0) for (size, b, v, _), values in sorted(data.items()) if size == n and b == 'on' and v == variant]
                 delta = pairs(data, n, metric, variant)
                 out.append(f'| {n} | {variant} | {metric} | {display(off)} | {display(on)} | {display(delta)} | {display([x/audits[n]["accessibles"] for x in delta])} |')
-    out += ['', '`inUse` = arena system − free. Direct mmap is separate; neither RSS nor free allocator pages establish a leak.',
-            '', '## Scaling of paired arena in-use bytes', '']
+    out += ['', '`inUse` = arena system − free; `totalInUse` = inUse + direct mmap; `totalHeld` = system + mmap. These are allocator accounting, not allocation-stack attribution. Neither RSS nor free allocator pages establish a leak.',
+            '', '## Scaling of paired glibc in-use bytes', '']
     if len(sizes) > 1:
-        xs = [audits[n]['accessibles'] for n in sizes]
-        ys = [st.mean(pairs(data, n, 'inUse')) for n in sizes]
-        fit = linear(xs, ys)
-        out += [f"Fit of means: intercept {fit['intercept']:.1f} bytes; slope {fit['slope']:.3f} bytes/accessible; R² {fit['r2']:.6f}.",
-                f"Residuals in size order: {', '.join(f'{v:.1f}' for v in fit['residuals'])} bytes.",
-                'Three sizes characterize this workload; R² alone does not establish universal linear scaling.', '',
-                '| Interval (buttons) | Marginal bytes/additional accessible, paired by repetition |', '| --- | --- |']
-        for a, b in zip(sizes, sizes[1:]):
-            slopes = [(y-x)/(audits[b]['accessibles']-audits[a]['accessibles'])
-                      for x, y in zip(pairs(data, a, 'inUse'), pairs(data, b, 'inUse'))]
-            out.append(f'| {a} → {b} | {display(slopes)} |')
+        out += ['Three sizes characterize this workload; R² alone does not establish universal linear scaling.', '',
+                '| Metric | Intercept bytes | Slope bytes/accessible | R² | Residuals in size order (bytes) |',
+                '| --- | ---: | ---: | ---: | --- |']
+        for metric in ('inUse', 'totalInUse'):
+            fit = linear([audits[n]['accessibles'] for n in sizes], [st.mean(pairs(data, n, metric)) for n in sizes])
+            residuals = ', '.join(f'{v:.1f}' for v in fit['residuals'])
+            out.append(f"| {metric} | {fit['intercept']:.1f} | {fit['slope']:.3f} | {fit['r2']:.9f} | {residuals} |")
+        out += ['', '| Metric | Interval (buttons) | Marginal bytes/additional accessible, paired by repetition |',
+                '| --- | --- | --- |']
+        for metric in ('inUse', 'totalInUse'):
+            for a, b in zip(sizes, sizes[1:]):
+                slopes = [(y-x)/(audits[b]['accessibles']-audits[a]['accessibles'])
+                          for x, y in zip(pairs(data, a, metric), pairs(data, b, metric))]
+                out.append(f'| {metric} | {a} → {b} | {display(slopes)} |')
     else:
         out.append('Smoke only: no scaling fit or optimization decision.')
     if before:
@@ -210,6 +214,8 @@ def summary(path, before=None):
                 f'Mean reduction: {st.mean(reduction):.1f} bytes; percentile bootstrap 95% CI [{lo:.1f}, {hi:.1f}] (20,000 resamples, seed 22).',
                 f'Memory criterion: {"PASS" if passed else "FAIL"}. Independent regression checks are also required.',
                 'Five pairs give limited uncertainty resolution; this interval is descriptive for this machine/workload.']
+        combined = [x-y for x, y in zip(pairs(base, 10000, 'totalInUse'), pairs(data, 10000, 'totalInUse'))]
+        out.append(f'Arena + mmap reductions: {display(combined)} bytes; paired values {combined}.')
         for label, d in [('baseline', base), ('candidate', data)]:
             fit = linear([audits[n]['accessibles'] for n in sizes], [st.mean(pairs(d, n, 'inUse')) for n in sizes])
             out.append(f"{label}: slope {fit['slope']:.3f} bytes/accessible; intercept {fit['intercept']:.1f} bytes.")

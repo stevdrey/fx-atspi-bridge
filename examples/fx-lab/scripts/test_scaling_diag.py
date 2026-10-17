@@ -65,6 +65,8 @@ class ScalingTest(unittest.TestCase):
         parsed = sd.malloc(MALLOC)
         self.assertEqual(parsed['inUse'], 2650)
         self.assertEqual(parsed['mmap'], 4096)
+        self.assertEqual(parsed['totalInUse'], 6746)
+        self.assertEqual(parsed['totalHeld'], 7096)
 
     def test_glibc_243_omits_removed_fastbins(self):
         current = MALLOC.replace('<total type="fast" count="2" size="50"/>', '')
@@ -84,9 +86,19 @@ class ScalingTest(unittest.TestCase):
             self.assertEqual(sd.pairs(data, 100, 'inUse'), [18001, 18002, 18003, 18004, 18005])
             self.assertEqual(audits[100]['accessibles'], 103)
             text = sd.summary(root)
-            self.assertIn('slope 100.000', text)
+            self.assertIn('| inUse | 7703.0 | 100.000 |', text)
             self.assertIn('±', text)
             self.assertIn('NMT Java Heap', text)
+
+    def test_total_metric_accounts_for_mapping_shifts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collection(root)
+            path = root/'scaling-n100-off-plain-r1'/'afterIdleGc.malloc.txt'
+            path.write_text(path.read_text().replace('size="4096"', 'size="54096"'))
+            data, _, _, _ = sd.records(root)
+            self.assertEqual(sd.pairs(data, 100, 'inUse')[0], 18000)
+            self.assertEqual(sd.pairs(data, 100, 'totalInUse')[0], -32000)
 
     def test_missing_pair_and_missing_artifact_fail(self):
         for remove in ('scaling-n100-off-plain-r3.json', 'scaling-n100-on-nmt-r2/afterIdleGc.nmt.txt'):
