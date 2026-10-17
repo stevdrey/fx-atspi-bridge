@@ -59,4 +59,12 @@ class AtSpiTextTest {
         assertEquals(4, published.text().codePointCount(0, published.text().length()));
         assertEquals("\uFFFD", AtSpiObjects.textRange(published.text(), 2, 3));
     }
+    @Test void publishedStringsAreBoundedWithoutSplittingSurrogatePairs() {
+        var value = "a".repeat(AccessibleNode.MAX_LENGTH - 1) + "\uD83E\uDDEA";
+        assertEquals(AccessibleNode.MAX_LENGTH - 1, AccessibleNode.publishable(value).length());
+        assertEquals(AccessibleNode.MAX_LENGTH, AccessibleNode.publishable("b".repeat(AccessibleNode.MAX_LENGTH + 5)).length());
+        assertEquals("a\uFFFD", AccessibleNode.publishable("a\0"));
+        assertEquals("", AccessibleNode.publishable(null));
+    }
+
 }

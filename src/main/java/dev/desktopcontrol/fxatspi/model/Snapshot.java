@@ -26,7 +26,9 @@ import java.util.Map;
  */
 public record Snapshot(Map<String, AccessibleNode> nodes, ActionLimits limits, Set<String> actionSenders, long policyRevision) {
     public Snapshot(Map<String, AccessibleNode> nodes) { this(nodes, ActionLimits.defaults(), null, 0); }
-    public boolean permitsSender(String sender) { return actionSenders == null || actionSenders.contains(sender); }
+    public boolean permitsSender(String sender) { return permitsSender(actionSenders, sender); }
+    /** Null {@code allowed} means every sender; an empty set denies every mutation. */
+    public static boolean permitsSender(Set<String> allowed, String sender) { return allowed == null || allowed.contains(sender); }
     /** Id of the application root node. */
     public static final String ROOT_ID = "root";
     public static final Snapshot EMPTY = new Snapshot(Map.of());

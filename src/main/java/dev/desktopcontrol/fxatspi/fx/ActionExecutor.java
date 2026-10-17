@@ -18,6 +18,7 @@ package dev.desktopcontrol.fxatspi.fx;
 import dev.desktopcontrol.fxatspi.BridgeOptions;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.function.BiPredicate;
 import java.util.function.Supplier;
 import java.util.List;
@@ -47,16 +48,17 @@ public final class ActionExecutor implements ActionPort {
     }
     @Override public boolean isLive(String id) { return registry.target(id) != null; }
     @Override public boolean permits(String id, String sender, Capability capability) {
-        try { return options.get().permitsSender(sender) && projection.test(id, capability); }
+        try { return Snapshot.permitsSender(options.get().actionSenders(), sender) && projection.test(id, capability); }
         catch (RuntimeException failure) { return false; }
     }
     private boolean policy(Node node, Capability capability) {
         try {
             var current = options.get();
             var scene = node.getScene();
-            if (scene == null || !current.includedWindows().test(scene.getWindow()) || current.sensitiveNodes().test(node)) return false;
+            if (scene == null || !current.includedWindows().test(scene.getWindow())) return false;
+            // Exclusion and sensitivity both cover the whole subtree below a matching node.
             for (var ancestor = node; ancestor != null; ancestor = ancestor.getParent())
-                if (current.excludedNodes().test(ancestor)) return false;
+                if (current.excludedNodes().test(ancestor) || current.sensitiveNodes().test(ancestor)) return false;
             return capability == Capability.ACTION ? current.pressAllowed().test(node) : current.textWriteAllowed().test(node);
         } catch (RuntimeException failure) { return false; }
     }

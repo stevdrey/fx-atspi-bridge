@@ -133,8 +133,8 @@ public final class FxAtSpiBridge implements AutoCloseable {
     }
     /**
      * FX-only policy update. Completion confirms provider reconciliation and removal of old exports, not revocation
-     * of data already received by clients. One update may be pending. Never block FX on this stage; completion
-     * callbacks must be nonblocking (use an async continuation for application work). Limits apply to subsequent
+     * of data already received by clients. One update may be pending. Never block FX on this stage; it completes on
+     * the FX thread, so dependent actions run there and never on the provider thread, and must not block. Limits apply to subsequent
      * admissions; existing commands retain deadlines. Excluded nodes require an explicit update for reinclusion.
      * @throws IllegalStateException when stopped, off FX, or another update is pending
      */
@@ -147,7 +147,8 @@ public final class FxAtSpiBridge implements AutoCloseable {
         policyRevision = revision;
         try { observer.updateOptions(options, revision); }
         catch (RuntimeException | Error failure) { closeOnFx(); throw failure; }
-        return completion;
+        // The provider completes the barrier on its own thread; application continuations must never run there.
+        return completion.whenCompleteAsync((ignored, failure) -> {}, fxExecutor);
     }
     /**
      * Installs the bridge with status messages written to standard error.

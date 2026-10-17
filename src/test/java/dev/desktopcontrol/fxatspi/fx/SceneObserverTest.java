@@ -45,6 +45,7 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -653,6 +654,77 @@ class SceneObserverTest {
             assertEquals(3, changes.stream().filter(change -> change instanceof SnapshotDiff.Removed).count());
             assertFalse(changes.toString().contains("private title"));
             harness.observer.close();
+            return null;
+        });
+    }
+
+    @Test void aSensitiveContainerMakesDescendantsSensitiveAndRetiresTheirReferences() throws Exception {
+        onFx(() -> {
+            var field = new TextField("SECRETMARKER");
+            var form = new VBox(field);
+            form.setId("public");
+            show(new VBox(form));
+            var harness = new Harness(BridgeOptions.builder().sensitiveNodes(node -> "paymentForm".equals(node.getId())).build()).start();
+            try {
+                var oldId = harness.id(field);
+                var before = harness.last;
+                assertFalse(before.get(oldId).redacted());
+                form.setId("paymentForm");
+                harness.endBatch();
+                assertPrivacyReplacement(harness, before, oldId, field);
+                assertEquals("[redacted]", harness.last.get(harness.id(field)).name());
+                assertFalse(harness.observer.permits(harness.id(field), Capability.EDITABLE_TEXT));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void nonModalWindowsDoNotReprojectOtherWindowsButModalOnesDo() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            show(new VBox(field));
+            var harness = new Harness().start();
+            try {
+                var before = harness.observer.projections();
+                var popup = show(new VBox(new Label("tip")));
+                harness.endBatch();
+                // The application root plus the new window, its root and its label; the first window is untouched.
+                assertEquals(4, harness.observer.projections() - before);
+                popup.hide();
+                harness.endBatch();
+                assertTrue(harness.last.get(harness.id(field)).actionEligible());
+                var modal = new Stage();
+                modal.initModality(Modality.APPLICATION_MODAL);
+                modal.setScene(new Scene(new VBox(new Button("OK"))));
+                modal.show();
+                harness.endBatch();
+                assertFalse(harness.last.get(harness.id(field)).actionEligible(), "a modal window blocks the first window");
+                modal.hide();
+                harness.endBatch();
+                assertTrue(harness.last.get(harness.id(field)).actionEligible());
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void aPropertyChangeTestsOnlyTheChangedTargetsInclusion() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            var root = new VBox(field);
+            for (int i = 0; i < 50; i++) root.getChildren().add(new Label("row " + i));
+            show(root);
+            var siblingTests = new int[1];
+            var harness = new Harness(BridgeOptions.builder().excludedNodes(node -> {
+                if (node instanceof Label) siblingTests[0]++;
+                return false;
+            }).build()).start();
+            try {
+                siblingTests[0] = 0;
+                field.setText("typed");
+                harness.endBatch();
+                assertEquals(0, siblingTests[0]);
+                assertEquals("typed", harness.last.get(harness.id(field)).text());
+            } finally { harness.observer.close(); }
             return null;
         });
     }

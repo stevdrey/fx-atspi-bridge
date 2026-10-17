@@ -37,6 +37,29 @@ The regressions cover a default-redactor input above 32,768 UTF-16 units becomin
 
 [`desktop-p1/verification.json`](data/issue-7/desktop-p1/verification.json) binds the results to tested source/test and jar SHA-256 values; raw desktop checks/events are retained beside it. The initial 145-test and desktop results above belong to the original implementation. SC-01 measurements below remain evidence for `da3210e`; performance was not remeasured for this correction, and both previously reported provisional guardrail exceedances remain unresolved. No new performance claim is made.
 
+## PR #33 review findings correction
+
+A high-effort review of `9e6d801` reported ten findings. Corrections, all on the existing FX/provider owners with no new thread, executor, native resource or polling:
+
+1. A `sensitiveNodes` match now makes its observed subtree sensitive (per-flush memo, like `showing`); `ActionExecutor.policy` checks the same ancestor chain. A container becoming sensitive rotates its descendants through the existing subtree renewal.
+2. Provider admission checks only stable policy (sender, offered capability, redaction) via `AccessibleNode.offers`. Enabled/showing/modal/editable are decided on FX after `refresh()` via `AccessibleNode.permits`, so a lagging provider snapshot cannot refuse an action that is currently allowed. The modal test returns to its pre-PR expectations: a second press on the running control conflicts, and three invocations are admitted.
+3. `updateOptions` returns a stage completed on the FX executor; application continuations never run on the provider thread.
+4. One-for-one NUL replacement alone no longer counts as a transformation. JavaFX's built-in text inputs already strip NUL on input, so this only matters for custom `TextInputControl` content; no reachable regression test exists with standard controls.
+5. A window-list change recomputes modal blocking per included window and re-projects only windows whose state flipped, instead of the whole tree.
+6. With target filtering, a property change retests only that target's inclusion at flush time (never inside the listener); its parent restructures only on exclusion.
+7. `BridgeOptions` no longer exposes `filtersTargets`, `customRedaction`, `redact`, `bounded` or `permitsSender`; it gains a `redactor()` getter. Bounding moved to `AccessibleNode.publishable`, removing the model→`BridgeOptions` import. `Snapshot` still references the `ActionLimits` value record by design.
+8. Eligibility lives once in `AccessibleNode.offers/permits`; sender filtering once in `Snapshot.permitsSender`.
+9. `textWriteAllowed` is evaluated once per input, and NODE_TEXT redaction runs only for text inputs.
+10. Sender-set size validation happens only in the `BridgeOptions` constructor.
+
+Verification on Zulu JDK 27, JavaFX 27, Fedora/GNOME/Wayland:
+
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew test --tests '*SceneObserverTest' --tests '*ConfigurationTest' --tests '*ActionExecutorTest' --tests '*ProviderLifecycleTest' --tests '*BridgeOptionsTest' --tests '*AtSpiTextTest' --tests '*ModalActionTest' --no-daemon` — **Passed**: 78 tests, no failures/errors/skips.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check generatePomFileForMavenJavaPublication --no-daemon` — **Passed**: 153 tests, no failures/errors/skips.
+- `git diff --check` — **Passed**.
+
+New tests: sensitive container retiring a child's reference with safe replacement and diff; sensitive ancestor refusing press/text writes; a non-modal window costing exactly four projections while a modal one blocks and unblocks the first window; a keystroke testing no sibling inclusion; a stale-disabled provider snapshot still admitting an action that FX permits; update continuations observed on the FX thread; publishable bounds. They were not run against the pre-correction source. SC-01 and the desktop collector were not rerun for this correction; the measurements below remain tied to `da3210e`, and no performance claim is made.
+
 ## Desktop observations and limits
 
 The independent Python client uses libatspi for application/window names and Gio for tree, text, mutation, Cache and event checks. Synthetic markers verify that passwords, configured secrets and the formerly public field value are absent from bridge events after a privacy transition. The client confirms read-only transformed text, replacement identities, exclusion/reinclusion and sender denial without blocking reads. No real credentials or user field values were captured.

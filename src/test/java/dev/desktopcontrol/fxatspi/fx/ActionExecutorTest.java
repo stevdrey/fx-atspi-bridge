@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.desktopcontrol.fxatspi.BridgeOptions;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -99,6 +100,18 @@ class ActionExecutorTest {
             assertTrue(fixture.type());
             assertEquals(1, fixture.fired.get());
             assertEquals("new", fixture.field.getText());
+            return null;
+        });
+    }
+    @Test void aSensitiveAncestorRefusesPressAndTextWrites() throws Exception {
+        onFx(() -> {
+            var fixture = new Fixture();
+            var options = BridgeOptions.builder().sensitiveNodes(node -> node == fixture.box).build();
+            var executor = new ActionExecutor(fixture.registry, () -> options, (id, capability) -> true);
+            assertFalse(executor.press(fixture.id(fixture.button)));
+            assertFalse(executor.setText(fixture.id(fixture.field), "new"));
+            assertEquals(0, fixture.fired.get());
+            assertEquals("text", fixture.field.getText());
             return null;
         });
     }

@@ -170,7 +170,8 @@ class ConfigurationTest {
         await(() -> !bridge.provider.publishedSnapshot().get(id("blocked")).actionEligible());
         assertNull(id("private dialog"));
         assertTrue(output(call(id("blocked"), "org.a11y.atspi.Action.DoAction", "0")).contains("AccessDenied"));
-        assertEquals(0, bridge.provider.pendingAcquired());
+        // Modal blocking is transient state: it is decided on FX after admission, and the reference is released once.
+        await(() -> bridge.provider.pendingReleased() == bridge.provider.pendingAcquired());
     }
     @Test void queuedActionRevalidatesLiveVisibilityBeforeAnyEffect() throws Exception {
         var presses = new AtomicInteger();
@@ -186,6 +187,14 @@ class ConfigurationTest {
         try { await(() -> bridge.provider.pendingCount() == 1); } finally { release.countDown(); }
         assertTrue(output(request).contains("AccessDenied"));
         assertEquals(0, presses.get());
+    }
+    @Test void updateContinuationsRunOnTheFxThreadNotTheProvider() throws Exception {
+        onFx(() -> { show(new VBox(new Button("live"))); return null; });
+        install(BridgeOptions.defaults());
+        var thread = onFx(() -> bridge.updateOptions(BridgeOptions.builder().applicationName("updated").build())
+                .thenApply(ignored -> Platform.isFxApplicationThread() ? "fx" : Thread.currentThread().getName()))
+                .toCompletableFuture().get(15, TimeUnit.SECONDS);
+        assertEquals("fx", thread);
     }
     @Test void updateBarrierRejectsOverlapAndFailsOnStop() throws Exception {
         var release = new CountDownLatch(1);

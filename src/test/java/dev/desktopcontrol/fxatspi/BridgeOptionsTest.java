@@ -16,7 +16,8 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.HashSet;
@@ -28,10 +29,11 @@ class BridgeOptionsTest {
         var options = BridgeOptions.defaults();
         assertEquals("JavaFX AT-SPI Lab", options.applicationName());
         assertEquals(ActionLimits.defaults(), options.actionLimits());
-        assertTrue(options.permitsSender(":1.2"));
-        assertEquals("name", options.redact(BridgeOptions.ContentKind.NODE_NAME, false, "name"));
-        assertEquals("[redacted]", options.redact(BridgeOptions.ContentKind.NODE_NAME, true, "secret"));
-        assertEquals("", options.redact(BridgeOptions.ContentKind.NODE_TEXT, true, "secret"));
+        assertNull(options.actionSenders());
+        assertEquals("name", options.redactor().redact(BridgeOptions.ContentKind.NODE_NAME, false, "name"));
+        assertEquals("[redacted]", options.redactor().redact(BridgeOptions.ContentKind.NODE_NAME, true, "secret"));
+        assertEquals("", options.redactor().redact(BridgeOptions.ContentKind.NODE_TEXT, true, "secret"));
+        assertSame(options.redactor(), options.toBuilder().build().redactor());
         assertEquals("copy", options.toBuilder().applicationName("copy").build().applicationName());
         assertEquals("JavaFX AT-SPI Lab", options.applicationName());
     }
@@ -40,11 +42,10 @@ class BridgeOptionsTest {
         var builder = BridgeOptions.builder().allowedActionSenders(senders);
         senders.clear();
         var options = builder.build();
-        assertTrue(options.permitsSender(":1.2"));
-        assertFalse(options.permitsSender(":1.3"));
+        assertEquals(Set.of(":1.2"), options.actionSenders());
         assertThrows(UnsupportedOperationException.class, () -> options.actionSenders().clear());
-        assertFalse(options.toBuilder().allowedActionSenders(Set.of()).build().permitsSender(":1.2"));
-        assertTrue(options.toBuilder().allowAllActionSenders().build().permitsSender(":1.3"));
+        assertEquals(Set.of(), options.toBuilder().allowedActionSenders(Set.of()).build().actionSenders());
+        assertNull(options.toBuilder().allowAllActionSenders().build().actionSenders());
         assertThrows(IllegalArgumentException.class, () -> BridgeOptions.builder().allowedActionSenders(Set.of("org.example.Name")).build());
         for (int i = 0; i < 257; i++) senders.add(":1." + i);
         assertThrows(IllegalArgumentException.class, () -> BridgeOptions.builder().allowedActionSenders(senders).build());
@@ -54,12 +55,5 @@ class BridgeOptionsTest {
         assertThrows(NullPointerException.class, () -> BridgeOptions.builder().includedWindows(null).build());
         assertThrows(NullPointerException.class, () -> BridgeOptions.builder().actionLimits(null).build());
         assertThrows(IllegalArgumentException.class, () -> BridgeOptions.builder().applicationName("a".repeat(32769)).build());
-    }
-    @Test void outputBoundsPreserveSurrogatePairsAndReplaceNul() {
-        var value = "a".repeat(32767) + "\uD83E\uDDEA";
-        assertEquals(32767, BridgeOptions.bounded(value).length());
-        assertEquals("a\uFFFD", BridgeOptions.bounded("a\0"));
-        assertThrows(NullPointerException.class, () -> BridgeOptions.builder().redactor((kind, sensitive, text) -> null)
-                .build().redact(BridgeOptions.ContentKind.NODE_TEXT, false, "secret"));
     }
 }

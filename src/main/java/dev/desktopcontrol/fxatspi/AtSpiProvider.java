@@ -635,8 +635,9 @@ final class AtSpiProvider {
     private void mutate(MemorySegment invocation, String target, String sender, AccessibleNode item,
                         Capability capability, CommandCoordinator.Mutation operation) {
         if (!running) throw Rejected.STOPPED;
-        if (!snapshot.get().permitsSender(sender) || !item.actionEligible() || item.redacted()
-                || capability == Capability.EDITABLE_TEXT && !item.editable()) throw Rejected.DENIED;
+        // Only stable policy is checked here: the published snapshot can lag FX, so enabled, showing, modal and
+        // editable state are decided on FX after refresh(), where the projection is current.
+        if (!snapshot.get().permitsSender(sender) || !item.offers(capability)) throw Rejected.DENIED;
         // The FX task touches no native object: it revalidates, runs the action and posts a completion.
         var command = commands.admit(target, () -> {
             refresh();

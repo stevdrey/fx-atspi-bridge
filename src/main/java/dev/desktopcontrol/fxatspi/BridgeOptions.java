@@ -33,6 +33,7 @@ public final class BridgeOptions {
     /**
      * Transforms a publishable value. Never receives password names, contents or caret values.
      * Null/throwing results fail closed. Results are bounded to 32,768 UTF-16 units without splitting a pair.
+     * A node is sensitive when it, or any observed ancestor, matches {@code sensitiveNodes}.
      */
     @FunctionalInterface public interface Redactor {
         String redact(ContentKind kind, boolean sensitive, String value);
@@ -82,21 +83,8 @@ public final class BridgeOptions {
     public ActionLimits actionLimits() { return actionLimits; }
     /** Null means all senders; an empty set denies every mutation. Reads are always available. */
     public Set<String> actionSenders() { return actionSenders; }
-    public boolean permitsSender(String sender) { return actionSenders == null || actionSenders.contains(sender); }
-    /** Internal observer hint: re-evaluate inclusion when a published property changes. */
-    public boolean filtersTargets() { return includedWindows != ALL_WINDOWS || excludedNodes != NO_NODES; }
-    /** Internal observer hint: custom redaction may depend on captured state changed by an explicit update. */
-    public boolean customRedaction() { return redactor != DEFAULT_REDACTOR; }
-    public String redact(ContentKind kind, boolean sensitive, String value) {
-        return bounded(Objects.requireNonNull(redactor.redact(kind, sensitive, Objects.requireNonNullElse(value, "")), "Redactor result"));
-    }
-    /** Bounds all publication, including strings supplied by callbacks. */
-    public static String bounded(String value) {
-        var end = Math.min(value.length(), 32768);
-        if (end < value.length() && end > 0 && Character.isHighSurrogate(value.charAt(end - 1))
-                && Character.isLowSurrogate(value.charAt(end))) end--;
-        return value.substring(0, end).replace('\0', '\uFFFD');
-    }
+    /** The redactor applied to every published name and text; {@link #defaults()} holds the default one. */
+    public Redactor redactor() { return redactor; }
     /** Builder retains callbacks, not their results. No callback runs while building options. */
     public static final class Builder {
         private String applicationName = "JavaFX AT-SPI Lab";
@@ -121,10 +109,7 @@ public final class BridgeOptions {
         public Builder textWriteAllowed(Predicate<Node> value) { textWriteAllowed = value; return this; }
         public Builder redactor(Redactor value) { redactor = value; return this; }
         /** Copies the collection immediately; null is rejected (use allowAllActionSenders instead). */
-        public Builder allowedActionSenders(Set<String> value) {
-            if (value.size() > 256) throw new IllegalArgumentException("Too many action senders");
-            actionSenders = Set.copyOf(value); return this;
-        }
+        public Builder allowedActionSenders(Set<String> value) { actionSenders = Set.copyOf(value); return this; }
         public Builder allowAllActionSenders() { actionSenders = null; return this; }
         public Builder actionLimits(ActionLimits value) { actionLimits = value; return this; }
         public BridgeOptions build() { return new BridgeOptions(this); }

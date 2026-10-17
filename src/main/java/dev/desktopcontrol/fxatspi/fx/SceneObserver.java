@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import javafx.beans.InvalidationListener;
@@ -86,6 +87,12 @@ public final class SceneObserver {
     private final Set<Observed> retry = new LinkedHashSet<>();
     /** Showing state per target, valid during one flush: each ancestor chain is read at most once per batch. */
     private final IdentityHashMap<Observed, Boolean> showing = new IdentityHashMap<>();
+    /** Sensitivity per target, valid during one flush: a sensitive node makes its whole observed subtree sensitive. */
+    private final IdentityHashMap<Observed, Boolean> sensitivity = new IdentityHashMap<>();
+    /** Targets whose own inclusion must be tested again before the next batch; their parent restructures only on exclusion. */
+    private final Set<Observed> inclusion = new LinkedHashSet<>();
+    /** The window list changed since the last batch: modal blocking is recomputed per window, not for the whole tree. */
+    private boolean windowsChanged;
     private BridgeOptions options = BridgeOptions.defaults();
     private long policyRevision;
     private final IdentityHashMap<Window, Boolean> modal = new IdentityHashMap<>();
@@ -93,7 +100,7 @@ public final class SceneObserver {
     private final Set<Observed> rotated = Collections.newSetFromMap(new IdentityHashMap<>());
     private Sink sink;
     private boolean active, closed, scheduled;
-    private long publications, projectionFailures;
+    private long publications, projectionFailures, projections;
 
     /** @param scheduler runs the batch flush later on the FX thread ({@code Platform::runLater}) */
     public SceneObserver(TargetRegistry registry, Executor scheduler) {
@@ -110,7 +117,7 @@ public final class SceneObserver {
 
     /** FX-only explicit invalidation of captured policy state, with a publication barrier even for an unchanged tree. */
     public void updateOptions(BridgeOptions value, long revision) {
-        var renew = options.customRedaction() || value.customRedaction();
+        var renew = customRedaction(options) || customRedaction(value);
         options = value;
         policyRevision = revision;
         for (var entry : observed.values()) {
@@ -125,8 +132,29 @@ public final class SceneObserver {
     /** Only sanitized, successfully projected nodes authorize an FX mutation. */
     public boolean permits(String id, Capability capability) {
         var item = model.get(id);
-        return item != null && item.actionEligible() && item.has(capability) && !item.redacted()
-                && (capability != Capability.EDITABLE_TEXT || item.editable());
+        return item != null && item.permits(capability);
+    }
+
+    private static boolean customRedaction(BridgeOptions value) { return value.redactor() != BridgeOptions.defaults().redactor(); }
+
+    /** True when inclusion depends on application predicates rather than the defaults. */
+    private boolean filtersTargets() {
+        var defaults = BridgeOptions.defaults();
+        return options.includedWindows() != defaults.includedWindows() || options.excludedNodes() != defaults.excludedNodes();
+    }
+
+    /** Applies the redactor; null or throwing results fail the projection closed. */
+    private String redact(ContentKind kind, boolean sensitive, String value) {
+        var result = options.redactor().redact(kind, sensitive, Objects.requireNonNullElse(value, ""));
+        return AccessibleNode.publishable(Objects.requireNonNull(result, "Redactor result"));
+    }
+
+    /** Whether {@code candidate} passes the inclusion predicates; a throwing predicate excludes it (fail closed). */
+    private boolean included(Object candidate) {
+        try {
+            return candidate instanceof Window window ? options.includedWindows().test(window)
+                    : !options.excludedNodes().test((Node) candidate);
+        } catch (RuntimeException failure) { projectionFailures++; return false; } // never log callback data
     }
 
     /** One observed target: its id, its observed parent and children, and the listener it registered. */
@@ -137,6 +165,8 @@ public final class SceneObserver {
         /** Last projected classification, separate from text transformed by redaction or output bounds. */
         boolean sensitive;
         Observed parent;
+        /** For a window: whether a modal window blocked it at the last window-list change; null until computed. */
+        Boolean blocked;
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
         Observable[] own;
@@ -157,8 +187,8 @@ public final class SceneObserver {
 
         @Override public void invalidated(Observable source) {
             if (!attached || !active) return;
-            if (target == APPLICATION && source == structure) markSubtree(this); // modal membership affects every window
-            if (options.filtersTargets() && parent != null) restructured.add(parent);
+            if (target == APPLICATION && source == structure) windowsChanged = true; // modal blocking may have changed
+            if (parent != null && filtersTargets()) inclusion.add(this); // tested at flush, never inside the listener
             if (source == structure || scene != null && source == scene.rootProperty()) restructured.add(this);
             else if (source == inherited) markSubtree(this);
             else dirty.add(this);
@@ -244,6 +274,7 @@ public final class SceneObserver {
         if (active || closed) return;
         sink = receiver;
         active = true;
+        windowsChanged = true; // records each window's initial blocked state
         attach(APPLICATION, null);
         flush();
     }
@@ -256,6 +287,9 @@ public final class SceneObserver {
 
     /** Generations published so far; read-only, for tests that check idle behavior. */
     public long publications() { return publications; }
+
+    /** Projections attempted so far; read-only, for tests that check batching cost. */
+    public long projections() { return projections; }
 
     /** Failed projections queued for retry with the next batch; read-only, for tests. */
     public long projectionFailures() { return projectionFailures; }
@@ -273,6 +307,8 @@ public final class SceneObserver {
         touched.clear();
         retry.clear();
         showing.clear();
+        sensitivity.clear();
+        inclusion.clear();
         modal.clear();
         rotated.clear();
         registry.clear();
@@ -295,6 +331,8 @@ public final class SceneObserver {
     /** Applies one batch: structure first, then removals, then projections; publishes once if anything changed. */
     private void flush() {
         if (!active) return;
+        for (var entry : inclusion) if (entry.attached && entry.parent != null && !included(entry.target)) restructured.add(entry.parent);
+        inclusion.clear();
         var candidates = new ArrayList<Removal>();
         while (!restructured.isEmpty()) {
             var batch = List.copyOf(restructured);
@@ -306,6 +344,7 @@ public final class SceneObserver {
             var entry = observed.get(removal.child());
             if (entry != null && entry.parent == removal.former()) detach(entry);
         }
+        if (windowsChanged) { windowsChanged = false; reconcileModality(); }
         for (var entry : retry) if (entry.attached) { entry.resubscribe(); dirty.add(entry); }
         retry.clear();
         try {
@@ -317,9 +356,9 @@ public final class SceneObserver {
                 AccessibleNode node;
                 var failed = false;
                 var sensitive = false;
+                projections++;
                 try {
-                    sensitive = entry.target instanceof Node target
-                            && (target instanceof PasswordField || options.sensitiveNodes().test(target));
+                    sensitive = sensitive(entry);
                     node = project(entry, sensitive);
                 }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
@@ -342,12 +381,32 @@ public final class SceneObserver {
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
             }
-        } finally { showing.clear(); modal.clear(); rotated.clear(); }
+        } finally { showing.clear(); sensitivity.clear(); modal.clear(); rotated.clear(); }
         if (touched.isEmpty()) return;
         var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
         publications++;
         if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
+    }
+
+    /**
+     * Marks only the windows whose modal blocking changed, so popups, tooltips and menus joining the window list do not
+     * re-project every node. A throwing check counts as blocked (fail closed).
+     */
+    private void reconcileModality() {
+        var application = observed.get(APPLICATION);
+        if (application == null) return;
+        for (var child : application.children) {
+            var entry = observed.get(child);
+            if (entry == null || entry.parent != application || !(child instanceof Window window)) continue;
+            boolean blocked;
+            try { blocked = ActionExecutor.blockedByModal(window); }
+            catch (RuntimeException failure) { blocked = true; }
+            if (entry.blocked == null || entry.blocked != blocked) {
+                entry.blocked = blocked;
+                markSubtree(entry);
+            }
+        }
     }
 
     /** Changes only an export incarnation; structural observation and application object identity stay intact. */
@@ -452,14 +511,9 @@ public final class SceneObserver {
             case Node _ -> List.of();
             default -> Window.getWindows();
         };
-        if (!options.filtersTargets()) return candidates;
+        if (!filtersTargets()) return candidates;
         var included = new ArrayList<Object>(candidates.size());
-        for (var candidate : candidates) {
-            try {
-                if (candidate instanceof Window window ? options.includedWindows().test(window)
-                        : !options.excludedNodes().test((Node) candidate)) included.add(candidate);
-            } catch (RuntimeException failure) { projectionFailures++; } // fail closed; never log callback data
-        }
+        for (var candidate : candidates) if (included(candidate)) included.add(candidate);
         return included;
     }
 
@@ -490,6 +544,19 @@ public final class SceneObserver {
     }
 
     /**
+     * Sensitive when the node, or any observed ancestor node, is a password field or matches {@code sensitiveNodes}.
+     * Memoized for the current flush like {@link #showing}; a throwing predicate fails the projection closed.
+     */
+    private boolean sensitive(Observed entry) {
+        if (!(entry.target instanceof Node node)) return false;
+        var known = sensitivity.get(entry);
+        if (known != null) return known;
+        var value = node instanceof PasswordField || options.sensitiveNodes().test(node) || sensitive(entry.parent);
+        sensitivity.put(entry, value);
+        return value;
+    }
+
+    /**
      * Reads the published projection of {@code entry}. Every observed property is read, even when it does not affect
      * the result, so that its invalidation listener fires again on the next change.
      */
@@ -498,11 +565,11 @@ public final class SceneObserver {
         return switch (entry.target) {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
-                yield new AccessibleNode(entry.id, options.redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
+                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
                         Snapshot.ROOT_ID, children, NONE);
             }
             case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children, sensitive);
-            default -> new AccessibleNode(Snapshot.ROOT_ID, options.redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
+            default -> new AccessibleNode(Snapshot.ROOT_ID, redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
     }
@@ -518,22 +585,25 @@ public final class SceneObserver {
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
         var labeled = node instanceof Labeled control ? control.getText() : null;
-        var name = password ? "[password]" : options.redact(ContentKind.NODE_NAME, sensitive,
+        var name = password ? "[password]" : redact(ContentKind.NODE_NAME, sensitive,
                 accessibleText != null ? accessibleText : node instanceof Labeled ? labeled : nodeId);
         // Password contents must never be published through the experiment.
         var input = node instanceof TextInputControl field && !(node instanceof PasswordField) ? field : null;
         var original = input != null ? input.getText() : "";
         if (original == null) original = "";
-        var text = password ? "" : options.redact(ContentKind.NODE_TEXT, sensitive, original);
+        // Only inputs carry text, so the redactor never sees (or can change) the empty text of other nodes.
+        var text = input == null ? "" : redact(ContentKind.NODE_TEXT, sensitive, original);
         var caretPosition = input != null ? input.getCaretPosition() : 0;
-        var transformed = sensitive || !text.equals(original);
+        // NUL replacement is one-for-one and keeps offsets, so it alone is not a transformation; truncation is.
+        var transformed = sensitive || !text.equals(original.replace('\0', '\uFFFD'));
         var caret = input != null && !transformed ? text.codePointCount(0, Math.min(caretPosition, text.length())) : 0;
         var editableProperty = input != null && input.isEditable();
-        var editable = editableProperty && !transformed && options.textWriteAllowed().test(node);
+        var writable = input != null && !transformed && options.textWriteAllowed().test(node);
+        var editable = editableProperty && writable;
         var role = node instanceof ButtonBase ? Role.PUSH_BUTTON : node instanceof TextArea ? Role.TEXT_AREA
                 : node instanceof TextInputControl ? Role.ENTRY : node instanceof Label ? Role.LABEL : Role.PANEL;
         var capabilities = node instanceof ButtonBase && !sensitive && options.pressAllowed().test(node) ? ACTION
-                : input != null ? !transformed && options.textWriteAllowed().test(node) ? TEXT_INPUT : Set.of(Capability.TEXT) : NONE;
+                : input != null ? writable ? TEXT_INPUT : Set.of(Capability.TEXT) : NONE;
         var focusable = node instanceof ButtonBase || node instanceof TextInputControl;
         var enabled = !node.isDisabled();
         var focused = node.isFocused();
