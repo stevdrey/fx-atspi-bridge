@@ -74,3 +74,25 @@ roles/interfaces, actions/text Unicode, privacy, events and stale references. Ru
 
 PR1: harness + measured evidence + decision, Refs #22. PR2: narrow production optimization with same-harness comparison,
 regression evidence and Closes #22 only when criteria pass. Preserve unrelated local changes and #17 evidence.
+
+## Shared-definition candidate implementation
+
+After the full baseline campaign and independent audits in PR #37 established approximately linear combined in-use
+cost (~11.6 KB/additional accessible), the separate candidate changes only provider metadata ownership. A HashMap
+of canonical XML to GDBusNodeInfo has a strict 17-schema limit, expected constant lookup cost and provider-thread
+confinement. No application values or FX references enter its keys. Individual exports retain registration IDs only;
+removing the last current user does not evict a schema, so reintroduction is safe and retention stays bounded.
+
+| Resource | Owner/reference | Disposal |
+| --- | --- | --- |
+| Parsed node info | Provider pool owns one reference per successful parse | After unregistering all exports and closing/unrefing connection; before FFM arena closes |
+| Registered interface | GDBus holds its own interface-info reference per registration | Existing per-object unregister; connection teardown also disposes remaining registrations |
+| Upcall stubs/vtable arena | Existing provider FFM lifetime, unchanged | After provider teardown and native deregistration |
+| XML strings/map and counters | Provider instance only, maximum 17 entries | Clear at native teardown; acquired/released definition counters remain primitive diagnostics |
+
+If pool insertion fails, detach any inserted entry and release its acquired node-info reference before propagating
+failure. An export failure leaves successfully acquired registration IDs in its export record for teardown. No public
+API, action admission, error, capability, text, event or object-path contracts change. Java tests exercise shared users,
+last-user removal/reintroduction, capability transitions, 25 close/restart cycles, bus loss and a registration failure
+after earlier objects have registered. The pure protocol test enumerates all current schemas and varies values/IDs.
+The full before/after campaign and publication criterion remain pending until measured; no improvement is asserted here.

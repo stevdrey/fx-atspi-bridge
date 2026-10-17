@@ -24,6 +24,7 @@ import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -58,6 +59,24 @@ class AtSpiObjectsTest {
         assertTrue(button.contains("name='DoAction'") && !button.contains(P + "Text"));
         assertTrue(AtSpiObjects.xml(node("root", Role.APPLICATION, false, Set.of())).contains(P + "Application"));
         assertTrue(AtSpiObjects.cacheXml().contains(P + "Cache"));
+    }
+
+    @Test void nativeSchemaPoolKeysAreBoundedAndContainNoPublishedValues() {
+        var schemas = new HashSet<String>();
+        schemas.add(AtSpiObjects.cacheXml());
+        for (var id : List.of(Snapshot.ROOT_ID, "leaf")) {
+            for (var mask = 0; mask < (1 << Capability.values().length); mask++) {
+                var capabilities = new HashSet<Capability>();
+                for (var c : Capability.values()) if ((mask & (1 << c.ordinal())) != 0) capabilities.add(c);
+                var base = node(id, Role.ENTRY, true, capabilities);
+                var otherId = id.equals(Snapshot.ROOT_ID) ? id : "another-leaf";
+                var other = new AccessibleNode(otherId, "private name", Role.TEXT_AREA, "private text", true, false, false, true,
+                        true, 1, "different-parent", List.of("child"), capabilities);
+                assertEquals(AtSpiObjects.xml(base), AtSpiObjects.xml(other), "values never alter a shared schema");
+                schemas.add(AtSpiObjects.xml(base));
+            }
+        }
+        assertEquals(17, schemas.size(), "update the provider pool bound when the protocol schema changes");
     }
 
     @Test void stateBitsMatchTheDocumentedMapping() {
