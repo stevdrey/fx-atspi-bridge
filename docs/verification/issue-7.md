@@ -4,7 +4,7 @@ Spec: [issue-7.md](../specs/issue-7.md). Baseline: `617d2e0`. Implementation/evi
 
 ## Environment
 
-2026-10-16, Fedora 44 / GNOME / Wayland session; JavaFX windows attributed to XWayland through matching `_NET_WM_PID`. Zulu OpenJDK 27 (27+35), JavaFX 27 declared by Gradle, libatspi 2.60.7, system GLib/GIO/GObject. Actual JVM/library versions and machine information for measurements are recorded separately by the SC-01 harness. No Xvfb qualification is claimed.
+2026-10-16, Fedora 44 / GNOME Shell 50.5 / Wayland session; JavaFX windows attributed to XWayland through matching `_NET_WM_PID`. Zulu OpenJDK 27 (27+35), JavaFX 27 declared by Gradle, libatspi 2.60.7, system GLib/GIO/GObject. Actual JVM/library versions and machine information for measurements are recorded separately by the SC-01 harness. No Xvfb qualification is claimed.
 
 ## Commands and results
 
@@ -31,4 +31,51 @@ The final cache regression check also verifies that renewing a window renews its
 
 ## Performance
 
-SC-01 clean-checkout measurement and interpretation will be appended after collection. Unit/desktop checks are not substituted for benchmark evidence. Existing SC-01 budgets remain provisional; no speed or memory improvement is claimed.
+### Collection and reproducibility
+
+**Collection validity: Passed — 44/44 completed runs, no invalid-run retries.** Measured revision `da3210eba6c79c63c3c07a094373baa57141b6a0`, `tree=clean`, bridge jar SHA-256 `b276de779461c026c46759c2c40ffe0c3c35019fbf336af6c260663a01617285`. This is byte-for-byte the jar that passed the final 145 tests and 16 desktop checks. Only evidence/docs were added after the measured code revision.
+
+Commands (from the clean managed checkout for collection, repository root for analysis):
+
+```bash
+examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue-7-final-quick quick
+examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue-7-final-quick quick --resume
+python3 examples/fx-lab/scripts/budgets.py docs/verification/data/issue-7/quick
+python3 docs/verification/data/issue-7/compare_sc01.py docs/verification/data/issue-7/quick
+```
+
+The initial collection on `658f1e8` was stopped when the parent-cache fix changed the code; none of that data is included. The final collection was interrupted after two confirmed runs; its unconfirmed third JSON (without a completion log) was quarantined and remeasured. `--resume` verified the same commit/profile/plan and retained only the two confirmed runs. The `resumed=` timestamp remains in `environment.txt`. Every delivered run subsequently completed successfully, and the full collection exited 0. This restart is distinct from the harness's invalid-run retry mechanism, which was not needed.
+
+The quick profile used 50 warmup pulses and 200 measured samples per run, paired bridge off/on; 3 repetitions at 100/1,000 nodes (1/10/100 dirty nodes), 2 at 10,000 (1/10 dirty). Dirty=10 cells include 10 s idle, 100 structural cycles at 100/1,000 nodes or 30 at 10,000, and 100 install/close cycles for bridge-on runs. Total: 1,320 structural cycles and 800 install/close cycles. `budgets.py` accepted all required cadence, worst-pulse, idle-edge, workload and provider-liveness markers. Copied results reproduce the generated summary byte for byte. Raw JSON, sanitized environment, full tables, comparison and validation counts are in [`data/issue-7/quick/`](data/issue-7/quick/).
+
+### Default-configuration measurements
+
+Values below are medians across repetitions, not percentiles pooled across JVMs. Full min/max ranges, allocation, idle CPU, heap/RSS and churn results are in [`quick/summary.md`](data/issue-7/quick/summary.md).
+
+| Nodes | Dirty | Runs per mode | p50 off / on (ms) | p99 off / on (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 1 | 3 | 16.2 / 16.2 | 27.7 / 24.2 |
+| 100 | 10 | 3 | 16.0 / 16.2 | 17.7 / 29.7 |
+| 100 | 100 | 3 | 16.5 / 16.5 | 21.4 / 21.0 |
+| 1,000 | 1 | 3 | 16.3 / 16.2 | 25.8 / 32.1 |
+| 1,000 | 10 | 3 | 16.2 / 16.2 | 21.7 / 32.9 |
+| 1,000 | 100 | 3 | 63.1 / 65.4 | 133.9 / 133.9 |
+| 10,000 | 1 | 2 | 17.4 / 16.7 | 27.1 / 30.2 |
+| 10,000 | 10 | 2 | 17.1 / 17.0 | 29.3 / 29.0 |
+
+All 22 bridge-on runs ended with the provider alive. All 800 install/close cycles reported zero provider errors; after the drain, each bridge-on churn run had one provider thread, corresponding to the final live bridge. This does not infer native memory reclamation from RSS.
+
+### Provisional SC-01 guardrails: two exceedances
+
+The comparison uses the **fixed** SC-01 provisional thresholds recorded at `617d2e0`, not newly derived thresholds from this collection. 32 of 34 comparisons are within those guardrails; two exceed them:
+
+| Case | Worst observed | SC-01 limit | Observation |
+| --- | ---: | ---: | --- |
+| 1,000 nodes, 10 dirty, bridge-on p99 | 34.264 ms | 29 ms | Per-run p99: 32.908 / 34.264 / 18.782 ms; median 32.908 ms. Off-mode p99: 21.666 / 29.202 / 19.541 ms. Median p50 is about 16.2 ms in both modes. |
+| 10,000 nodes, install/close heap delta after GC | 1.0352 MiB | 1 MiB | Two deltas: -0.1171 and +1.0352 MiB; median +0.4591 MiB. Provider errors remain zero and provider threads after drain remain one. The cause of the heap difference was not isolated. |
+
+The exact values, units, thresholds and contributing filenames are in [`comparison-sc01.json`](data/issue-7/quick/comparison-sc01.json). These are genuine guardrail exceedances, so this is **not an all-budgets pass**. They remain review points rather than being hidden by rounding or a new budget. The previous final SC-05 collection (`data/issue-27/after/n1000-d10-on-r2.json`) already recorded 29.759 ms against the same 29 ms historical threshold; the new worst is higher. Those collections were taken in different sessions, so this context does not establish the cause or rule out a regression.
+
+### Interpretation limits
+
+This measures the default `install()` configuration with the existing SC-01 workload. Custom application redactors, predicates and explicit policy-update latency are not benchmarked. The off/on pairing measures current bridge overhead; there is no fresh matched pre-issue-7 source collection in this session, so it does not isolate the causal cost of this patch. SC-01's original artifact is a historical prototype, its budgets are provisional, and its allocation method predates the current monotonic total method. No speed/memory improvement or stable-release qualification is claimed. The fresh full baseline remains issue #15. No NMT/allocator/native-memory breakdown was collected here.
