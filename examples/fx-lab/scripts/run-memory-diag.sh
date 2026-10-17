@@ -76,7 +76,7 @@ if [[ "$profile" = scaling* ]]; then
     (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum javafx-*.jar)
     sha256sum "$limits" | cut -d' ' -f1
   } | sha256sum | cut -d' ' -f1)"
-  if [ "$resume" -eq 1 ] && ! grep -qx "scaling_environment_sha256=$scaling_fingerprint" "$out_abs/environment.txt"; then
+  if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ] && ! grep -qx "scaling_environment_sha256=$scaling_fingerprint" "$out_abs/environment.txt"; then
     echo "Refusing to resume: scaling environment differs." >&2; exit 1
   fi
 fi

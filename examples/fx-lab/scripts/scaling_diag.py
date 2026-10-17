@@ -55,8 +55,10 @@ def malloc(text):
     if root.tag != 'malloc' or not root.findall('heap'):
         raise ValueError('malloc_info lacks heaps')
     # Required process-wide fields, never fall back to per-arena values or absent zeros.
-    def one(query):
+    def one(query, optional=False):
         entries = root.findall(query)
+        if not entries and optional:
+            return 0
         if len(entries) != 1:
             raise ValueError(f'malloc_info needs one {query}')
         value = int(entries[0].attrib['size'])
@@ -64,7 +66,8 @@ def malloc(text):
             raise ValueError('negative malloc size')
         return value
     system = one("system[@type='current']")
-    free = one("total[@type='fast']") + one("total[@type='rest']")
+    # glibc 2.43 removed fastbins and omits this total entirely.
+    free = one("total[@type='fast']", optional=True) + one("total[@type='rest']")
     mapped = one("total[@type='mmap']")
     if system <= 0 or free > system:
         raise ValueError('inconsistent malloc_info totals')

@@ -66,6 +66,10 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(parsed['inUse'], 2650)
         self.assertEqual(parsed['mmap'], 4096)
 
+    def test_glibc_243_omits_removed_fastbins(self):
+        current = MALLOC.replace('<total type="fast" count="2" size="50"/>', '')
+        self.assertEqual(sd.malloc(current)['inUse'], 2700)
+
     def test_incomplete_and_inconsistent_malloc_fails(self):
         for invalid in (MALLOC[:-10], MALLOC.replace('<total type="mmap" count="29" size="4096"/>', ''),
                         MALLOC.replace('size="300"', 'size="5000"')):
