@@ -183,13 +183,44 @@ class ScalingTest(unittest.TestCase):
                 sd.summary(mismatch, base)
 
     def test_bootstrap_is_reproducible_and_smoke_never_decides(self):
-        self.assertEqual(sd.bootstrap([100]*5), (100, 100))
+        self.assertEqual(sd.independent_comparison([100]*5, [0]*5)['ci'], (100, 100))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             collection(root, profile='scaling-smoke')
             self.assertIn('Smoke only', sd.summary(root))
             with self.assertRaises(ValueError):
                 sd.summary(root, root)
+
+    def test_independent_bootstrap_has_uncertainty_for_identical_variable_samples(self):
+        result = sd.independent_comparison([0, 100], [0, 100])
+        self.assertEqual(result['mean'], 0)
+        self.assertEqual(result['ci'], (-100, 100))
+        self.assertFalse(result['passed'])
+        # Independent samples can have different sizes; paired zip would silently lose observations.
+        result = sd.independent_comparison([100]*5, [10]*3)
+        self.assertEqual(result['ci'], (90, 90))
+        self.assertTrue(result['passed'])
+
+    def test_campaign_decision_is_invariant_to_repetition_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, candidate, renumbered = (Path(tmp)/n for n in ('base', 'candidate', 'renumbered'))
+            collection(base, cost=lambda n, r: n*100+r*2)
+            collection(candidate, cost=lambda n, r: n*10+r*3)
+            collection(renumbered, cost=lambda n, r: n*10+(6-r)*3)
+            self.assertEqual(sd.summary(candidate, base), sd.summary(renumbered, base))
+
+    def test_overlapping_samples_fail_separation_for_every_order(self):
+        a = sd.independent_comparison([10, 20, 30, 40, 50], [1, 11, 21, 31, 41])
+        b = sd.independent_comparison([50, 10, 40, 20, 30], [41, 31, 21, 11, 1])
+        self.assertEqual(a, b)
+        self.assertEqual(a['mean'], 9)
+        self.assertEqual(a['minimumReduction'], -31)
+        self.assertFalse(a['passed'])
+
+    def test_cross_size_contrasts_are_descriptive_and_order_invariant(self):
+        slopes = sd.marginal_slopes([1, 10], [20, 30], 10)
+        self.assertEqual(slopes, [1, 1.9, 2, 2.9])
+        self.assertEqual(slopes, sd.marginal_slopes([10, 1], [30, 20], 10))
 
     def test_export_roundtrip_and_no_logs_or_addresses(self):
         with tempfile.TemporaryDirectory() as tmp:

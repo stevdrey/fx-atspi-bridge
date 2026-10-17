@@ -1,0 +1,5 @@
+checked_at_utc=2026-10-17T23:58:03Z
+scaling_environment_sha256=b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638
+implementation_sha256=938a6b769809ed9ead99e2e5897f35b157f31aad7a46561e9e7b36d0be273c39
+result=matches original full campaign fingerprint
+scope=post-review recheck; historical repair did not yet contain this shared full guard
