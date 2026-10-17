@@ -1,0 +1,21 @@
+{
+  "cells": [
+    {
+      "endNs": 1792280053879886233,
+      "name": "scaling-n100-on-plain-r4",
+      "session": "e67653085de04391b7940a9526aea3ce",
+      "sha256": "4df9ec7ed47b29e0440d3d888cbcf7f50b6ccad212096b35baa1938ee328f59a",
+      "startNs": 1792280033113464281
+    },
+    {
+      "endNs": 1792280075321557400,
+      "name": "scaling-n100-off-plain-r4",
+      "session": "e67653085de04391b7940a9526aea3ce",
+      "sha256": "9e32e9756425f213bbfa26e0d5873ceb00e371282fbe6b89c11f55e208b6e37b",
+      "startNs": 1792280053892329342
+    }
+  ],
+  "provenance": "runner",
+  "session": "e67653085de04391b7940a9526aea3ce",
+  "version": 1
+}

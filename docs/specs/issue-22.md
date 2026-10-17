@@ -33,9 +33,21 @@ introspection and the provider's one-registration-per-interface export loop, not
 Detect the backend using mapped Wayland glass or an X11 window PID match; do not infer it from session type alone.
 
 Environment fingerprints cover JDK, JavaFX jars, native package versions, kernel, CPU, workload, JVM options and limits.
-Comparisons reject mismatches. Resume also checks revision/profile/plan and environment fingerprint.
+A separate harness fingerprint includes all example Java sources, its Gradle application configuration, compiled
+fx-lab.jar and the complete generated launcher (including default JVM options); production bridge jar contents are
+excluded. Comparisons reject either fingerprint mismatch or missing harness identity. Resume also checks
+revision/profile/plan and both fingerprints.
+
+A pair receipt is committed only after both modes complete in alternating order in one uninterrupted session.
+It binds the result JSON hashes, timestamps and session identity. Resume preserves completed pairs; without a
+receipt it archives both halves (even if one or both JSONs exist) and repeats the entire pair. Analysis rejects
+missing receipts, reordered/overlapping timestamps, different sessions or changed result hashes. For the original
+pre-receipt campaign only, qualify chronology from original raw artifact mtimes and recorded resume markers,
+verify recorded compiled harness hashes and Git sources/build inputs, and rerun any pair crossing an interruption.
+Document this retrospective provenance explicitly; it is not a claim that original process-start times were captured.
+Preflight imports Python gi/Gio/GLib and requires xprop when DISPLAY permits X11/XWayland before collecting any cells.
 Raw artifacts stay outside the repo. Export validates the full collection first and preserves only the checkpoint's
-malloc/smaps/NMT snapshots (sanitized), run JSON, audit counts, environment and retries; compact exports remain analyzable.
+malloc/smaps/NMT snapshots (sanitized), run JSON, audit counts, environment, harness manifest, pair receipts and retries; compact exports remain analyzable.
 
 ## Limits and failure modes
 
@@ -63,8 +75,8 @@ If it fails, retain the evidence and decision; no larger export-model rewrite is
 
 ## Acceptance and verification
 
-Synthetic tests: fixed/linear/nonlinear cost, mmap separation, statistics, complete pairs, invalid/missing artifacts,
-counts/workload/environment mismatch, export roundtrip and positive/negative optimization gate.
+Synthetic tests: fixed/linear/nonlinear cost, mmap separation, statistics, complete pairs, invalid/missing artifacts and NMT category-total consistency,
+counts/workload/environment/harness mismatch, atomic pair restart and chronology/result-integrity checks, audit dependency preflight, export roundtrip and positive/negative optimization gate.
 Smoke then full campaigns from clean isolated checkouts. Java lifecycle tests cover shared metadata, capability transitions,
 removal while shared, close/reinstall, partial export failures and bus loss. Independent libatspi/Gio regression checks cover
 roles/interfaces, actions/text Unicode, privacy, events and stale references. Run Python tests and Gradle Wrapper

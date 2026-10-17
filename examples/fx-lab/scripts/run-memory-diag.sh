@@ -49,6 +49,9 @@ for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LA
 done
 require_default_allocator || exit 1
 require_safe_home || exit 1
+if [[ "$profile" = scaling* ]]; then
+  python3 "$script_dir/scaling_audit.py" --preflight
+fi
 command -v pmap >/dev/null || { echo "Refusing to run: pmap (procps-ng) is required." >&2; exit 1; }
 
 mkdir -p "$out"
@@ -60,9 +63,17 @@ check_clean_tree "$root" "$out_abs" || exit 1
 head_sha="$(git -C "$root" rev-parse HEAD)"
 require_fresh_or_resumable "$out_abs" "$resume" "$head_sha" "$profile" "${plan[@]}" || exit 1
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
-# Fingerprint only comparison contracts, excluding the bridge/harness revision being compared.
+# Fingerprint comparison contracts, excluding the production bridge artifact being compared.
 scaling_fingerprint=""
+harness_fingerprint=""
 if [[ "$profile" = scaling* ]]; then
+  harness_file="$(mktemp)"
+  harness_fingerprint="$(python3 "$script_dir/scaling_collection.py" harness "$root" "$bin" "$harness_file")"
+  if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ] && ! grep -qx "scaling_harness_sha256=$harness_fingerprint" "$out_abs/environment.txt"; then
+    rm -f "$harness_file"
+    echo "Refusing to resume: scaling harness differs or is unrecorded." >&2; exit 1
+  fi
+  mv "$harness_file" "$out_abs/harness.txt"
   scaling_fingerprint="$({
     "$java_bin" -version 2>&1
     uname -srm
@@ -94,6 +105,7 @@ else
     if [[ "$profile" = scaling* ]]; then
       echo "scaling_contract=1 checkpoint:afterIdleGc order:alternating-on-off no-churn"
       echo "scaling_environment_sha256=$scaling_fingerprint"
+      echo "scaling_harness_sha256=$harness_fingerprint"
     fi
   } | write_environment "$out_abs/environment.txt"
 fi
@@ -104,9 +116,14 @@ for entry in "${plan[@]}"; do
     for variant in ${variants//,/ }; do
       bridge_order="${bridges//,/ }"
       if [ "$kind" = scaling ] && (( rep % 2 == 0 )); then bridge_order="on off"; fi
+      if [ "$kind" = scaling ]; then
+        pair="scaling-n${nodes}-${variant}-r${rep}"
+        action="$(python3 "$script_dir/scaling_collection.py" prepare "$out_abs" "$pair")"
+        if [ "$action" = skip ]; then echo "skip $pair (complete pair receipt)"; continue; fi
+      fi
       for bridge in $bridge_order; do
         name="${kind}-n${nodes}-${bridge}-${variant}-r${rep}"
-        if [ -f "$out_abs/$name.json" ]; then echo "skip $name (result exists)"; continue; fi
+        if [ "$kind" != scaling ] && [ -f "$out_abs/$name.json" ]; then echo "skip $name (result exists)"; continue; fi
         rm -rf "${out_abs:?}/$name"
         cell_env=()
         case "$variant" in
@@ -117,14 +134,19 @@ for entry in "${plan[@]}"; do
         esac
         trim=()
         [ "$kind" = install ] && trim=(--trim-native-heap=true)
+        if [ "$kind" = scaling ]; then cell_start="$(date +%s%N)"; fi
         run_cell "$max_attempts" "$name" "$out_abs" \
           env "${cell_env[@]}" timeout -k 30 1200 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty=10 \
           --warmup="$warmup" --samples="$samples" --idle-seconds="$idle_seconds" \
           --structural="$structural" --install-churn="$install" "${trim[@]}" --limits="$limits" \
           --diagnostics="$out_abs/$name" --out="$out_abs/$name.json" \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }
+        if [ "$kind" = scaling ]; then
+          python3 "$script_dir/scaling_collection.py" record "$out_abs" "$pair" "$name" "$cell_start"
+        fi
         echo "done $name"
       done
+      if [ "$kind" = scaling ]; then python3 "$script_dir/scaling_collection.py" finish "$out_abs" "$pair"; fi
     done
   done
 done
