@@ -74,10 +74,12 @@ Install and close the bridge on the JavaFX application thread. Only one bridge i
 
 `DoAction` and `SetTextContents` run on the JavaFX thread; the bridge never holds a lock while your handler runs, and the D-Bus side keeps answering reads from its latest snapshot even while a handler blocks in `showAndWait()`. Requests are bounded by `ActionLimits`: `install()` and `install(Consumer)` use `ActionLimits.defaults()` (16 outstanding actions, 2 nested, 2 s queue timeout, 2 s running reply timeout); pass your own with `FxAtSpiBridge.install(status, new ActionLimits(...))`. Out-of-range values are rejected when the record is created.
 
-Immediately before acting, the bridge checks on the JavaFX thread that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `false`. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog.
+Immediately before acting, the bridge checks on the JavaFX thread that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `org.freedesktop.DBus.Error.AccessDenied` with the fixed message `Action denied`. This changes the previous `false` response for state denials. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog.
 
 | Reply | D-Bus error | Meaning |
 |---|---|---|
+| `Action denied` | `org.freedesktop.DBus.Error.AccessDenied` | state, capability, or sender policy forbids the action; nothing ran |
+| `Unknown or stale object` | `org.freedesktop.DBus.Error.UnknownObject` | the reference no longer identifies the exported incarnation; nothing ran |
 | `Too many pending actions` / `Too many nested actions` | `org.freedesktop.DBus.Error.LimitsExceeded` | capacity or nesting limit reached; nothing ran |
 | `Action conflicts with an action in progress` | `org.freedesktop.DBus.Error.Failed` | the same control already has a queued or running action; nothing ran |
 | `Action expired before it started` | `org.freedesktop.DBus.Error.Timeout` | not started within the queue timeout; it will never run |
@@ -87,6 +89,39 @@ Immediately before acting, the bridge checks on the JavaFX thread that the contr
 A reply reports the call to the control, not that an application workflow finished. Running handlers are never interrupted.
 
 No manual control registration is required. Use `node.setAccessibleText("Meaningful name")` when a control's label is insufficient for an agent to identify it. The provider assigns internal references based on object identity; these differ from the temporary IDs returned by the MCP client. When an object leaves the tree, its reference is removed. If it returns after its removal has been published, it receives a new reference.
+
+## Configuration and sensitive content
+
+Existing `install` methods retain their signatures and default settings. For configuration, install on FX:
+
+```java
+var options = BridgeOptions.builder()
+        .applicationName("My application")
+        .includedWindows(window -> window == mainStage)
+        .excludedNodes(node -> "privatePanel".equals(node.getId()))
+        .sensitiveNodes(node -> "apiKey".equals(node.getId()))
+        .pressAllowed(node -> !"destructive".equals(node.getId()))
+        .textWriteAllowed(node -> true)
+        .actionLimits(ActionLimits.defaults())
+        .build();
+accessibility = FxAtSpiBridge.installConfigured(options);
+```
+
+Import `BridgeOptions` and `ActionLimits` from `dev.desktopcontrol.fxatspi`. Excluding a node excludes its descendants and removes their listeners and exports. Excluding a window does not remove its modal blocking effect. Hidden/disabled controls remain discoverable but cannot be acted on. Included windows default to all showing windows; no extra node exclusions or capability restrictions apply by default.
+
+By default a sensitive node has the name `[redacted]`, empty text and no remote mutations. A custom `redactor((kind, sensitive, value) -> ...)` transforms every published application/window/node name and text, including names derived from labels or IDs. It must handle both sensitive and ordinary strings, because a secret can also appear in a title or label. The application is responsible for correctly transforming its secrets; the bridge does not discover them. A `PasswordField` always has generic metadata and no text/caret or text interfaces; the redactor never receives its name or contents. It cannot opt back into text exposure.
+
+Sensitive or transformed text is read-only. AT-SPI offsets count code points in the published result and its caret is zero. All published strings are limited to 32,768 UTF-16 units without splitting surrogate pairs; truncation also makes transformed input read-only. A runtime exception or null redactor result produces an empty, inert projection and increments a diagnostic failure count; exception messages and previous content are not published. A change in privacy, interfaces or projection failure retires the old reference and its descendants’ references, publishes fresh ones and sends no text deletion containing the old value.
+
+Call `accessibility.updateOptions(options.toBuilder()...build())` on FX to change configuration. Its `CompletionStage<Void>` completes after the provider reconciles exports and adopts the settings. Never wait on FX; use an async continuation for work that may block. One update may await reconciliation; another fails with `IllegalStateException("Configuration update busy")` before changing state. Updates after stop fail; an update interrupted by shutdown or bus loss completes exceptionally. Completion cannot revoke data clients already received, so configure privacy before putting secrets into the UI.
+
+Callbacks run on FX without shared locks and must be fast, nonblocking, pure and must not enter nested event loops. Predicates are reevaluated when their observed target properties change. Changing other captured application state, or reincluding an excluded target with no listeners, requires `updateOptions`. Removed/reincluded or privacy-replaced nodes receive fresh references; ordinary value changes retain identity. Options retain callback captures until replaced or disposed.
+
+Action limits can change in the same update. New admissions use the new capacity and deadlines; admitted actions keep both their queue deadline and running reply timeout. Reducing capacity does not cancel admitted work; further admissions wait for capacity by being rejected as busy. Current nesting limits are rechecked before start. Running application handlers are never interrupted.
+
+### Same-session access
+
+By default any client able to reach the session accessibility bus can read exported content and request permitted actions. `allowedActionSenders(Set.of(":1.42"))` restricts mutations to specified unique D-Bus names; an empty set denies all mutations, and `allowAllActionSenders()` restores the default. Up to 256 names are accepted. Reads and discovery are always available, including to senders denied mutation. Names are connection-scoped and change on reconnect. Configuration governs this bridge's exports. Other accessibility providers in the same process (for example a GTK provider publishing window titles) are outside its control. This filter is defense in depth, not authentication or isolation against a compromised desktop session. Configure deployment restrictions explicitly so assistive technology remains usable.
 
 ## Discovery and events
 

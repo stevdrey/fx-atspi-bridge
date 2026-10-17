@@ -43,12 +43,14 @@ public final class FxAtSpiBridge implements AutoCloseable {
     private static final AtomicReference<FxAtSpiBridge> ACTIVE = new AtomicReference<>();
     private final Executor fxExecutor;
     private boolean closed;
-    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, ActionLimits limits,
+    private long policyRevision;
+    private FxAtSpiBridge(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, BridgeOptions options,
                           Executor observerScheduler) {
         this.fxExecutor = fxExecutor;
         registry = new TargetRegistry();
-        observer = new SceneObserver(registry, observerScheduler);
-        provider = AtSpiProvider.pushed(status, observer::synchronize, new ActionExecutor(registry), bus, embed, Platform::runLater, limits);
+        observer = new SceneObserver(registry, observerScheduler, options);
+        provider = AtSpiProvider.pushed(status, observer::synchronize,
+                new ActionExecutor(registry, observer::options, observer::permits), bus, embed, Platform::runLater, options.actionLimits());
     }
     /** Called after the bridge owns the install slot, so a fast termination cannot clear the slot before it is set. */
     private void begin() {
@@ -105,17 +107,47 @@ public final class FxAtSpiBridge implements AutoCloseable {
      */
     static FxAtSpiBridge install(Consumer<String> status, AtSpiProvider.BusAddress bus, boolean embed, Executor fxExecutor, ActionLimits limits,
                                  Executor observerScheduler) {
-        Objects.requireNonNull(limits, "limits");
+        return installConfigured(BridgeOptions.builder().actionLimits(limits).build(), status, bus, embed, fxExecutor, observerScheduler);
+    }
+    static FxAtSpiBridge installConfigured(BridgeOptions options, Consumer<String> status, AtSpiProvider.BusAddress bus,
+                                          boolean embed, Executor fxExecutor, Executor observerScheduler) {
+        Objects.requireNonNull(options, "options");
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Install on the FX application thread");
         var previous = ACTIVE.get();
         if (previous != null && !previous.provider.isTerminated()) {
             throw new IllegalStateException(previous.closed ? "The previous bridge is still terminating" : "A bridge is already installed");
         }
         if (previous != null) previous.close(); // The provider failed on its own; release its observer and registry.
-        var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor, limits, observerScheduler);
+        var bridge = new FxAtSpiBridge(status, bus, embed, fxExecutor, options, observerScheduler);
         ACTIVE.set(bridge);
         bridge.begin();
         return bridge;
+    }
+    /** Installs configured accessibility on FX, writing value-free status to standard error. */
+    public static FxAtSpiBridge installConfigured(BridgeOptions options) {
+        return installConfigured(options, message -> System.err.println(message));
+    }
+    /** Installs configured accessibility on FX; status delivery has the same contract as {@link #install(Consumer)}. */
+    public static FxAtSpiBridge installConfigured(BridgeOptions options, Consumer<String> status) {
+        return installConfigured(options, status, null, true, Platform::runLater, Platform::runLater);
+    }
+    /**
+     * FX-only policy update. Completion confirms provider reconciliation and removal of old exports, not revocation
+     * of data already received by clients. One update may be pending. Never block FX on this stage; completion
+     * callbacks must be nonblocking (use an async continuation for application work). Limits apply to subsequent
+     * admissions; existing commands retain deadlines. Excluded nodes require an explicit update for reinclusion.
+     * @throws IllegalStateException when stopped, off FX, or another update is pending
+     */
+    public CompletionStage<Void> updateOptions(BridgeOptions options) {
+        Objects.requireNonNull(options, "options");
+        if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Update on the FX application thread");
+        if (closed || !observer.active()) throw new IllegalStateException("Provider stopped");
+        var revision = policyRevision + 1;
+        var completion = provider.prepareUpdate(revision);
+        policyRevision = revision;
+        try { observer.updateOptions(options, revision); }
+        catch (RuntimeException | Error failure) { closeOnFx(); throw failure; }
+        return completion;
     }
     /**
      * Installs the bridge with status messages written to standard error.

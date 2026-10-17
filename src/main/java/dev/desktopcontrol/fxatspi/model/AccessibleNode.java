@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi.model;
 
+import dev.desktopcontrol.fxatspi.BridgeOptions;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -26,7 +27,15 @@ import java.util.Set;
  */
 public record AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                              boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
-                             List<String> children, Set<Capability> capabilities) {
+                             List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted) {
+    /** Compatibility constructor for internal producers without a separate modal/policy projection. */
+    public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
+                          boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
+                          List<String> children, Set<Capability> capabilities) {
+        this(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
+                capabilities, enabled && showing, false);
+    }
+
     public AccessibleNode {
         // JavaFX returns null for untitled stages and may carry NUL in titles or text; reconcile and Ffm.quote reject both.
         name = publishable(name);
@@ -36,7 +45,7 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
     }
 
     /** NUL becomes U+FFFD one-for-one so code-point offsets still match the JavaFX text. */
-    public static String publishable(String value) { return Objects.requireNonNullElse(value, "").replace('\0', '\uFFFD'); }
+    public static String publishable(String value) { return BridgeOptions.bounded(Objects.requireNonNullElse(value, "")); }
 
     /** Code points in {@code text}, the unit AT-SPI uses for offsets. */
     public int characterCount() { return text.codePointCount(0, text.length()); }

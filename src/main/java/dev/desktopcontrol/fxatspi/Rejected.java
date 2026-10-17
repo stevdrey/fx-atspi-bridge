@@ -20,6 +20,7 @@ package dev.desktopcontrol.fxatspi;
  * generically. Instances carry no stack trace and no suppressed exceptions, so the shared constants are immutable.
  */
 final class Rejected extends RuntimeException {
+    static final Rejected DENIED = new Rejected("org.freedesktop.DBus.Error.AccessDenied", "Action denied");
     static final String INVALID_ARGS = "org.freedesktop.DBus.Error.InvalidArgs";
     static final String LIMITS_EXCEEDED = "org.freedesktop.DBus.Error.LimitsExceeded";
     static final String TIMEOUT = "org.freedesktop.DBus.Error.Timeout";
