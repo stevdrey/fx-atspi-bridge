@@ -54,6 +54,8 @@ public class ConfigurationSmokeApp extends Application {
             }
             case "exclude" -> options = options.toBuilder().excludedNodes(node -> node == field).build();
             case "include" -> options = options.toBuilder().excludedNodes(node -> false).build();
+            case "window" -> options = options.toBuilder().redactor((kind, sensitive, value) ->
+                    kind == BridgeOptions.ContentKind.WINDOW_NAME ? "Changed safe title" : value.replace("SECRETMARKER", "[safe]")).build();
             case "deny" -> options = options.toBuilder().allowedActionSenders(Set.of()).build();
             case "allow" -> options = options.toBuilder().allowAllActionSenders().build();
             case "exit" -> {

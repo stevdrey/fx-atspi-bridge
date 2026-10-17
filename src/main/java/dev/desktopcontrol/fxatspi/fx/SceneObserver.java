@@ -89,6 +89,8 @@ public final class SceneObserver {
     private BridgeOptions options = BridgeOptions.defaults();
     private long policyRevision;
     private final IdentityHashMap<Window, Boolean> modal = new IdentityHashMap<>();
+    /** A subtree may be reached from several renewed ancestors; rotate each identity once per atomic flush. */
+    private final Set<Observed> rotated = Collections.newSetFromMap(new IdentityHashMap<>());
     private Sink sink;
     private boolean active, closed, scheduled;
     private long publications, projectionFailures;
@@ -270,6 +272,7 @@ public final class SceneObserver {
         retry.clear();
         showing.clear();
         modal.clear();
+        rotated.clear();
         registry.clear();
         options = BridgeOptions.defaults(); // release application callback captures after disposal
     }
@@ -330,7 +333,7 @@ public final class SceneObserver {
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
             }
-        } finally { showing.clear(); modal.clear(); }
+        } finally { showing.clear(); modal.clear(); rotated.clear(); }
         if (touched.isEmpty()) return;
         var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
@@ -340,13 +343,18 @@ public final class SceneObserver {
 
     /** Changes only an export incarnation; structural observation and application object identity stay intact. */
     private void rotate(Observed entry) {
+        if (!rotated.add(entry)) return;
         if (model.remove(entry.id) != null) touched.add(entry.id);
         registry.release(entry.target);
         entry.id = registry.register(entry.target);
         if (entry.parent != null) dirty.add(entry.parent);
         for (var child : entry.children) {
             var descendant = observed.get(child);
-            if (descendant != null && descendant.parent == entry) dirty.add(descendant);
+            if (descendant != null && descendant.parent == entry) {
+                // Cached parent references must never point at the retired incarnation.
+                rotate(descendant);
+                dirty.add(descendant);
+            }
         }
     }
 

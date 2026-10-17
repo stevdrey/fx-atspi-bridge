@@ -566,4 +566,30 @@ class SceneObserverTest {
         });
     }
 
+    @Test void renewingAWindowAlsoRenewsDescendantsSoCachedParentsCannotBecomeStale() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            var box = new VBox(field);
+            var stage = show(box);
+            stage.setTitle("private title");
+            var harness = new Harness().start();
+            var oldWindow = harness.id(stage);
+            var oldBox = harness.id(box);
+            var oldField = harness.id(field);
+            var before = harness.last;
+            harness.observer.updateOptions(BridgeOptions.builder().redactor((kind, sensitive, value) ->
+                    kind == BridgeOptions.ContentKind.WINDOW_NAME ? "safe title" : value).build(), 1);
+            assertNull(harness.last.get(oldWindow));
+            assertNull(harness.last.get(oldBox));
+            assertNull(harness.last.get(oldField));
+            assertEquals(harness.id(box), harness.last.get(harness.id(field)).ancestor());
+            assertEquals(harness.id(stage), harness.last.get(harness.id(box)).ancestor());
+            var changes = SnapshotDiff.diff(before, harness.last, harness.published.getLast());
+            assertEquals(3, changes.stream().filter(change -> change instanceof SnapshotDiff.Removed).count());
+            assertFalse(changes.toString().contains("private title"));
+            harness.observer.close();
+            return null;
+        });
+    }
+
 }

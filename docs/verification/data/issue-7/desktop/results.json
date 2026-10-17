@@ -7,6 +7,8 @@
     "projected_text_readonly": true,
     "excluded_target_removed": true,
     "reinclusion_renews_reference": true,
+    "window_renewal_replaces_descendants": true,
+    "libatspi_cached_parent_is_live": true,
     "sender_denied": true,
     "reads_available_to_denied_sender": true,
     "allowed_action": true,

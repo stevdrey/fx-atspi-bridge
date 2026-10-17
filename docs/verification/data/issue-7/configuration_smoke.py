@@ -131,6 +131,13 @@ try:
     command('include')
     included = tree(name)
     check('reinclusion_renews_reference', next(node['path'] for node in included if node['name'] == 'Field') != field['path'])
+    before_window = {node['path'] for node in included if node['path'] != root}
+    command('window')
+    after_window = tree(name)
+    check('window_renewal_replaces_descendants', not before_window.intersection(node['path'] for node in after_window))
+    wait(lambda: application.get_child_at_index(0).get_name() == 'Changed safe title')
+    accessible_field = application.get_child_at_index(0).get_child_at_index(0).get_child_at_index(0)
+    check('libatspi_cached_parent_is_live', accessible_field.get_parent().get_parent().get_name() == 'Changed safe title')
     command('deny')
     current = tree(name)
     button = next(node for node in current if node['name'] == 'Press')

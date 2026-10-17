@@ -10,8 +10,9 @@ Spec: [issue-7.md](../specs/issue-7.md). Baseline: `617d2e0`. Implementation/evi
 
 - `java -version` — Java 27 confirmed before the wrapper.
 - `./gradlew compileJava compileTestJava --no-daemon` — **Passed**.
-- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 144 tests, 0 failures/errors/skips after the final source change. Both flags prevent treating unavailable toolkit/bus coverage as success.
-- `python3 -I docs/verification/data/issue-7/configuration_smoke.py --jar <absolute bridge jar> --fx-path <JavaFX 27 linux jars separated by ':'> --out docs/verification/data/issue-7/desktop` — **Passed**, 14 independent desktop checks; raw checks/events under `data/issue-7/desktop/`.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 145 tests, 0 failures/errors/skips after the final source change. Both flags prevent treating unavailable toolkit/bus coverage as success.
+- `python3 -I docs/verification/data/issue-7/configuration_smoke.py --jar <absolute bridge jar> --fx-path <JavaFX 27 linux jars separated by ':'> --out docs/verification/data/issue-7/desktop` — **Passed**, 16 independent desktop checks; raw checks/events under `data/issue-7/desktop/`.
+- `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 127 tests, no skips; includes harness validity and libatspi probe tooling.
 - `git diff --check` — **Passed**.
 
 Focused tests cover option defaults/copy/validation, sender set bounds and immutable copies, Unicode output bounds, callback failures, safe password metadata, all published string sources, old-value event suppression through identity rotation, exclusion/disposal/reinclusion, property-driven exclusion, dynamic limits and captured deadlines, maximum completion capacity, admission and execution denials, excluded modal windows, update barriers/stop, an explicitly allowed persistent sender, and queued mutations against visibility/exclusion/privacy/sender changes. Existing lifecycle, bus loss, overload, modal, Unicode and FFM suites remain applicable. Native invocation/export counters balance after teardown.
@@ -25,6 +26,8 @@ The independent Python client uses libatspi for application/window names and Gio
 A second GTK accessibility provider was observed in the same process, with its own unredacted window title. The collector identifies this bridge using both process identity and configured application name. BridgeOptions controls only this bridge's publications; it cannot redact other providers. This limitation is documented in README. Sender allowlists are connection-scoped defense in depth, not authentication; reads remain session-visible. Custom redactor correctness belongs to the application. Already received data cannot be revoked.
 
 No native Wayland JavaFX, Orca/full screen-reader compatibility, alternative desktop or physical input claim is made by this issue's checks. Stage completion confirms reconciliation; user continuations must not block the completing thread. Fatal application errors during an update stop the bridge instead of leaving a pending update live.
+
+The final cache regression check also verifies that renewing a window renews its descendants, so AT-SPI clients cannot cache parent references to retired identities. Each identity rotates at most once within an atomic flush.
 
 ## Performance
 
