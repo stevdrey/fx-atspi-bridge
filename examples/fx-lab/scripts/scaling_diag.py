@@ -75,6 +75,22 @@ def malloc(text):
             'totalInUse': system-free+mapped, 'totalHeld': system+mapped}
 
 
+
+def parse_complete_nmt(text):
+    values = md.parse_nmt(text)
+    if md.artifact_problem('nmt', text, values):
+        raise ValueError('incomplete NMT summary')
+    categories = set(values) - {'Total', 'malloc'}
+    # NMT omits sub-KiB categories and rounds each category independently. A total mismatch larger
+    # than one KiB per printed category cannot be rounding; a valid-looking prefix may be truncated.
+    tolerance = len(categories) + 1
+    if abs(values['Total'] - sum(values[c] for c in categories)) > tolerance:
+        raise ValueError('NMT Total disagrees with category sum (truncated or inconsistent table)')
+    if values['malloc'] > values['Total'] + 1:
+        raise ValueError('NMT malloc exceeds total committed memory')
+    return values
+
+
 def records(path):
     path = Path(path)
     env = (path/'environment.txt').read_text()
@@ -149,9 +165,7 @@ def records(path):
                 raise ValueError(f'{name}: invalid metric')
             if variant == 'nmt':
                 nt = (artifact/f'{CP}.nmt.txt').read_text()
-                nmt = md.parse_nmt(nt)
-                if md.artifact_problem('nmt', nt, nmt):
-                    raise ValueError(f'{name}: invalid NMT')
+                nmt = parse_complete_nmt(nt)
                 values.update({f'NMT {k}': v*1024 for k, v in nmt.items()})
             result[(nodes, bridge, variant, md.cell_key(name)[1])] = values
     return result, audits, fingerprint, profile

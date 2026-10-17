@@ -98,7 +98,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 145 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 146 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -117,3 +117,5 @@ physical-input, other-ABI or native-Wayland qualification. No system allocator o
 After `4682dab`, changes are analysis/docs/evidence only: combined arena+mmap totals and fits to make allocator shifts
 visible, numeric table formatting, added synthetic coverage, and the independent regression client. No production,
 BenchApp, MemoryDiagnostics or collection profiles changed. Existing #17 numbers and evidence are untouched.
+
+Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 146 tests, no skips. This changes validation only, not either measured JVM path.

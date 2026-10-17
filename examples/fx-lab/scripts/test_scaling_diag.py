@@ -8,6 +8,9 @@ import unittest
 import scaling_diag as sd
 from test_memory_diag import MALLOC, NMT, SMAPS
 
+# A self-consistent reduced NMT table for scaling tests, unlike the parser excerpt used by old tests.
+NMT = NMT.replace('reserved=5519572KB, committed=158692KB', 'reserved=3942041KB, committed=40305KB').replace('malloc: 53744KB', 'malloc: 1000KB')
+
 
 def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile='scaling'):
     root.mkdir(exist_ok=True)
@@ -89,6 +92,15 @@ class ScalingTest(unittest.TestCase):
             self.assertIn('| inUse | 7703.0 | 100.000 |', text)
             self.assertIn('±', text)
             self.assertIn('NMT Java Heap', text)
+
+    def test_nmt_prefix_with_total_malloc_and_heap_is_still_truncated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collection(root)
+            path = root/'scaling-n100-off-nmt-r1'/'afterIdleGc.nmt.txt'
+            path.write_text(NMT[:NMT.index('-    Native Memory Tracking')])
+            with self.assertRaisesRegex(ValueError, 'category sum'):
+                sd.records(root)
 
     def test_total_metric_accounts_for_mapping_shifts(self):
         with tempfile.TemporaryDirectory() as tmp:

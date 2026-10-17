@@ -63,7 +63,7 @@ If it fails, retain the evidence and decision; no larger export-model rewrite is
 
 ## Acceptance and verification
 
-Synthetic tests: fixed/linear/nonlinear cost, mmap separation, statistics, complete pairs, invalid/missing artifacts,
+Synthetic tests: fixed/linear/nonlinear cost, mmap separation, statistics, complete pairs, invalid/missing artifacts and NMT category-total consistency,
 counts/workload/environment mismatch, export roundtrip and positive/negative optimization gate.
 Smoke then full campaigns from clean isolated checkouts. Java lifecycle tests cover shared metadata, capability transitions,
 removal while shared, close/reinstall, partial export failures and bus loss. Independent libatspi/Gio regression checks cover
