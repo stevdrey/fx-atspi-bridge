@@ -95,4 +95,3 @@ Total: reserved=5501143KB, committed=196807KB
 
 -                       JNI (reserved=10KB, committed=10KB)
                             (malloc=10KB tag=JNI #82) (at peak)
-
