@@ -182,6 +182,58 @@ class ProviderLifecycleTest {
         assertTrue(provider.snapshotIsEmpty());
         assertEquals(provider.exportsAcquired(), provider.exportsReleased());
     }
+
+    @Test void burstPublicationsWakeAnIdleProviderAndPublishTheFinalGeneration() throws Exception {
+        var provider = provider(buttons("button1"), ffi -> address);
+        provider.start();
+        await(provider, State.RUNNING);
+        for (int i = 0; i < 500; i++) provider.publish(buttons("button" + (i + 2)), null);
+        awaitTrue(() -> provider.publishedSnapshot().get("button501") != null, "the last publication must not be stranded");
+        assertFalse(provider.deadlineArmed(), "publication alone must not create a periodic timer");
+        assertEquals(0, provider.deadlineSourcesAcquired());
+        provider.stop();
+        awaitTermination(provider);
+        assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+    }
+
+    @Test void burstCompletionsWakeTheProviderAndReleaseEveryInvocationOnce() throws Exception {
+        var held = new CopyOnWriteArrayList<Runnable>();
+        var ids = new String[32];
+        for (int i = 0; i < ids.length; i++) ids[i] = "button" + i;
+        var port = new CountingPort();
+        var provider = new AtSpiProvider(statuses::add, () -> buttons(ids), port, ffi -> address, false, held::add,
+                new ActionLimits(32, 8, Duration.ofSeconds(60), Duration.ofSeconds(60)));
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        var clients = new ArrayList<Process>();
+        for (var id : ids) clients.add(doAction(provider, id));
+        awaitTrue(() -> held.size() == ids.length, "all calls must be queued before releasing the burst");
+        held.forEach(Runnable::run);
+        for (var client : clients) assertTrue(output(client).contains("(true,)"));
+        awaitTrue(() -> provider.outstandingCount() == 0 && !provider.deadlineArmed(), "results must drain and remove the timer");
+        assertEquals(32, port.presses.get());
+        assertEquals(32, provider.pendingAcquired());
+        assertEquals(32, provider.pendingReleased());
+        provider.stop();
+        awaitTermination(provider);
+        assertEquals(provider.deadlineSourcesAcquired(), provider.deadlineSourcesReleased());
+    }
+
+    @Test void repeatedIdleStartCloseHasNoDeadlineSourcesOrRetainedExports() throws Exception {
+        for (int i = 0; i < 25; i++) {
+            var provider = provider(buttons("button1"), ffi -> address);
+            provider.start();
+            await(provider, State.RUNNING);
+            assertFalse(provider.deadlineArmed());
+            provider.stop();
+            provider.stop();
+            awaitTermination(provider);
+            assertEquals(State.CLOSED, provider.state());
+            assertEquals(0, provider.deadlineSourcesAcquired());
+            assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+        }
+    }
     @Test void theTreePublishedBeforeStartIsAdoptedWithoutReconcilingItAgainstAnEmptyTree() throws Exception {
         // As the bridge does: a push provider whose observer publishes its initial traversal before the thread starts.
         var provider = AtSpiProvider.pushed(statuses::add, () -> {}, new ActionExecutor(new TargetRegistry()), ffi -> address, false,
@@ -458,11 +510,13 @@ class ProviderLifecycleTest {
             assertTrue(reply.contains("org.freedesktop.DBus.Error.Timeout") && reply.contains("still running; its outcome is unknown"), reply);
             assertEquals(1, provider.pendingReleased(), "the timed-out request is answered and released once");
             assertEquals(1, provider.outstandingCount(), "the running action keeps its reserved slot");
+            awaitTrue(() -> !provider.deadlineArmed(), "a timed-out running action must not leave a periodic timer");
             assertTrue(output(doAction(provider, "button2")).contains("LimitsExceeded"));
             port.release.countDown();
             awaitTrue(() -> provider.outstandingCount() == 0, "the late completion must free the slot");
             assertEquals(1, provider.lateCompletions());
             assertEquals(1, provider.pendingReleased(), "the late completion must not reply or release again");
+            assertEquals(provider.deadlineSourcesAcquired(), provider.deadlineSourcesReleased());
             provider.stop();
             awaitTermination(provider);
         } finally { port.release.countDown(); fx.shutdownNow(); }

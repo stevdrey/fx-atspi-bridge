@@ -15,11 +15,22 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import static java.lang.foreign.ValueLayout.ADDRESS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -72,6 +83,78 @@ class FfmTest {
             api.unref(cancellable);
         }
     }
+
+    @Test void wakeBeforeBlockingIterationIsNotLost() {
+        try (var api = new Ffm()) {
+            var context = api.mainContextNew();
+            var timeout = api.timeoutSource(context, 1_000_000_000L);
+            try {
+                api.iterate(context); // consume the source-attachment wake
+                api.wakeup(context);
+                assertFalse(api.iterate(context, true), "a pre-wake returns without dispatching the timeout");
+                assertFalse(api.sourceDestroyed(timeout));
+            } finally {
+                api.releaseSource(timeout);
+                api.mainContextUnref(context);
+            }
+        }
+    }
+
+    @Test void timeoutSourceDispatchesOnceAndCanBeReleasedAfterItFires() {
+        try (var api = new Ffm()) {
+            var context = api.mainContextNew();
+            var timeout = api.timeoutSource(context, 10_000_000L);
+            try {
+                while (!api.sourceDestroyed(timeout)) api.iterate(context, true);
+                assertFalse(api.iterate(context), "a one-shot source must not stay ready or repeat");
+            } finally {
+                api.releaseSource(timeout);
+                api.mainContextUnref(context);
+            }
+        }
+    }
+
+    @Test void anotherThreadWakesAnAlreadyBlockedNativeIteration() throws Exception {
+        try (var api = new Ffm()) {
+            var context = api.mainContextNew();
+            var timeout = api.timeoutSource(context, TimeUnit.SECONDS.toNanos(10));
+            var entered = new CountDownLatch(1);
+            var done = new AtomicBoolean();
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                var waiting = worker.submit(() -> {
+                    entered.countDown();
+                    while (!done.get()) api.iterate(context, true);
+                });
+                assertTrue(entered.await(5, TimeUnit.SECONDS));
+                try {
+                    assertThrows(TimeoutException.class, () -> waiting.get(100, TimeUnit.MILLISECONDS));
+                } finally { done.set(true); api.wakeup(context); }
+                waiting.get(5, TimeUnit.SECONDS);
+                assertFalse(api.sourceDestroyed(timeout), "the wake must return before the safety timeout fires");
+            } finally {
+                done.set(true);
+                api.releaseSource(timeout);
+                api.mainContextUnref(context);
+            }
+        }
+    }
+
+    @Test void signalConnectionReturnsAHandlerOrFailsInsteadOfStayingInert() throws Exception {
+        try (var api = new Ffm()) {
+            var handle = MethodHandles.lookup().findStatic(FfmTest.class, "ignoreSignal",
+                    MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class));
+            var stub = Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS), api.arena);
+            var cancellable = api.newCancellable();
+            try {
+                var handler = api.connectSignal(cancellable, "cancelled", stub);
+                assertTrue(handler != 0);
+                api.disconnectSignal(cancellable, handler);
+                var failure = assertThrows(IllegalStateException.class, () -> api.connectSignal(cancellable, "no-such-signal", stub));
+                assertEquals("g_signal_connect_data", failure.getMessage());
+            } finally { api.unref(cancellable); }
+        }
+    }
+    private static void ignoreSignal(MemorySegment instance, MemorySegment data) {}
 
     @Test void nodeInfoParsesAndReleases() {
         try (var api = new Ffm()) {

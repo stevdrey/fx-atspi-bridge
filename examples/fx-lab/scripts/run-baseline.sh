@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SC-01 baseline: paired bridge off/on runs, one JVM per cell.
-# Usage: run-baseline.sh <output-dir> [quick|full|smoke] [--resume]   (default profile: quick)
+# Usage: run-baseline.sh <output-dir> [quick|full|smoke|dispatch] [--resume]   (default profile: quick)
+#   dispatch: 100/1000/10000 nodes, dirty 10, 5 reps, 10 s idle; no structural/install churn (SC-06).
 #   smoke (~1 min):  100 nodes, dirty 10, 1 rep, short phases. Validates harness/script changes; NEVER use it as evidence.
 #   quick (~45 min): 100 and 1000 nodes x dirty 1/10/100 x 3 reps; 10000 nodes x dirty 1/10 x 2 reps;
 #                    structural churn 100 cycles (30 cycles at 10000 nodes).
@@ -33,7 +34,8 @@ case "$profile" in
   smoke) plan=("100:1:10:10"); warmup=10; samples=30; idle_seconds=3; install_churn=10 ;;
   quick) plan=("100:3:1,10,100:100" "1000:3:1,10,100:100" "10000:2:1,10:30") ;;
   full)  plan=("100:5:1,10,100:100" "1000:5:1,10,100:100" "10000:5:1,10,100:100") ;;
-  *) echo "Unknown profile '$profile' (quick|full|smoke)" >&2; exit 1 ;;
+  dispatch) plan=("100:5:10:0" "1000:5:10:0" "10000:5:10:0"); install_churn=0 ;;
+  *) echo "Unknown profile '$profile' (quick|full|smoke|dispatch)" >&2; exit 1 ;;
 esac
 root="$(cd "$script_dir/../../.." && pwd -P)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
