@@ -14,14 +14,20 @@ Wayland qualification. Exact jar hashes, JVM options, allocator-default check an
 [before/environment.txt](data/issue-22/before/environment.txt).
 
 Collection started 2026-10-17 22:00 UTC and finished that evening. A user interruption left 13 complete results;
-no benchmark remained alive. `--resume` checked revision, profile, plan and environment and preserved those results.
+no benchmark remained alive. The original `--resume` preserved individual results and split the 100-button plain
+repetition-4 pair across that interruption. Codex review identified this pairing defect. Both halves were subsequently
+archived and rerun together from a clean checkout with identical production, Java benchmark, compiled harness,
+launcher and JVM/workload inputs. The 60-cell analysis uses that repaired pair; it does not treat the interrupted
+halves as paired observations. [Original results](data/issue-22/interrupted-reference-pair/) remain available, excluded
+for chronology rather than their memory values. [Pair restart](data/issue-22/before/pair-restarts.txt) is recorded.
 One later attempt (`scaling-n1000-on-nmt-r2`) was invalidated by a 1,013.482283 ms pulse, beyond the existing 900 ms
 limit; its prescribed retry passed. [retries.txt](data/issue-22/before/retries.txt) records the attempt. No valid run
-was dropped based on memory or latency results. The display was not locked during the investigated stall.
+was dropped based on memory or latency results; the two individually valid interrupted halves were replaced solely
+because they did not form one uninterrupted pair. The display was not locked during the investigated stall.
 
 ## Method and retained evidence
 
-60 fresh JVMs: 100/1,000/10,000 buttons × bridge off/on × plain/NMT × five repetitions. Warmup 50, samples 200,
+60 accepted fresh-JVM cells (plus both original interrupted halves and one invalid attempt): 100/1,000/10,000 buttons × bridge off/on × plain/NMT × five repetitions. Warmup 50, samples 200,
 10 dirty buttons, idle 10 seconds, structural/install churn zero. Mode order alternates by repetition.
 Use `afterIdleGc`; diagnostics and their order are unchanged. NMT adds allocator headers, so primary malloc
 comparisons use **plain** cells; NMT categories are reported separately. All run JSON, checkpoint malloc/smaps/NMT,
@@ -40,14 +46,14 @@ checkpoint and sequence, and every JSON records snapshot RSS cost.
 ## Measured scaling
 
 All values below are **decimal MB (1,000,000 bytes)**. Differences are paired bridge on − off within repetition.
-Mean ± sample standard deviation; exact per-run values, median/range, all allocator/free/held and NMT categories are
+Every metric column reports mean ± sample standard deviation; exact per-run values, median/range, all allocator/free/held and NMT categories are
 in the summary.
 
 | Buttons | Actual accessibles | Explicit registrations incl. Cache | Arena in-use Δ MB | Arena + mmap in-use Δ MB | RSS Δ MB | Used heap Δ MB |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100 | 103 | 205 | 4.000 ± 13.792 | 4.000 ± 0.489 | 12.995 | 0.761 |
-| 1,000 | 1,003 | 2,005 | 11.653 ± 6.283 | 14.390 ± 0.258 | 12.571 | 1.510 |
-| 10,000 | 10,003 | 20,005 | 121.726 ± 4.174 | 118.990 ± 2.682 | 252.167 | 9.134 |
+| 100 | 103 | 205 | 3.401 ± 13.827 | 3.401 ± 1.093 | 9.313 ± 5.248 | 0.740 ± 0.081 |
+| 1,000 | 1,003 | 2,005 | 11.653 ± 6.283 | 14.390 ± 0.258 | 12.571 ± 11.501 | 1.510 ± 0.086 |
+| 10,000 | 10,003 | 20,005 | 121.726 ± 4.174 | 118.990 ± 2.682 | 252.167 ± 83.412 | 9.134 ± 0.119 |
 
 Counts come from independent Gio Cache/GetItems and live introspection, corroborating the provider's one successful
 `registerObject` per advertised interface. They are derived registration counts, not sampled allocation stacks.
@@ -58,12 +64,12 @@ OLS on mean paired deltas versus actual accessibles:
 
 | Metric | Fixed intercept bytes | Slope bytes / additional accessible | R² | Residuals at 100/1,000/10,000 buttons, bytes |
 | --- | ---: | ---: | ---: | --- |
-| Arena in-use | 1,250,204.9 | 12,028.906 | 0.999415829 | 1,511,140.4; −1,662,254.4; 151,114.0 |
-| Arena + mmap in-use | 2,771,964.0 | 11,617.953 | 0.999999724 | 31,709.4; −34,880.4; 3,170.9 |
+| Arena in-use | 916,985.2 | 12,064.918 | 0.999608262 | 1,241,049.8; -1,365,154.8; 124,105.0 |
+| Arena + mmap in-use | 2,438,744.3 | 11,653.965 | 0.999984504 | -238,381.1; 262,219.2; -23,838.1 |
 
-Combined marginal slopes are 11,544 ± 296 bytes/accessible between 100 and 1,000, and 11,622 ± 318 between 1,000
+Combined marginal slopes are 12,210 ± 1,379 bytes/accessible between 100 and 1,000, and 11,622 ± 318 between 1,000
 and 10,000. Scaling is approximately linear **for these three sizes and this button workload on this machine**.
-Dividing total cost by N would fold fixed costs into the small-tree estimate: combined average cost is ~38,838 bytes
+Dividing total cost by N would fold fixed costs into the small-tree estimate: combined average cost is ~33,017 bytes
 per exported accessible at N=100 and ~11,895 at N=10,000. RSS is a different metric, not an allocator in-use estimate.
 
 ## Attribution limitation and design decision
@@ -98,9 +104,9 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 146 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 152 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
-| `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, no memory-based exclusions |
+| `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
 | `python3 examples/fx-lab/scripts/scaling_diag.py docs/verification/data/issue-22/before` | Passed: retained compact evidence independently reanalyzed |
 | Existing SC-07 `configuration_smoke.py --jar <bridge-jar> --fx-path <JavaFX-jars> --out <out>` | Passed: 16 independent libatspi/Gio privacy/configuration/cache/event checks |
@@ -114,8 +120,42 @@ physical-input, other-ABI or native-Wayland qualification. No system allocator o
 
 ## Post-collection changes
 
-After `4682dab`, changes are analysis/docs/evidence only: combined arena+mmap totals and fits to make allocator shifts
+Before the Codex review follow-up, changes after `4682dab` were analysis/docs/evidence only: combined arena+mmap totals and fits to make allocator shifts
 visible, numeric table formatting, added synthetic coverage, and the independent regression client. No production,
 BenchApp, MemoryDiagnostics or collection profiles changed. Existing #17 numbers and evidence are untouched.
 
-Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 146 tests, no skips. This changes validation only, not either measured JVM path.
+Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 152 tests, no skips. This changes validation only, not either measured JVM path.
+
+## Codex review follow-up
+
+All four findings on PR #37 were validated and addressed:
+
+- **Harness identity:** separate fingerprint of every example Java source, Gradle application configuration,
+  compiled fx-lab.jar and the complete generated launcher/default JVM options. Production bridge jar contents
+  remain excluded. Both environment and harness fingerprints must match before comparison.
+- **Uncertainty:** the condensed table now includes RSS and used-heap sample SD as well as allocator SD.
+  At 10,000 buttons RSS is 252.167 ± 83.412 MB; this variability must remain visible.
+- **Audit prerequisites:** Python gi/Gio/GLib imports and conditional X11/XWayland xprop availability are checked
+  before building/launching any benchmark cells. Historical smoke/diag behavior is unchanged.
+- **Pair integrity:** the runner commits a receipt only after both modes complete; it archives and repeats both
+  halves of an incomplete pair. Analysis validates result hashes, alternating order, timestamps and session identity.
+  Missing receipts fail rather than silently pairing results from separate sessions.
+
+The original raw collections predate receipts. Their [qualification script](data/issue-22/qualify-original-chronology.py)
+checks the original environment's compiled harness/bridge jar hashes and exact tracked harness/build/wrapper sources
+against the measured revision. It reconstructs chronology from original raw warmup-snapshot/result mtimes and all
+recorded resume timestamps. It qualified 29 reference pairs and rejected the interrupted pair, whose two modes were
+rerun together using [repair-original-pair.sh](data/issue-22/repair-original-pair.sh). The repaired pair has runner
+process-start/end timestamps. Original pairs' startNs is the first warmup snapshot, not process start.
+
+[harness.txt](data/issue-22/before/harness.txt) and [chronology provenance](data/issue-22/before/chronology-provenance.txt)
+make this retrospective qualification explicit. The original compiled harness hash was recorded at collection start;
+the original launcher hash was not. Launcher identity is reconstructed from unchanged Gradle configuration/wrapper
+and compared with both installed outputs. New campaigns capture it before any cell launches. These validation and
+pair-bookkeeping changes do not change the Java workload or snapshot sequence. Both original interrupted halves
+remain retained; no valid memory outlier was removed.
+
+Verification after review: 152 Python tests, no skips; real audit preflight; shell syntax check; updated scaling-smoke
+(four JVMs/two completed receipts plus audit); strict rejection before pair repair, full validation after repair;
+raw/export parsed equality and reproducible retained summary. Java/desktop tests reuse prior passing evidence because
+production and Java benchmark are unchanged. No simultaneous desktop benchmark ran during pair repair or smoke.

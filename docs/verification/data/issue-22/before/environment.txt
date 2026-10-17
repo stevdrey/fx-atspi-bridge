@@ -40,4 +40,7 @@ scaling_contract=1 checkpoint:afterIdleGc order:alternating-on-off no-churn
 scaling_environment_sha256=b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638
 resumed=2026-10-17T22:28:41Z
 
+scaling_harness_sha256=c182c1c732003c0f07ec05988b89548539ceb4ad8e1c2a7ec1ccedbafb937752
+pair_repair_revision=b46e5fd0992fde3aac53ec393aa8216bc2aab6c5
+
 scaling_artifacts=afterIdleGc-only
