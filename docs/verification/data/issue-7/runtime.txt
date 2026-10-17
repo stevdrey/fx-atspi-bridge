@@ -1,0 +1,5 @@
+GNOME Shell 50.5
+glib2-2.88.4-1.fc44.x86_64
+gtk3-3.24.52-2.fc44.x86_64
+at-spi2-core-2.60.7-1.fc44.x86_64
+glibc-2.43-9.fc44.x86_64

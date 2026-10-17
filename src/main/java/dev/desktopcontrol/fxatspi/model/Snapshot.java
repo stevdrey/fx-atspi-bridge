@@ -15,6 +15,8 @@
  */
 package dev.desktopcontrol.fxatspi.model;
 
+import dev.desktopcontrol.fxatspi.ActionLimits;
+import java.util.Set;
 import java.util.Collections;
 import java.util.Map;
 
@@ -22,13 +24,18 @@ import java.util.Map;
  * Immutable, insertion-ordered view of all published nodes keyed by id. The producer relinquishes
  * the map it passes in; it is wrapped, not copied, so a snapshot costs O(1) to publish.
  */
-public record Snapshot(Map<String, AccessibleNode> nodes) {
+public record Snapshot(Map<String, AccessibleNode> nodes, ActionLimits limits, Set<String> actionSenders, long policyRevision) {
+    public Snapshot(Map<String, AccessibleNode> nodes) { this(nodes, ActionLimits.defaults(), null, 0); }
+    public boolean permitsSender(String sender) { return permitsSender(actionSenders, sender); }
+    /** Null {@code allowed} means every sender; an empty set denies every mutation. */
+    public static boolean permitsSender(Set<String> allowed, String sender) { return allowed == null || allowed.contains(sender); }
     /** Id of the application root node. */
     public static final String ROOT_ID = "root";
     public static final Snapshot EMPTY = new Snapshot(Map.of());
 
     public Snapshot {
         nodes = Collections.unmodifiableMap(nodes);
+        if (actionSenders != null) actionSenders = Set.copyOf(actionSenders);
     }
 
     public AccessibleNode get(String id) { return nodes.get(id); }

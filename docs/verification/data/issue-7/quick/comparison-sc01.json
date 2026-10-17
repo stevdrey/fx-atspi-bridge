@@ -1,0 +1,505 @@
+{
+  "reference": {
+    "commit": "617d2e0",
+    "path": "docs/verification/issue-1.md",
+    "section": "Initial budgets (provisional until #15)",
+    "limitations": "Historical prototype and earlier allocation method; loose indicative guardrails, not a same-session patch comparison or release qualification."
+  },
+  "comparisons": [
+    {
+      "nodes": 100,
+      "dirty": 1,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 42,
+      "worstObserved": 29.572765,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d1-on-r1.json",
+        "n100-d1-on-r2.json",
+        "n100-d1-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 1,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 34,
+      "worstObserved": 25.4306640625,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d1-on-r1.json",
+        "n100-d1-on-r2.json",
+        "n100-d1-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 41,
+      "worstObserved": 30.285433,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 116,
+      "worstObserved": 96.3193359375,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 100,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 29,
+      "worstObserved": 26.716687,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d100-on-r1.json",
+        "n100-d100-on-r2.json",
+        "n100-d100-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 100,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 403,
+      "worstObserved": 389.3486328125,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d100-on-r1.json",
+        "n100-d100-on-r2.json",
+        "n100-d100-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 8,
+      "worstObserved": 2.899963250795697,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 327,
+      "worstObserved": 258.64453125,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "installChurnHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 1,
+      "worstObserved": 0.08289337158203125,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsCheckpoint",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 100,
+      "dirty": 10,
+      "metric": "structuralHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 2,
+      "worstObserved": 0.5663833618164062,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n100-d10-on-r1.json",
+        "n100-d10-on-r2.json",
+        "n100-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 1,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 42,
+      "worstObserved": 32.820565,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d1-on-r1.json",
+        "n1000-d1-on-r2.json",
+        "n1000-d1-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 1,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 205,
+      "worstObserved": 108.615234375,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d1-on-r1.json",
+        "n1000-d1-on-r2.json",
+        "n1000-d1-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 29,
+      "worstObserved": 34.263845,
+      "withinProvisionalBudget": false,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 299,
+      "worstObserved": 190.16015625,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 100,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 190,
+      "worstObserved": 138.529538,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d100-on-r1.json",
+        "n1000-d100-on-r2.json",
+        "n1000-d100-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 100,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 2581,
+      "worstObserved": 1824.03515625,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d100-on-r1.json",
+        "n1000-d100-on-r2.json",
+        "n1000-d100-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 14,
+      "worstObserved": 2.4999833201112884,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 434,
+      "worstObserved": 329.3515625,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "installChurnHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 57,
+      "worstObserved": -0.25875091552734375,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsCheckpoint",
+      "unit": "threads",
+      "limit": 117,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "structuralHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 6,
+      "worstObserved": 0.7781295776367188,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 1,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 631,
+      "worstObserved": 30.277878,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d1-on-r1.json",
+        "n10000-d1-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 1,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 8506,
+      "worstObserved": 842.900390625,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d1-on-r1.json",
+        "n10000-d1-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 307,
+      "worstObserved": 31.845601,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 8844,
+      "worstObserved": 862.6455078125,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 137,
+      "worstObserved": 1.599980334961699,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 1590,
+      "worstObserved": 1058.046875,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "installChurnHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 1,
+      "worstObserved": 1.0352096557617188,
+      "withinProvisionalBudget": false,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsCheckpoint",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "structuralHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 18,
+      "worstObserved": 1.4083709716796875,
+      "withinProvisionalBudget": true,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    }
+  ],
+  "exceedances": [
+    {
+      "nodes": 1000,
+      "dirty": 10,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 29,
+      "worstObserved": 34.263845,
+      "withinProvisionalBudget": false,
+      "files": [
+        "n1000-d10-on-r1.json",
+        "n1000-d10-on-r2.json",
+        "n1000-d10-on-r3.json"
+      ]
+    },
+    {
+      "nodes": 10000,
+      "dirty": 10,
+      "metric": "installChurnHeapDeltaBytesAfterGc",
+      "unit": "MiB",
+      "limit": 1,
+      "worstObserved": 1.0352096557617188,
+      "withinProvisionalBudget": false,
+      "files": [
+        "n10000-d10-on-r1.json",
+        "n10000-d10-on-r2.json"
+      ]
+    }
+  ]
+}

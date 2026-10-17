@@ -22,6 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.desktopcontrol.fxatspi.BridgeOptions;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
+import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
@@ -42,6 +45,7 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -86,7 +90,9 @@ class SceneObserverTest {
     private static final class Harness {
         final TargetRegistry registry = new TargetRegistry();
         final List<Runnable> scheduled = new ArrayList<>();
-        final SceneObserver observer = new SceneObserver(registry, scheduled::add);
+        final SceneObserver observer;
+        Harness() { this(BridgeOptions.defaults()); }
+        Harness(BridgeOptions options) { observer = new SceneObserver(registry, scheduled::add, options); }
         final List<Set<String>> published = new ArrayList<>();
         Snapshot last = Snapshot.EMPTY;
         boolean accepting = true;
@@ -406,15 +412,15 @@ class SceneObserverTest {
             second.setText("y");
             harness.endBatch();
             var duringFailure = List.of(harness.last.get(harness.id(first)).name(), harness.last.get(harness.id(second)).name(),
-                    harness.last.get(brokenId).name(), harness.observer.projectionFailures() > 0);
+                    harness.last.get(harness.id(broken)).name(), harness.observer.projectionFailures() > 0);
             failing.armed = false; // no event: the retry rides on the next batch
             failing.text = "second";
             first.setText("c");
             harness.endBatch();
-            return List.of(duringFailure, List.of(harness.last.get(brokenId).name(), harness.scheduled.isEmpty()));
+            return List.of(duringFailure, List.of(harness.last.get(harness.id(broken)).name(), harness.scheduled.isEmpty()));
         });
-        assertEquals(List.of(List.of("b", "y", "first", true), List.of("second", true)), result,
-                "other targets publish; the failed one keeps its last record and is retried with the next batch");
+        assertEquals(List.of(List.of("b", "y", "", true), List.of("second", true)), result,
+                "other targets publish; the failed one clears its previous content and retries with the next batch");
     }
 
     @Test void aNewTargetWhoseProjectionFailsIsPublishedAsAnInertPlaceholder() throws Exception {
@@ -448,4 +454,279 @@ class SceneObserverTest {
         });
         assertEquals(List.of("b", 2), result);
     }
+    @Test void redactionCoversAllPublishedStringsAndPasswordsBypassCallbacks() throws Exception {
+        onFx(() -> {
+            var field = new TextField("SECRETMARKER");
+            field.setId("SECRETMARKER");
+            field.positionCaret(5);
+            var label = new Label("SECRETMARKER");
+            var password = new PasswordField();
+            password.setText("PASSWORDMARKER");
+            password.setAccessibleText("PASSWORDMARKER");
+            password.setId("PASSWORDMARKER");
+            var stage = show(new VBox(field, label, password));
+            stage.setTitle("SECRETMARKER");
+            var options = BridgeOptions.builder().applicationName("SECRETMARKER")
+                    .sensitiveNodes(node -> node == field)
+                    .redactor((kind, sensitive, value) -> {
+                        assertTrue(Platform.isFxApplicationThread());
+                        assertFalse(value.contains("PASSWORDMARKER"));
+                        return value.replace("SECRETMARKER", "masked\uD83E\uDDEA");
+                    }).build();
+            var harness = new Harness(options).start();
+            var projected = harness.last.get(harness.id(field));
+            assertEquals("masked\uD83E\uDDEA", projected.text());
+            assertEquals(7, projected.characterCount());
+            assertEquals(0, projected.caret());
+            assertFalse(projected.editable());
+            assertEquals(Set.of(Capability.TEXT), projected.capabilities());
+            assertFalse(harness.observer.permits(projected.id(), Capability.EDITABLE_TEXT));
+            assertFalse(harness.last.toString().contains("SECRETMARKER"));
+            assertFalse(harness.last.toString().contains("PASSWORDMARKER"));
+            assertFalse(AtSpiObjects.cacheItems(harness.last, ":1.2", "('', objectpath '/')").contains("SECRETMARKER"));
+            harness.observer.close();
+            return null;
+        });
+    }
+
+    @Test void privacyTransitionsRotateReferencesWithoutOldTextDeletionEvents() throws Exception {
+        onFx(() -> {
+            var field = new TextField("SECRETMARKER");
+            show(new VBox(field));
+            var harness = new Harness().start();
+            var before = harness.last;
+            var oldId = harness.id(field);
+            harness.observer.updateOptions(BridgeOptions.builder().sensitiveNodes(node -> node == field).build(), 1);
+            assertNull(harness.last.get(oldId));
+            assertFalse(oldId.equals(harness.id(field)));
+            var changes = SnapshotDiff.diff(before, harness.last, harness.published.getLast());
+            assertTrue(changes.stream().anyMatch(change -> change instanceof SnapshotDiff.Removed));
+            assertFalse(changes.toString().contains("SECRETMARKER"));
+            assertFalse(harness.last.toString().contains("SECRETMARKER"));
+            harness.observer.close();
+            return null;
+        });
+    }
+
+    private static void assertPrivacyReplacement(Harness harness, Snapshot before, String oldId, Object target) {
+        var replacement = harness.last.get(harness.id(target));
+        assertNull(harness.last.get(oldId));
+        assertNull(harness.registry.target(oldId));
+        assertFalse(oldId.equals(replacement.id()));
+        assertTrue(replacement.redacted());
+        assertEquals(Set.of(Capability.TEXT), replacement.capabilities());
+        assertEquals("", replacement.text());
+        assertEquals(0, replacement.caret());
+        assertFalse(replacement.editable() || replacement.actionEligible());
+        var changes = SnapshotDiff.diff(before, harness.last, harness.published.getLast());
+        assertTrue(changes.contains(new SnapshotDiff.Removed(oldId)));
+        assertTrue(changes.contains(new SnapshotDiff.Added(replacement.id())));
+        assertFalse(changes.stream().anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+        assertFalse(changes.toString().contains("SECRETMARKER"));
+        assertFalse(harness.last.toString().contains("SECRETMARKER"));
+        assertFalse(AtSpiObjects.cacheItems(harness.last, ":1.2", "('', objectpath '/')").contains("SECRETMARKER"));
+    }
+
+    @Test void truncatedTextBecomingSensitiveThroughUpdateRetiresItsReference() throws Exception {
+        onFx(() -> {
+            var field = new TextArea("SECRETMARKER" + "a".repeat(32768));
+            show(new VBox(field));
+            var harness = new Harness().start();
+            try {
+                var oldId = harness.id(field);
+                var before = harness.last;
+                var projected = before.get(oldId);
+                assertTrue(projected.redacted());
+                assertEquals(32768, projected.text().length());
+                assertTrue(projected.text().contains("SECRETMARKER"));
+                assertEquals(Set.of(Capability.TEXT), projected.capabilities());
+                harness.observer.updateOptions(BridgeOptions.builder().sensitiveNodes(node -> node == field).build(), 1);
+                assertPrivacyReplacement(harness, before, oldId, field);
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void partiallyRedactedTextBecomingSensitiveThroughObservedIdRetiresItsReference() throws Exception {
+        onFx(() -> {
+            var field = new TextArea("token SECRETMARKER");
+            field.setId("public");
+            show(new VBox(field));
+            var options = BridgeOptions.builder().sensitiveNodes(node -> "private".equals(node.getId()))
+                    .redactor((kind, sensitive, value) -> sensitive ? "" : value.replace("token", "masked")).build();
+            var harness = new Harness(options).start();
+            try {
+                var oldId = harness.id(field);
+                assertEquals("masked SECRETMARKER", harness.last.get(oldId).text());
+                assertTrue(harness.last.get(oldId).redacted());
+                // An ordinary change to already transformed text preserves the exported incarnation.
+                field.setText("token updated SECRETMARKER");
+                harness.endBatch();
+                assertEquals(oldId, harness.id(field));
+                assertEquals("masked updated SECRETMARKER", harness.last.get(oldId).text());
+                var before = harness.last;
+                field.setId("private");
+                harness.endBatch();
+                assertPrivacyReplacement(harness, before, oldId, field);
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void exclusionDisposesTargetsAndReinclusionCreatesFreshReferences() throws Exception {
+        onFx(() -> {
+            var field = new TextField("secret");
+            var subtree = new VBox(field);
+            var root = new VBox(subtree);
+            show(root);
+            var harness = new Harness().start();
+            var oldId = harness.id(field);
+            var originalSize = harness.registry.size();
+            harness.observer.updateOptions(BridgeOptions.builder().excludedNodes(node -> node == subtree).build(), 1);
+            assertNull(harness.id(subtree));
+            assertNull(harness.id(field));
+            assertEquals(originalSize - 2, harness.registry.size());
+            harness.endBatch();
+            var publications = harness.observer.publications();
+            field.setText("another secret");
+            assertTrue(harness.scheduled.isEmpty(), "excluded contents have no subscriptions");
+            assertEquals(publications, harness.observer.publications());
+            harness.observer.updateOptions(BridgeOptions.defaults(), 2);
+            assertFalse(oldId.equals(harness.id(field)));
+            assertEquals(originalSize, harness.registry.size());
+            harness.observer.close();
+            assertEquals(0, harness.registry.size());
+            return null;
+        });
+    }
+
+    @Test void redactorFailurePurgesPreviouslyPublishedContentAndEvents() throws Exception {
+        onFx(() -> {
+            var field = new TextField("SECRETMARKER");
+            show(new VBox(field));
+            var harness = new Harness().start();
+            var before = harness.last;
+            var oldId = harness.id(field);
+            harness.observer.updateOptions(BridgeOptions.builder().redactor((kind, sensitive, value) -> {
+                throw new IllegalArgumentException("SECRETMARKER");
+            }).build(), 1);
+            assertNull(harness.last.get(oldId));
+            assertFalse(harness.last.toString().contains("SECRETMARKER"));
+            assertFalse(SnapshotDiff.diff(before, harness.last, harness.published.getLast()).toString().contains("SECRETMARKER"));
+            harness.observer.close();
+            return null;
+        });
+    }
+
+    @Test void publishedPropertyChangesCanExcludeAnAlreadyObservedNode() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            show(new VBox(field));
+            var harness = new Harness(BridgeOptions.builder().excludedNodes(node -> "private".equals(node.getId())).build()).start();
+            var id = harness.id(field);
+            field.setId("private");
+            harness.endBatch();
+            assertNull(harness.last.get(id));
+            harness.observer.close();
+            return null;
+        });
+    }
+
+    @Test void renewingAWindowAlsoRenewsDescendantsSoCachedParentsCannotBecomeStale() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            var box = new VBox(field);
+            var stage = show(box);
+            stage.setTitle("private title");
+            var harness = new Harness().start();
+            var oldWindow = harness.id(stage);
+            var oldBox = harness.id(box);
+            var oldField = harness.id(field);
+            var before = harness.last;
+            harness.observer.updateOptions(BridgeOptions.builder().redactor((kind, sensitive, value) ->
+                    kind == BridgeOptions.ContentKind.WINDOW_NAME ? "safe title" : value).build(), 1);
+            assertNull(harness.last.get(oldWindow));
+            assertNull(harness.last.get(oldBox));
+            assertNull(harness.last.get(oldField));
+            assertEquals(harness.id(box), harness.last.get(harness.id(field)).ancestor());
+            assertEquals(harness.id(stage), harness.last.get(harness.id(box)).ancestor());
+            var changes = SnapshotDiff.diff(before, harness.last, harness.published.getLast());
+            assertEquals(3, changes.stream().filter(change -> change instanceof SnapshotDiff.Removed).count());
+            assertFalse(changes.toString().contains("private title"));
+            harness.observer.close();
+            return null;
+        });
+    }
+
+    @Test void aSensitiveContainerMakesDescendantsSensitiveAndRetiresTheirReferences() throws Exception {
+        onFx(() -> {
+            var field = new TextField("SECRETMARKER");
+            var form = new VBox(field);
+            form.setId("public");
+            show(new VBox(form));
+            var harness = new Harness(BridgeOptions.builder().sensitiveNodes(node -> "paymentForm".equals(node.getId())).build()).start();
+            try {
+                var oldId = harness.id(field);
+                var before = harness.last;
+                assertFalse(before.get(oldId).redacted());
+                form.setId("paymentForm");
+                harness.endBatch();
+                assertPrivacyReplacement(harness, before, oldId, field);
+                assertEquals("[redacted]", harness.last.get(harness.id(field)).name());
+                assertFalse(harness.observer.permits(harness.id(field), Capability.EDITABLE_TEXT));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void nonModalWindowsDoNotReprojectOtherWindowsButModalOnesDo() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            show(new VBox(field));
+            var harness = new Harness().start();
+            try {
+                var before = harness.observer.projections();
+                var popup = show(new VBox(new Label("tip")));
+                harness.endBatch();
+                // The application root plus the new window, its root and its label; the first window is untouched.
+                assertEquals(4, harness.observer.projections() - before);
+                popup.hide();
+                harness.endBatch();
+                assertTrue(harness.last.get(harness.id(field)).actionEligible());
+                var modal = new Stage();
+                modal.initModality(Modality.APPLICATION_MODAL);
+                modal.setScene(new Scene(new VBox(new Button("OK"))));
+                modal.show();
+                harness.endBatch();
+                assertFalse(harness.last.get(harness.id(field)).actionEligible(), "a modal window blocks the first window");
+                modal.hide();
+                harness.endBatch();
+                assertTrue(harness.last.get(harness.id(field)).actionEligible());
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void aPropertyChangeTestsOnlyTheChangedTargetsInclusion() throws Exception {
+        onFx(() -> {
+            var field = new TextField("value");
+            var root = new VBox(field);
+            for (int i = 0; i < 50; i++) root.getChildren().add(new Label("row " + i));
+            show(root);
+            var siblingTests = new int[1];
+            var harness = new Harness(BridgeOptions.builder().excludedNodes(node -> {
+                if (node instanceof Label) siblingTests[0]++;
+                return false;
+            }).build()).start();
+            try {
+                siblingTests[0] = 0;
+                field.setText("typed");
+                harness.endBatch();
+                assertEquals(0, siblingTests[0]);
+                assertEquals("typed", harness.last.get(harness.id(field)).text());
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
 }

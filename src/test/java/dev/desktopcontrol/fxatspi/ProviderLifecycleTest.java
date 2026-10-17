@@ -380,6 +380,26 @@ class ProviderLifecycleTest {
         @Override public boolean press(String id) { presses.incrementAndGet(); return true; }
         @Override public boolean setText(String id, String value) { return true; }
     }
+    @Test void admissionDefersTransientStateToTheCurrentProjection() throws Exception {
+        // The provider's snapshot still shows the button disabled, but the scene enabled it before the request.
+        var disabled = new LinkedHashMap<String, AccessibleNode>();
+        disabled.put(Snapshot.ROOT_ID, node(Snapshot.ROOT_ID, "app", "", List.of("button1"), Set.of()));
+        disabled.put("button1", new AccessibleNode("button1", "button1", Role.PUSH_BUTTON, "", false, false, true, false, true, 0,
+                Snapshot.ROOT_ID, List.of(), Set.of(Capability.ACTION)));
+        var current = new AtomicReference<>(new Snapshot(disabled));
+        var port = new CountingPort();
+        var provider = new AtSpiProvider(statuses::add, current::get, port, ffi -> address, false, Runnable::run);
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        assertFalse(provider.publishedSnapshot().get("button1").actionEligible());
+        current.set(buttons("button1")); // enabled on FX; not yet reconciled by the provider
+        var reply = output(doAction(provider, "button1"));
+        assertTrue(reply.contains("(true,)"), reply);
+        assertEquals(1, port.presses.get());
+        provider.stop();
+        awaitTermination(provider);
+    }
     @Test void saturationIsRejectedWithLimitsExceededWithoutTakingAReference() throws Exception {
         var heldTasks = new CopyOnWriteArrayList<Runnable>();
         var port = new CountingPort();
