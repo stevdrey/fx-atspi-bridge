@@ -199,6 +199,7 @@ class ScalingTest(unittest.TestCase):
             sd.export(root, dest)
             self.assertEqual(sd.records(root), sd.records(dest))
             self.assertFalse((dest/'private.log').exists())
+            self.assertFalse((dest/'scaling-n100-off-nmt-r1'/'afterIdleGc.nmt.txt').read_text().endswith('\n\n'))
             self.assertNotIn('42000000', (dest/'scaling-n100-off-plain-r1'/'afterIdleGc.smaps_rollup.txt').read_text())
 
 
