@@ -1,0 +1,28 @@
+{
+  "parent_revision": "906808dcf3c36a06c1cdffbc8b444ebcd114afe5",
+  "regressions_before_fix": {
+    "tests": 2,
+    "failures": 2
+  },
+  "focused_after_fix": {
+    "tests": 32,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "full_after_fix": {
+    "tests": 147,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "desktop_after_fix": {
+    "checks": 16,
+    "result": "passed"
+  },
+  "sha256": {
+    "src/main/java/dev/desktopcontrol/fxatspi/fx/SceneObserver.java": "29ec2e2a72a597d483023f499b1e1435af62b783a68fc5a352e403aa4397e666",
+    "src/test/java/dev/desktopcontrol/fxatspi/fx/SceneObserverTest.java": "1874790fec0b09ff1facbf6698c89412294931700289a106654bc99f7307aa9f",
+    "build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar": "c44c2af9ce0692b85161f9099470bdf802ee8da6e4690f840f8a4e9a440ea4d1"
+  }
+}

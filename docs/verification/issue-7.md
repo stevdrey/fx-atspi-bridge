@@ -19,6 +19,24 @@ Focused tests cover option defaults/copy/validation, sender set bounds and immut
 
 During development, the full suite caught an internal pull-source compatibility regression: adopting a snapshot's default limits replaced the explicit constructor limits. Snapshot settings now update only the production push path; the pull test seam retains its constructor contract. The suite also prompted correction of the modal expectation: denied actions no longer acquire an invocation. Desktop collector attribution initially selected GTK rather than the bridge, and the Cache path in the collectors was corrected to `/org/a11y/atspi/cache`; the final checks require successful responses, not merely absence of secret markers in an error.
 
+## PR #33 P1 correction: transformed text becoming sensitive
+
+The review found that `redacted` conflated sensitivity with transformation/truncation. An already transformed input could become sensitive without changing that flag or its Text-only capabilities, so its reference survived and the diff included the former text in `TextDeleted`.
+
+The observer now retains the last projected sensitivity classification separately on its FX-owned observation entry, evaluates the predicate once per projection and rotates the reference whenever that classification changes. The existing subtree renewal and provider reconciliation paths perform removal/addition; no raw value, extra callback, polling, snapshot API or native resource was added. Projection failures still produce inert replacements, and ordinary transformed-content changes retain identity.
+
+Verification on Zulu JDK 27 (27+35), JavaFX 27, Fedora/GNOME/Wayland:
+
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew test --tests '*SceneObserverTest.truncatedTextBecomingSensitiveThroughUpdateRetiresItsReference' --tests '*SceneObserverTest.partiallyRedactedTextBecomingSensitiveThroughObservedIdRetiresItsReference' --no-daemon` — **Failed as expected before the fix**: both new regressions retained the old reference.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew test --tests '*SceneObserverTest' --tests '*ConfigurationTest' --no-daemon` — **Passed after the fix**: 32 tests, no failures/errors/skips.
+- `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check generatePomFileForMavenJavaPublication --no-daemon` — **Passed after the fix**: 147 tests, no failures/errors/skips, including private-bus resource/lifecycle checks.
+- `python3 -I docs/verification/data/issue-7/configuration_smoke.py --jar <absolute corrected bridge jar> --fx-path <JavaFX 27 linux jars separated by ':'> --out docs/verification/data/issue-7/desktop-p1` — **Passed after the fix**: 16 existing independent libatspi/Gio desktop checks; JavaFX backend again attributed to XWayland. This checks the existing desktop scenarios; the two new transition regressions specifically inspect the observer's snapshots, cache records and exact event diff on a real JavaFX toolkit.
+- `git diff --check` — **Passed**.
+
+The regressions cover a default-redactor input above 32,768 UTF-16 units becoming sensitive through `updateOptions`, and partially redacted text becoming sensitive through an observed ID change. Both assert retirement of the former registry/export identity, safe replacement state, removal/addition changes, and absence of the former marker or any text deletion in the transition diff. The second also checks stable identity for an ordinary transformed-text edit.
+
+[`desktop-p1/verification.json`](data/issue-7/desktop-p1/verification.json) binds the results to tested source/test and jar SHA-256 values; raw desktop checks/events are retained beside it. The initial 145-test and desktop results above belong to the original implementation. SC-01 measurements below remain evidence for `da3210e`; performance was not remeasured for this correction, and both previously reported provisional guardrail exceedances remain unresolved. No new performance claim is made.
+
 ## Desktop observations and limits
 
 The independent Python client uses libatspi for application/window names and Gio for tree, text, mutation, Cache and event checks. Synthetic markers verify that passwords, configured secrets and the formerly public field value are absent from bridge events after a privacy transition. The client confirms read-only transformed text, replacement identities, exclusion/reinclusion and sender denial without blocking reads. No real credentials or user field values were captured.

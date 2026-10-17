@@ -6,6 +6,8 @@
 
 The script does not change desktop settings, terminate unrelated processes or claim native Wayland support. It closes only its own application. Privacy results concern this bridge; GTK's separate provider is outside BridgeOptions.
 
+`desktop-p1/` repeats the same 16 independent checks after the PR #33 privacy correction. Its `verification.json` records the two failing pre-fix regressions, 32 passing focused tests, 147 passing full-suite tests and hashes of the corrected source/test and built jar. The two new transition cases are JavaFX observer/diff regressions; the desktop collector retains its existing scenarios. Historical `desktop/` and SC-01 data remain tied to their earlier revisions.
+
 ## SC-01 quick collection
 
 `quick/` contains 44 runs from the clean checkout of `da3210e`, paired bridge off/on, with the workload and jar hashes in `environment.txt`. The final collection resumed after a user interruption; the unconfirmed result was excluded and repeated. No data from the earlier `658f1e8` collection are mixed in. No invalid-run retries were needed. Runtime package versions are in `runtime.txt`.

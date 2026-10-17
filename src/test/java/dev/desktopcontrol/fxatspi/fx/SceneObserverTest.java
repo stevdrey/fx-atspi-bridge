@@ -507,6 +507,71 @@ class SceneObserverTest {
         });
     }
 
+    private static void assertPrivacyReplacement(Harness harness, Snapshot before, String oldId, Object target) {
+        var replacement = harness.last.get(harness.id(target));
+        assertNull(harness.last.get(oldId));
+        assertNull(harness.registry.target(oldId));
+        assertFalse(oldId.equals(replacement.id()));
+        assertTrue(replacement.redacted());
+        assertEquals(Set.of(Capability.TEXT), replacement.capabilities());
+        assertEquals("", replacement.text());
+        assertEquals(0, replacement.caret());
+        assertFalse(replacement.editable() || replacement.actionEligible());
+        var changes = SnapshotDiff.diff(before, harness.last, harness.published.getLast());
+        assertTrue(changes.contains(new SnapshotDiff.Removed(oldId)));
+        assertTrue(changes.contains(new SnapshotDiff.Added(replacement.id())));
+        assertFalse(changes.stream().anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+        assertFalse(changes.toString().contains("SECRETMARKER"));
+        assertFalse(harness.last.toString().contains("SECRETMARKER"));
+        assertFalse(AtSpiObjects.cacheItems(harness.last, ":1.2", "('', objectpath '/')").contains("SECRETMARKER"));
+    }
+
+    @Test void truncatedTextBecomingSensitiveThroughUpdateRetiresItsReference() throws Exception {
+        onFx(() -> {
+            var field = new TextArea("SECRETMARKER" + "a".repeat(32768));
+            show(new VBox(field));
+            var harness = new Harness().start();
+            try {
+                var oldId = harness.id(field);
+                var before = harness.last;
+                var projected = before.get(oldId);
+                assertTrue(projected.redacted());
+                assertEquals(32768, projected.text().length());
+                assertTrue(projected.text().contains("SECRETMARKER"));
+                assertEquals(Set.of(Capability.TEXT), projected.capabilities());
+                harness.observer.updateOptions(BridgeOptions.builder().sensitiveNodes(node -> node == field).build(), 1);
+                assertPrivacyReplacement(harness, before, oldId, field);
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void partiallyRedactedTextBecomingSensitiveThroughObservedIdRetiresItsReference() throws Exception {
+        onFx(() -> {
+            var field = new TextArea("token SECRETMARKER");
+            field.setId("public");
+            show(new VBox(field));
+            var options = BridgeOptions.builder().sensitiveNodes(node -> "private".equals(node.getId()))
+                    .redactor((kind, sensitive, value) -> sensitive ? "" : value.replace("token", "masked")).build();
+            var harness = new Harness(options).start();
+            try {
+                var oldId = harness.id(field);
+                assertEquals("masked SECRETMARKER", harness.last.get(oldId).text());
+                assertTrue(harness.last.get(oldId).redacted());
+                // An ordinary change to already transformed text preserves the exported incarnation.
+                field.setText("token updated SECRETMARKER");
+                harness.endBatch();
+                assertEquals(oldId, harness.id(field));
+                assertEquals("masked updated SECRETMARKER", harness.last.get(oldId).text());
+                var before = harness.last;
+                field.setId("private");
+                harness.endBatch();
+                assertPrivacyReplacement(harness, before, oldId, field);
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
     @Test void exclusionDisposesTargetsAndReinclusionCreatesFreshReferences() throws Exception {
         onFx(() -> {
             var field = new TextField("secret");

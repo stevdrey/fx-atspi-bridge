@@ -134,6 +134,8 @@ public final class SceneObserver {
         final Object target;
         String id;
         boolean renew, failed;
+        /** Last projected classification, separate from text transformed by redaction or output bounds. */
+        boolean sensitive;
         Observed parent;
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
@@ -314,22 +316,29 @@ public final class SceneObserver {
                 if (!entry.attached) continue;
                 AccessibleNode node;
                 var failed = false;
-                try { node = project(entry); }
+                var sensitive = false;
+                try {
+                    sensitive = entry.target instanceof Node target
+                            && (target instanceof PasswordField || options.sensitiveNodes().test(target));
+                    node = project(entry, sensitive);
+                }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
                     projectionFailures++;
                     retry.add(entry);
                     failed = true;
+                    sensitive = false; // the inert replacement carries no application classification
                     node = placeholder(entry);
                 }
                 if (!entry.unsubscribed.isEmpty()) retry.add(entry); // projected, but a listener is still missing
                 var old = model.get(entry.id);
                 if (entry.target != APPLICATION && old != null && (entry.renew && (!old.name().equals(node.name()) || !old.text().equals(node.text())) || failed != entry.failed
-                        || old.redacted() != node.redacted() || !old.capabilities().equals(node.capabilities()))) {
+                        || sensitive != entry.sensitive || old.redacted() != node.redacted() || !old.capabilities().equals(node.capabilities()))) {
                     rotate(entry);
                     node = identity(node, entry);
                 }
                 entry.renew = false;
                 entry.failed = failed;
+                entry.sensitive = sensitive;
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
             }
@@ -484,7 +493,7 @@ public final class SceneObserver {
      * Reads the published projection of {@code entry}. Every observed property is read, even when it does not affect
      * the result, so that its invalidation listener fires again on the next change.
      */
-    private AccessibleNode project(Observed entry) {
+    private AccessibleNode project(Observed entry, boolean sensitive) {
         var children = childIds(entry);
         return switch (entry.target) {
             case Window window -> {
@@ -492,7 +501,7 @@ public final class SceneObserver {
                 yield new AccessibleNode(entry.id, options.redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
                         Snapshot.ROOT_ID, children, NONE);
             }
-            case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children);
+            case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children, sensitive);
             default -> new AccessibleNode(Snapshot.ROOT_ID, options.redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
@@ -504,9 +513,8 @@ public final class SceneObserver {
         return new AccessibleNode(entry.id, "", entry.target == APPLICATION ? Role.APPLICATION : Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
     }
 
-    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children) {
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive) {
         var password = node instanceof PasswordField;
-        var sensitive = password || options.sensitiveNodes().test(node);
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
         var labeled = node instanceof Labeled control ? control.getText() : null;
