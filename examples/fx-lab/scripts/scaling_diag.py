@@ -273,7 +273,7 @@ def export(source, dest):
             elif kind == 'smaps_rollup':
                 raw = '\n'.join(f'{k}: {v} kB' for k, v in md.parse_smaps_rollup(raw).items())+'\n'
             else:
-                raw = raw[raw.index('Native Memory Tracking:'):]
+                raw = raw[raw.index('Native Memory Tracking:'):].rstrip()+'\n'
             (dest/path.stem/f'{CP}.{kind}.txt').write_text(raw)
     (dest/'summary.md').write_text(summary(dest))
 
