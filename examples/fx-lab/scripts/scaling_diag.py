@@ -16,6 +16,7 @@ import statistics as st
 import xml.etree.ElementTree as ET
 
 import memory_diag as md
+import scaling_collection as sc
 
 CP = 'afterIdleGc'
 MALLOC_FIELDS = ('system', 'free', 'inUse', 'mmap', 'totalInUse', 'totalHeld')
@@ -100,7 +101,10 @@ def records(path):
         if len(values) != 1 or not values[0]:
             raise ValueError(f'environment needs exactly one {key}')
         return values[0]
-    fingerprint = setting('scaling_environment_sha256')
+    harness = sc.harness_digest(json.loads((path/'harness.txt').read_text()))
+    if harness != setting('scaling_harness_sha256'):
+        raise ValueError('harness manifest disagrees with fingerprint')
+    fingerprint = (setting('scaling_environment_sha256'), harness)
     if setting('scaling_contract') != '1 checkpoint:afterIdleGc order:alternating-on-off no-churn':
         raise ValueError('unknown scaling contract')
     profile = setting('profile')
@@ -112,6 +116,12 @@ def records(path):
     expected_keys = {('scaling', n, b, v) for n in expected_sizes for b in ('off', 'on') for v in ('plain', 'nmt')}
     if set(cells) != expected_keys:
         raise ValueError('scaling plan must have both modes and both variants at every required size')
+    expected_pairs = {f'scaling-n{n}-{v}-r{r}' for n in expected_sizes
+                      for v in ('plain', 'nmt') for r in range(1, expected_reps+1)}
+    if {p.stem for p in (path/'pairs').glob('*.json')} != expected_pairs:
+        raise ValueError('missing or unexpected completed pair receipts')
+    for key in sorted(expected_pairs):
+        sc.validate_pair(path, key)
     compact = 'scaling_artifacts=afterIdleGc-only' in lines
     if not compact:
         if md.load_artifacts(path, cells) is None:
@@ -181,7 +191,8 @@ def summary(path, before=None):
     sizes = sorted(audits)
     out = ['# Issue 22 — steady-state scaling', '',
            f'Profile: {profile}. Checkpoint: `{CP}`. Units: bytes. Values: mean ± sample SD; median (min–max).',
-           'Paired deltas are bridge on − off within size, variant and repetition. NMT and plain are separate JVMs.', '',
+           'Paired deltas are bridge on − off within size, variant and repetition. NMT and plain are separate JVMs.',
+           'Harness identity and completed chronological pair receipts are validated; see harness.txt, pairs/ and chronology-provenance.txt when present.', '',
            '## Independent counts', '', '| Buttons | Accessibles | Explicit registrations incl. Cache | Registrations/accessible excluding Cache | Backend |',
            '| ---: | ---: | ---: | ---: | --- |']
     for n, a in sorted(audits.items()):
@@ -241,12 +252,15 @@ def export(source, dest):
     source, dest = Path(source), Path(dest)
     dest.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source/'audit', dest/'audit')
+    shutil.copytree(source/'pairs', dest/'pairs')
+    shutil.copyfile(source/'harness.txt', dest/'harness.txt')
     env = (source/'environment.txt').read_text()
     if 'scaling_artifacts=afterIdleGc-only' not in env.split('\n'):
         env += '\nscaling_artifacts=afterIdleGc-only\n'
     (dest/'environment.txt').write_text(env)
-    if (source/'retries.txt').exists():
-        shutil.copyfile(source/'retries.txt', dest/'retries.txt')
+    for name in ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt'):
+        if (source/name).exists():
+            shutil.copyfile(source/name, dest/name)
     for path in source.glob('*.json'):
         shutil.copyfile(path, dest/path.name)
         (dest/path.stem).mkdir()

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import scaling_diag as sd
+import scaling_collection as sc
 from test_memory_diag import MALLOC, NMT, SMAPS
 
 # A self-consistent reduced NMT table for scaling tests, unlike the parser excerpt used by old tests.
@@ -16,7 +17,15 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
     root.mkdir(exist_ok=True)
     sizes = (100, 1000, 10000) if profile == 'scaling' else (100,)
     reps = 5 if profile == 'scaling' else 1
+    inputs = {key: 'a'*64 for key in ('installed/launcher', 'installed/fx-lab.jar', 'examples/fx-lab/build.gradle')}
+    inputs.update({'examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/'+f+'.java': 'b'*64
+                   for f in ('BenchApp', 'MemoryDiagnostics', 'Launcher', 'FxLab')})
+    inputs['examples/fx-lab/src/main/java/module-info.java'] = 'd'*64
+    manifest = {'version': 1, 'inputs': inputs}
+    (root/'harness.txt').write_text(json.dumps(manifest))
+    (root/'pairs').mkdir()
     env = ['scaling_environment_sha256='+fingerprint,
+           'scaling_harness_sha256='+sc.harness_digest(manifest),
            'scaling_contract=1 checkpoint:afterIdleGc order:alternating-on-off no-churn',
            'scaling_artifacts=afterIdleGc-only', 'profile='+profile]
     (root/'audit').mkdir()
@@ -48,6 +57,14 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
                     (artifact/'afterIdleGc.smaps_rollup.txt').write_text(SMAPS)
                     if v == 'nmt':
                         (artifact/'afterIdleGc.nmt.txt').write_text(NMT)
+    for n in sizes:
+        for rep in range(1, reps+1):
+            for v in ('plain', 'nmt'):
+                key = f'scaling-n{n}-{v}-r{rep}'
+                receipt = {'version': 1, 'provenance': 'runner', 'cells': [
+                    {'name': name, 'session': 'synthetic', 'startNs': 100+i*20, 'endNs': 110+i*20,
+                     'sha256': sc.digest(root/(name+'.json'))} for i, name in enumerate(sc.names(key))]}
+                (root/'pairs'/(key+'.json')).write_text(json.dumps(receipt))
     (root/'environment.txt').write_text('\n'.join(env)+'\n')
 
 
@@ -130,6 +147,11 @@ class ScalingTest(unittest.TestCase):
                 obj = json.loads(path.read_text())
                 obj['accessibles' if audit else 'afterIdleGcSmapsRssKb'] = 0
                 path.write_text(json.dumps(obj))
+                if not audit:
+                    receipt_path = root/'pairs'/'scaling-n100-plain-r1.json'
+                    receipt = json.loads(receipt_path.read_text())
+                    receipt['cells'][1]['sha256'] = sc.digest(path)
+                    receipt_path.write_text(json.dumps(receipt))
                 with self.assertRaises(ValueError):
                     sd.records(root)
 
@@ -142,6 +164,10 @@ class ScalingTest(unittest.TestCase):
                 run = json.loads(p.read_text())
                 run[field] = value
                 p.write_text(json.dumps(run))
+                receipt_path = root/'pairs'/'scaling-n100-plain-r1.json'
+                receipt = json.loads(receipt_path.read_text())
+                receipt['cells'][1]['sha256'] = sc.digest(p)
+                receipt_path.write_text(json.dumps(receipt))
                 with self.assertRaises(ValueError):
                     sd.records(root)
 

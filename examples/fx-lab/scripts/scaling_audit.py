@@ -3,12 +3,27 @@
 import argparse
 import collections
 import json
+import os
+import shutil
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+
+
+def preflight():
+    # Import exactly what the audit uses, before any expensive benchmark JVM is launched.
+    import gi
+    gi.require_version('Gio', '2.0')
+    from gi.repository import Gio, GLib
+    if not Gio or not GLib:
+        raise ValueError('Gio/GLib unavailable')
+    # DISPLAY means an X11 backend is possible, including XWayland in a Wayland session.
+    # A native-Wayland-only desktop does not need the X11 inspection tool.
+    if os.environ.get('DISPLAY') and shutil.which('xprop') is None:
+        raise ValueError('xprop required for X11/XWayland audit')
 
 
 def audit(bin_path, nodes):
@@ -112,17 +127,25 @@ def detect_backend(pid):
         out = subprocess.run(['xprop', '-id', window, '_NET_WM_PID'], capture_output=True, text=True,
                              timeout=5, check=True).stdout
         if re.search(r'=\s*'+str(pid)+r'\s*$', out):
-            import os
             return 'XWayland (X11 window PID matched)' if os.environ.get('XDG_SESSION_TYPE') == 'wayland' else 'X11 (window PID matched)'
     raise ValueError('JavaFX backend not established')
 
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--bin', type=Path, required=True)
-    p.add_argument('--nodes', type=int, required=True)
-    p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--preflight', action='store_true')
+    p.add_argument('--bin', type=Path)
+    p.add_argument('--nodes', type=int)
+    p.add_argument('--out', type=Path)
     args = p.parse_args()
+    if args.preflight:
+        try:
+            preflight()
+        except Exception as error:
+            p.exit(1, f'audit preflight failed: {type(error).__name__}: install Python gi/Gio/GLib and xprop when DISPLAY is set\n')
+        p.exit(0)
+    if args.bin is None or args.out is None:
+        p.error('--bin and --out required for audit')
     if args.nodes not in (100, 1000, 10000):
         p.error('nodes must be 100, 1000 or 10000')
     try:
