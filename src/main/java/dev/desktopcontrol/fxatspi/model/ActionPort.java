@@ -20,6 +20,11 @@ package dev.desktopcontrol.fxatspi.model;
  * the provider holds a lock, and return {@code false} when the action is not permitted.
  */
 public interface ActionPort {
+    /** FX-side incarnation check after synchronizing pending scene changes. */
+    default boolean isLive(String id) { return true; }
+    /** FX-side current policy and projection check; no transport or native objects cross this boundary. */
+    default boolean permits(String id, String sender, Capability capability) { return true; }
+
     /** Activates a button-like target. */
     boolean press(String id);
 

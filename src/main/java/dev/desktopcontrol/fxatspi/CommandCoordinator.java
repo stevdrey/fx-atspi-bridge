@@ -45,25 +45,24 @@ final class CommandCoordinator {
         private final long id;
         private final String target;
         private final Mutation operation;
-        private final long queueDeadline;
+        private final long queueDeadline, runningNanos;
         private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.QUEUED);
         private volatile long startedAt;
         private boolean answered; // provider thread only
-        private Command(long id, String target, Mutation operation, long queueDeadline) {
-            this.id = id; this.target = target; this.operation = operation; this.queueDeadline = queueDeadline;
+        private Command(long id, String target, Mutation operation, long queueDeadline, long runningNanos) {
+            this.id = id; this.target = target; this.operation = operation; this.queueDeadline = queueDeadline; this.runningNanos = runningNanos;
         }
         long id() { return id; }
         Phase phase() { return phase.get(); }
     }
     private record Completion(long id, boolean accepted, Throwable failure) {}
 
-    private final int maxOutstanding, maxNested;
-    private final long queueNanos, runningNanos;
+    private volatile ActionLimits limits;
     private final LongSupplier clock;
     /** Admitted commands whose completion slot is still reserved. Provider thread only. */
     private final Map<Long, Command> outstanding = new LinkedHashMap<>();
     private volatile int outstandingSize;
-    /** Sized to {@code maxOutstanding}: each outstanding command posts at most one completion, so offer never fails while open. */
+    /** Hard maximum of 256: each outstanding command reserves one completion slot, including across limit reductions. */
     private final ArrayBlockingQueue<Completion> completions;
     private long nextId; // provider thread only
     private volatile boolean closed;
@@ -71,11 +70,12 @@ final class CommandCoordinator {
     private final AtomicLong lateCompletions = new AtomicLong(), droppedCompletions = new AtomicLong();
 
     CommandCoordinator(ActionLimits limits, LongSupplier clock) {
-        maxOutstanding = limits.maxOutstanding(); maxNested = limits.maxNested();
-        queueNanos = limits.queueTimeout().toNanos(); runningNanos = limits.runningReplyTimeout().toNanos();
+        this.limits = limits;
         this.clock = clock;
-        completions = new ArrayBlockingQueue<>(maxOutstanding);
+        completions = new ArrayBlockingQueue<>(256);
     }
+
+    void updateLimits(ActionLimits value) { limits = value; }
 
     int outstandingCount() { return outstandingSize; }
     /** Completions that arrived after their request had already been answered with a running timeout. */
@@ -91,7 +91,8 @@ final class CommandCoordinator {
      */
     Command admit(String target, Mutation operation) {
         if (closed) throw Rejected.STOPPED;
-        if (outstanding.size() >= maxOutstanding) throw Rejected.CAPACITY;
+        var current = limits;
+        if (outstanding.size() >= current.maxOutstanding()) throw Rejected.CAPACITY;
         var running = 0;
         for (var command : outstanding.values()) {
             var phase = command.phase.get();
@@ -99,8 +100,8 @@ final class CommandCoordinator {
             if (started) running++;
             if ((started || phase == Phase.QUEUED) && command.target.equals(target)) throw Rejected.CONFLICT;
         }
-        if (running >= maxNested) throw Rejected.NESTING;
-        var command = new Command(++nextId, target, operation, clock.getAsLong() + queueNanos);
+        if (running >= current.maxNested()) throw Rejected.NESTING;
+        var command = new Command(++nextId, target, operation, clock.getAsLong() + current.queueTimeout().toNanos(), current.runningReplyTimeout().toNanos());
         outstanding.put(command.id, command);
         outstandingSize = outstanding.size();
         return command;
@@ -120,7 +121,7 @@ final class CommandCoordinator {
         }
         // Admission counted running commands, but one queued before another started can reach a deeper nested loop.
         // (A second command for a running target is never admitted, so only the depth needs checking here.)
-        if (depth >= maxNested) {
+        if (depth >= limits.maxNested()) {
             if (command.phase.compareAndSet(Phase.QUEUED, Phase.CANCELLED)) post(new Completion(command.id, false, Rejected.NESTING));
             return;
         }
@@ -184,7 +185,7 @@ final class CommandCoordinator {
                         answer(command, Rejected.EXPIRED, replies);
                     }
                 }
-                case RUNNING -> { if (now - command.startedAt >= runningNanos) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
+                case RUNNING -> { if (now - command.startedAt >= command.runningNanos) answer(command, Rejected.STILL_RUNNING, replies); } // answers once
                 default -> { /* A completion is posted or about to be; drain answers it. */ }
             }
         }

@@ -15,7 +15,12 @@
  */
 package dev.desktopcontrol.fxatspi.fx;
 
+import dev.desktopcontrol.fxatspi.BridgeOptions;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
+import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Snapshot;
+import java.util.function.BiPredicate;
+import java.util.function.Supplier;
 import java.util.List;
 import javafx.scene.Node;
 import javafx.scene.control.ButtonBase;
@@ -35,11 +40,32 @@ import javafx.stage.Window;
 public final class ActionExecutor implements ActionPort {
     private final TargetRegistry registry;
 
-    public ActionExecutor(TargetRegistry registry) { this.registry = registry; }
+    private final Supplier<BridgeOptions> options;
+    private final BiPredicate<String, Capability> projection;
+    public ActionExecutor(TargetRegistry registry) { this(registry, BridgeOptions::defaults, (id, capability) -> true); }
+    public ActionExecutor(TargetRegistry registry, Supplier<BridgeOptions> options, BiPredicate<String, Capability> projection) {
+        this.registry = registry; this.options = options; this.projection = projection;
+    }
+    @Override public boolean isLive(String id) { return registry.target(id) != null; }
+    @Override public boolean permits(String id, String sender, Capability capability) {
+        try { return Snapshot.permitsSender(options.get().actionSenders(), sender) && projection.test(id, capability); }
+        catch (RuntimeException failure) { return false; }
+    }
+    private boolean policy(Node node, Capability capability) {
+        try {
+            var current = options.get();
+            var scene = node.getScene();
+            if (scene == null || !current.includedWindows().test(scene.getWindow())) return false;
+            // Exclusion and sensitivity both cover the whole subtree below a matching node.
+            for (var ancestor = node; ancestor != null; ancestor = ancestor.getParent())
+                if (current.excludedNodes().test(ancestor) || current.sensitiveNodes().test(ancestor)) return false;
+            return capability == Capability.ACTION ? current.pressAllowed().test(node) : current.textWriteAllowed().test(node);
+        } catch (RuntimeException failure) { return false; }
+    }
 
     /** Fires an enabled button-like target. */
     @Override public boolean press(String id) {
-        if (!(registry.target(id) instanceof ButtonBase button) || !eligible(button)) return false;
+        if (!(registry.target(id) instanceof ButtonBase button) || !eligible(button) || !policy(button, Capability.ACTION)) return false;
         button.fire();
         return true;
     }
@@ -47,7 +73,7 @@ public final class ActionExecutor implements ActionPort {
     /** Replaces the text of an editable, enabled, non-password text input. */
     @Override public boolean setText(String id, String value) {
         if (!(registry.target(id) instanceof TextInputControl text) || text instanceof PasswordField) return false;
-        if (!text.isEditable() || !eligible(text)) return false;
+        if (!text.isEditable() || !eligible(text) || !policy(text, Capability.EDITABLE_TEXT)) return false;
         text.setText(value);
         return true;
     }

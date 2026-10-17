@@ -1,0 +1,9 @@
+{
+  "confirmedRuns": 44,
+  "bridgeOnRuns": 22,
+  "allBridgeProvidersAliveAtEnd": true,
+  "installChurnProviderErrors": 0,
+  "maxProviderThreadsAfterDrain": 1,
+  "structuralCycles": 1320,
+  "installCloseCycles": 800
+}

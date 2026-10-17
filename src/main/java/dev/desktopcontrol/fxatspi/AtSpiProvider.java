@@ -79,6 +79,24 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
  */
 final class AtSpiProvider {
     private final Consumer<String> status;
+    private record Update(long revision, CompletableFuture<Void> completion) {}
+    private final AtomicReference<Update> update = new AtomicReference<>();
+
+    CompletionStage<Void> prepareUpdate(long revision) {
+        if (!running || disposed) throw new IllegalStateException("Provider stopped");
+        var next = new Update(revision, new CompletableFuture<>());
+        var previous = update.get();
+        if (previous != null && !previous.completion().isDone()) throw new IllegalStateException("Configuration update busy");
+        if (!update.compareAndSet(previous, next)) throw new IllegalStateException("Configuration update busy");
+        if (!running || disposed) next.completion().completeExceptionally(new IllegalStateException("Provider stopped"));
+        return next.completion().minimalCompletionStage();
+    }
+    private void acknowledgeUpdate(long revision) {
+        var pendingUpdate = update.get();
+        if (pendingUpdate != null && pendingUpdate.revision() <= revision && update.compareAndSet(pendingUpdate, null))
+            pendingUpdate.completion().complete(null);
+    }
+
     private final ActionPort actions;
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(Snapshot.EMPTY);
     /**
@@ -250,8 +268,10 @@ final class AtSpiProvider {
                 vtable.set(ADDRESS, 8, stub("property", ADDRESS, 7));
                 vtable.set(ADDRESS, 16, stub("setProperty", JAVA_INT, 8));
                 adoptInitialGeneration();
+                if (scene == null) commands.updateLimits(snapshot.get().limits());
                 for (String id : snapshot.get().nodes().keySet()) export(id);
                 export(CACHE_ID);
+                if (running) acknowledgeUpdate(snapshot.get().policyRevision());
                 if (embed) embedWithRegistry();
                 state.compareAndSet(State.STARTING, State.RUNNING);
                 var loopContext = context;
@@ -315,7 +335,9 @@ final class AtSpiProvider {
     /** Drops retained accessible-tree state (it can contain field text) before announcing termination. */
     private void complete() {
         synchronized (publication) { disposed = true; snapshot.set(Snapshot.EMPTY); desired.set(null); }
+        var pendingUpdate = update.getAndSet(null);
         terminated.complete(null);
+        if (pendingUpdate != null) pendingUpdate.completion().completeExceptionally(new IllegalStateException("Provider stopped"));
     }
     private boolean busClosed() {
         return ffi.isClosed(connection);
@@ -469,6 +491,7 @@ final class AtSpiProvider {
         var before = snapshot.get();
         var after = next.snapshot();
         snapshot.set(after);
+        if (scene == null) commands.updateLimits(after.limits());
         Collection<String> ids = next.touched();
         if (ids == null) {
             var all = new LinkedHashSet<>(after.nodes().keySet());
@@ -491,6 +514,7 @@ final class AtSpiProvider {
                 case Removed(var id) -> { signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
             }
         }
+        if (running) acknowledgeUpdate(after.policyRevision());
     }
     private void childEvent(String id,String type,int index,String child) {
         event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
@@ -564,14 +588,14 @@ final class AtSpiProvider {
             if (api.endsWith("Action") && name.equals("DoAction")) {
                 if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
                 requireCapability(item, Capability.ACTION);
-                mutate(invocation, id, () -> actions.press(id));
+                mutate(invocation, id, Ffm.string(sender), item, Capability.ACTION, () -> actions.press(id));
                 return;
             }
             if (api.endsWith("EditableText") && name.equals("SetTextContents")) {
                 String value = ffi.text(args, 0);
                 if (value.length() > 32768) throw new Rejected("Text exceeds experimental limit");
                 requireCapability(item, Capability.EDITABLE_TEXT);
-                mutate(invocation, id, () -> actions.setText(id, value));
+                mutate(invocation, id, Ffm.string(sender), item, Capability.EDITABLE_TEXT, () -> actions.setText(id, value));
                 return;
             }
             String result = switch (name) {
@@ -601,16 +625,29 @@ final class AtSpiProvider {
     }
     /** Rejects a target that the published snapshot does not know or that does not offer {@code capability}. */
     private static void requireCapability(AccessibleNode item, Capability capability) {
-        if (item == null || !item.has(capability)) throw Rejected.STALE;
+        if (item == null) throw Rejected.STALE;
+        if (!item.has(capability)) throw Rejected.DENIED;
     }
     /**
      * Provider thread. Admission throws {@link Rejected} before any reference is taken; the caller answers it. Once
      * admitted, the invocation is retained under its action id until exactly one answer releases it.
      */
-    private void mutate(MemorySegment invocation, String target, CommandCoordinator.Mutation operation) {
+    private void mutate(MemorySegment invocation, String target, String sender, AccessibleNode item,
+                        Capability capability, CommandCoordinator.Mutation operation) {
         if (!running) throw Rejected.STOPPED;
+        // Only stable policy is checked here: the published snapshot can lag FX, so enabled, showing, modal and
+        // editable state are decided on FX after refresh(), where the projection is current.
+        if (!snapshot.get().permitsSender(sender) || !item.offers(capability)) throw Rejected.DENIED;
         // The FX task touches no native object: it revalidates, runs the action and posts a completion.
-        var command = commands.admit(target, () -> { refresh(); var accepted = operation.apply(); refresh(); return accepted; });
+        var command = commands.admit(target, () -> {
+            refresh();
+            if (!actions.isLive(target)) throw Rejected.STALE;
+            if (!actions.permits(target, sender, capability)) throw Rejected.DENIED;
+            try {
+                if (!operation.apply()) throw Rejected.DENIED;
+                return true;
+            } finally { refresh(); }
+        });
         ffi.ref(invocation);
         pendingAcquired.incrementAndGet();
         pending.put(command.id(), invocation);

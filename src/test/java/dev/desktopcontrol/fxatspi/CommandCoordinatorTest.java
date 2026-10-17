@@ -496,4 +496,51 @@ class CommandCoordinatorTest {
         coordinator.drain(this::answer);
         assertNull(answers.get(1L));
     }
+    @Test void changingLimitsKeepsExistingDeadlinesAndDoesNotCancelWork() {
+        var coordinator = coordinator(4, 2);
+        var first = coordinator.admit("a", () -> true);
+        var second = coordinator.admit("b", () -> true);
+        coordinator.updateLimits(new ActionLimits(1, 1, Duration.ofMillis(10), Duration.ofMillis(10)));
+        assertSame(Rejected.CAPACITY, assertThrows(Rejected.class, () -> coordinator.admit("c", () -> true)));
+        now.addAndGet(20 * MS);
+        coordinator.expire(this::answer);
+        assertTrue(answers.isEmpty(), "existing queue deadlines are unchanged");
+        coordinator.run(first);
+        coordinator.run(second);
+        coordinator.drain(this::answer);
+        assertEquals(2, answers.size());
+        assertTrue(answers.values().stream().allMatch(Answer::accepted));
+        var third = coordinator.admit("c", () -> true);
+        now.addAndGet(10 * MS);
+        coordinator.expire(this::answer);
+        assertSame(Rejected.EXPIRED, answers.get(third.id()).failure());
+    }
+    @Test void changingLimitsDoesNotShortenAnAdmittedRunningTimeout() {
+        var coordinator = coordinator(4, 2);
+        var command = coordinator.admit("a", () -> {
+            coordinator.updateLimits(new ActionLimits(1, 1, Duration.ofMillis(10), Duration.ofMillis(10)));
+            now.addAndGet(20 * MS);
+            coordinator.expire(this::answer);
+            assertTrue(answers.isEmpty());
+            now.addAndGet(480 * MS);
+            coordinator.expire(this::answer);
+            return true;
+        });
+        coordinator.run(command);
+        assertSame(Rejected.STILL_RUNNING, answers.get(command.id()).failure());
+        coordinator.drain(this::answer);
+        assertEquals(1, coordinator.lateCompletions());
+    }
+    @Test void increasedCapacityStillReservesEveryCompletionWhenLimitsAreReducedAgain() {
+        var coordinator = coordinator(1, 2);
+        coordinator.updateLimits(new ActionLimits(256, 2, Duration.ofSeconds(2), Duration.ofSeconds(2)));
+        var commands = new ArrayList<CommandCoordinator.Command>();
+        for (int i = 0; i < 256; i++) commands.add(coordinator.admit("n" + i, () -> true));
+        coordinator.updateLimits(new ActionLimits(1, 1, Duration.ofSeconds(2), Duration.ofSeconds(2)));
+        commands.forEach(coordinator::run);
+        coordinator.drain(this::answer);
+        assertEquals(256, answers.size());
+        assertEquals(0, coordinator.droppedCompletions());
+    }
+
 }

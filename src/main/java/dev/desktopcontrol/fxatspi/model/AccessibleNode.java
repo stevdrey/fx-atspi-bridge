@@ -26,7 +26,15 @@ import java.util.Set;
  */
 public record AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                              boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
-                             List<String> children, Set<Capability> capabilities) {
+                             List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted) {
+    /** Compatibility constructor for internal producers without a separate modal/policy projection. */
+    public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
+                          boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
+                          List<String> children, Set<Capability> capabilities) {
+        this(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
+                capabilities, enabled && showing, false);
+    }
+
     public AccessibleNode {
         // JavaFX returns null for untitled stages and may carry NUL in titles or text; reconcile and Ffm.quote reject both.
         name = publishable(name);
@@ -35,11 +43,31 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
         capabilities = Set.copyOf(capabilities); // no copy when the caller already passes an immutable set
     }
 
-    /** NUL becomes U+FFFD one-for-one so code-point offsets still match the JavaFX text. */
-    public static String publishable(String value) { return Objects.requireNonNullElse(value, "").replace('\0', '\uFFFD'); }
+    /** Longest published string, in UTF-16 units. */
+    public static final int MAX_LENGTH = 32768;
+
+    /**
+     * Bounds every published string, including callback results, to {@link #MAX_LENGTH} UTF-16 units without
+     * splitting a surrogate pair. NUL becomes U+FFFD one-for-one so code-point offsets still match the JavaFX text.
+     */
+    public static String publishable(String value) {
+        value = Objects.requireNonNullElse(value, "");
+        var end = Math.min(value.length(), MAX_LENGTH);
+        if (end < value.length() && end > 0 && Character.isHighSurrogate(value.charAt(end - 1))
+                && Character.isLowSurrogate(value.charAt(end))) end--;
+        return value.substring(0, end).replace('\0', '\uFFFD');
+    }
 
     /** Code points in {@code text}, the unit AT-SPI uses for offsets. */
     public int characterCount() { return text.codePointCount(0, text.length()); }
 
     public boolean has(Capability capability) { return capabilities.contains(capability); }
+
+    /** Stable policy: the interface is offered and the content is not redacted. Checked at admission. */
+    public boolean offers(Capability capability) { return has(capability) && !redacted; }
+
+    /** Current state as well: eligible for input and, for text, editable. Checked on FX right before the effect. */
+    public boolean permits(Capability capability) {
+        return offers(capability) && actionEligible && (capability != Capability.EDITABLE_TEXT || editable);
+    }
 }
