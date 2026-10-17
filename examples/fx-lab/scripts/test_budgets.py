@@ -74,6 +74,21 @@ class BudgetsTest(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("| Latency p99, 1 / 10 / 100 dirty (ms) | n/a / 50 / n/a |", out.stdout)
 
+    def test_dispatch_profile_has_no_churn_and_keeps_current_validity_guards(self):
+        runs = self.runs([20.0, 20.0], 0)
+        for bridge in runs:
+            runs[bridge] = [{k: v for k, v in run.items() if not k.startswith(("structural", "installChurn"))}
+                            for run in runs[bridge]]
+        plan = self.ENV.replace("profile=quick", "profile=dispatch").replace("installChurn:100", "installChurn:0").replace("100:2:10:10", "100:2:10:0")
+        out = self.collect(runs, plan=plan)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("Focused SC-06", out.stdout)
+        self.assertNotIn("### Budgets", out.stdout)
+        runs["on"][1]["latencyMaxMs"] = 1001
+        out = self.collect(runs, plan=plan)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("invalid runs", out.stderr + out.stdout)
+
     def test_budget_header_follows_the_recorded_sizes(self):
         out = self.collect(self.runs([20.0, 20.0], 0))
         self.assertIn("| Metric | 100 nodes |\n| --- | --- |", out.stdout)

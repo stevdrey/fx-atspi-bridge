@@ -176,9 +176,9 @@ def expect_workload(f, r, n, d, bridge):
     structural = PLAN[n][2]
     want = {"warmup": WORKLOAD["warmup"], "samples": WORKLOAD["samples"],
             "idleSeconds": WORKLOAD["idle"] if d == 10 else 0}
-    if d == 10:
+    if d == 10 and structural > 0:
         want["structuralCycles"] = structural
-    if d == 10 and bridge == "on":
+    if d == 10 and bridge == "on" and WORKLOAD["installChurn"] > 0:
         want["installChurnCycles"] = WORKLOAD["installChurn"]
     got = {k: r.get(k) for k in want}
     extra = [k for k in ("structuralCycles",) if k in r and k not in want]
@@ -231,6 +231,9 @@ def main():
         for b in ("off", "on"):
             rs = load(n, 10, b)
             print(f"| {n:,} | {b} | {len(rs)} | {rng(rs, 'idleCpuPercent')} | {med(rs, 'idleVoluntarySwitchesPerSecond'):.0f} | {med(rs, 'heapAfterIdleGcBytes') / 2**20:.1f} | {med(rs, 'rssAfterIdleKb') / 1024:.0f} |")
+    if environment_value("profile") == "dispatch":
+        print("\nFocused SC-06 collection: no structural/install churn or replacement SC-01 budgets.\n")
+        return
     print("\n### Structural churn (create/remove + scene-swap cycles, see cycles column; checkpoint 2 s after the loop, before GC)\n")
     print("| Nodes | Bridge | Runs | Cycles | RSS delta MB (checkpoint) | RSS delta MB (after GC) | Heap delta MB (after GC) | Thread delta |\n| ---: | --- | ---: | ---: | --- | --- | --- | --- |")
     for n in SIZES:
