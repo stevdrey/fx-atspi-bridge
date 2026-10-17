@@ -38,6 +38,17 @@ On the provider owner, reconcile generations and drain completion commands, then
 
 Sources: [GLib iteration](https://docs.gtk.org/glib/method.MainContext.iteration.html), [wakeup](https://docs.gtk.org/glib/method.MainContext.wakeup.html), [invoke](https://docs.gtk.org/glib/method.MainContext.invoke.html).
 
+Implemented in [issue 6](../specs/issue-6.md): a notification sequence is captured before draining Java work and
+bounded native dispatch (64 nonblocking iterations), then rechecked immediately before a blocking iteration.
+Every publication and FX command start/completion signals the context after publishing its data; stop does the
+same after closing admission. A small wakeup gate serializes only the nonblocking native wake with detachment,
+which precedes context/arena destruction. No shared lock crosses GLib dispatch or application callbacks.
+The coordinator scans its bounded set of admitted actions for the nearest unanswered deadline; at most one
+provider-owned one-shot timeout source is attached, and none remains without a deadline. RUNNING is notified
+before the application handler, so a short running timeout works even with a long queue timeout and a blocked
+handler. Bus closure is observed through a connected GObject signal; teardown disconnects it before connection
+release. Pending Embed cancellation drains through blocking dispatch with a one-second one-shot bound.
+
 ## Action and modal behavior
 
 1. Provider validates method, sender policy, payload size, ID/generation and available capacity; retains invocation once.

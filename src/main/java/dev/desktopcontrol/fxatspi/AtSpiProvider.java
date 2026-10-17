@@ -46,6 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -53,7 +54,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -117,6 +117,13 @@ final class AtSpiProvider {
      */
     private final Map<Long, MemorySegment> pending = new ConcurrentHashMap<>();
     private final CommandCoordinator commands;
+    private final ProviderWakeup wakeup = new ProviderWakeup();
+    private volatile boolean busLost;
+    private long closedHandler;
+    private MemorySegment deadlineSource = Ffm.NIL;
+    private long armedDeadline;
+    private volatile boolean deadlineArmed;
+    private final AtomicLong deadlineSourcesAcquired = new AtomicLong(), deadlineSourcesReleased = new AtomicLong();
     private record Export(List<Integer> registrations, MemorySegment info) {}
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
@@ -171,7 +178,7 @@ final class AtSpiProvider {
     }
     private AtSpiProvider(Consumer<String> status, Supplier<Snapshot> scene, Runnable synchronize, ActionPort actions, BusAddress bus,
                           boolean embed, Executor fxExecutor, ActionLimits limits) {
-        this.commands = new CommandCoordinator(limits, System::nanoTime);
+        this.commands = new CommandCoordinator(limits, System::nanoTime, wakeup::signal);
         this.fxExecutor = fxExecutor;
         this.status = status; this.scene = scene; this.actions = actions; this.embed = embed;
         this.synchronize = synchronize != null ? synchronize : this::pull;
@@ -203,8 +210,9 @@ final class AtSpiProvider {
                 else { merged = new LinkedHashSet<>(queued.touched()); merged.addAll(touched); }
             }
             desired.set(new Pending(built, merged));
-            return true;
         }
+        wakeup.signal(); // publish before waking; the gate serializes this with native teardown
+        return true;
     }
     State state() { return state.get(); }
     /** Read-only view; completes after native cleanup, normally or not, and never exceptionally. */
@@ -226,12 +234,15 @@ final class AtSpiProvider {
     long exportsAcquired() { return exportsAcquired.get(); }
     long exportsReleased() { return exportsReleased.get(); }
     long reconciledChanges() { return reconciledChanges.get(); }
+    boolean deadlineArmed() { return deadlineArmed; }
+    long deadlineSourcesAcquired() { return deadlineSourcesAcquired.get(); }
+    long deadlineSourcesReleased() { return deadlineSourcesReleased.get(); }
     /** Starts the provider thread once; later calls and calls after stop are ignored. */
     void start() {
         if (!state.compareAndSet(State.NEW, State.STARTING)) return;
         new Thread(this::serve, "fx-atspi-provider").start();
     }
-    /** Nonblocking and idempotent. Never touches GLib: the provider thread performs all native cleanup. */
+    /** Nonblocking and idempotent. Wakes GLib; the provider thread performs all native cleanup. */
     void stop() {
         halt();
         if (state.compareAndSet(State.NEW, State.CLOSED)) { complete(); return; }
@@ -241,7 +252,7 @@ final class AtSpiProvider {
      * Stops accepting work: new requests are rejected and queued FX tasks no longer start (teardown answers them).
      * Every way the provider stops goes through here before anything else happens. Any thread.
      */
-    private void halt() { running = false; commands.close(); }
+    private void halt() { running = false; commands.close(); wakeup.signal(); }
     private MemorySegment stub(String method, MemoryLayout result, int count) throws ReflectiveOperationException {
         var parameters = new Class<?>[count]; Arrays.fill(parameters, MemorySegment.class);
         var layouts = new MemoryLayout[count]; Arrays.fill(layouts, ADDRESS);
@@ -257,10 +268,17 @@ final class AtSpiProvider {
             var pushed = false;
             try {
                 context = ffi.mainContextNew();
+                var wakeContext = context;
+                wakeup.attach(() -> nativeApi.wakeup(wakeContext));
                 ffi.pushThreadDefault(context);
                 pushed = true;
                 busAddress = bus.resolve(ffi);
                 connection = ffi.connectionForAddress(busAddress);
+                var closedCallback = MethodHandles.lookup().findVirtual(getClass(), "connectionClosed",
+                        MethodType.methodType(void.class, MemorySegment.class, int.class, MemorySegment.class, MemorySegment.class)).bindTo(this);
+                var closedStub = Linker.nativeLinker().upcallStub(closedCallback,
+                        FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS, ADDRESS), ffi.arena);
+                closedHandler = ffi.connectClosed(connection, closedStub);
                 busName = ffi.uniqueName(connection);
                 // GDBusInterfaceVTable: 3 function pointers + 8 reserved pointers (Linux x86_64).
                 vtable = ffi.arena.allocate(88, 8);
@@ -277,12 +295,18 @@ final class AtSpiProvider {
                 var loopContext = context;
                 BooleanSupplier dispatch = () -> ffi.iterate(loopContext);
                 while (running) {
-                    if (busClosed()) { halt(); failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
+                    var observed = wakeup.sequence(); // before any drain/dispatch can consume a native wake
+                    if (busLost || busClosed()) { halt(); failure = new IllegalStateException("Bus connection lost"); report("Error AT-SPI2: bus connection lost", true); break; }
                     commands.drain(this::answer);
                     commands.expire(this::answer);
                     reconcile();
                     // Bounded so continuous bus traffic cannot starve completion, expiry and reconcile work.
-                    if (!dispatchBatch(dispatch)) Thread.sleep(5);
+                    if (dispatchBatch(dispatch)) continue;
+                    armDeadline(context, commands.nextDeadline());
+                    if (!running || busLost || desired.get() != null || commands.queuedCompletions() != 0
+                            || observed != wakeup.sequence()) continue;
+                    // No lock held. Work arriving after the recheck wakes this iteration, even before it begins.
+                    ffi.iterate(context, true);
                 }
             } finally {
                 teardown(context, pushed);
@@ -342,6 +366,30 @@ final class AtSpiProvider {
     private boolean busClosed() {
         return ffi.isClosed(connection);
     }
+    /** GObject upcall; never reads the peer GError or destroys native resources. */
+    private void connectionClosed(MemorySegment bus, int vanished, MemorySegment error, MemorySegment data) {
+        try { busLost = true; wakeup.signal(); }
+        catch (Throwable failure) { System.err.println("AT-SPI connection callback failed: " + code(failure)); }
+    }
+    /** Provider only; retain one source, and never a periodic timer. */
+    private void armDeadline(MemorySegment context, OptionalLong next) {
+        if (next.isEmpty()) { clearDeadline(); return; }
+        var deadline = next.getAsLong();
+        if (deadlineSource.address() != 0 && armedDeadline == deadline && !ffi.sourceDestroyed(deadlineSource)) return;
+        clearDeadline();
+        deadlineSource = ffi.timeoutSource(context, deadline - System.nanoTime());
+        deadlineSourcesAcquired.incrementAndGet();
+        armedDeadline = deadline;
+        deadlineArmed = true;
+    }
+    private void clearDeadline() {
+        var previous = deadlineSource;
+        deadlineSource = Ffm.NIL;
+        deadlineArmed = false;
+        if (previous.address() == 0) return;
+        try { ffi.destroySource(previous); }
+        finally { deadlineSourcesReleased.incrementAndGet(); ffi.unrefSource(previous); }
+    }
     /**
      * The Embed completion is delivered through the main context, so cancel it and iterate the context briefly so the
      * callback runs before the context is released. If GLib never delivers it, teardown continues: the callback is
@@ -351,9 +399,12 @@ final class AtSpiProvider {
         if (!embedOutstanding) return;
         guarded(() -> ffi.cancel(embedCancellable));
         var deadline = System.nanoTime() + EMBED_DRAIN_NANOS;
-        while (embedOutstanding && System.nanoTime() < deadline) {
-            guarded(() -> ffi.iterate(context));
-            if (embedOutstanding) LockSupport.parkNanos(5_000_000L);
+        var timeout = ffi.timeoutSource(context, EMBED_DRAIN_NANOS);
+        try {
+            while (embedOutstanding && System.nanoTime() - deadline < 0) ffi.iterate(context, true);
+        } finally {
+            try { ffi.destroySource(timeout); }
+            finally { ffi.unrefSource(timeout); }
         }
     }
     /**
@@ -372,7 +423,9 @@ final class AtSpiProvider {
     /** Runs on the provider thread; every step is independent so one failure cannot skip the rest. */
     private void teardown(MemorySegment context, boolean pushed) {
         halt(); registered = false; // from here on mutate() rejects new work and queued actions never start
-        drainEmbed(context);
+        wakeup.detach(); // waits for in-flight wake calls, before any native lifetime ends
+        guarded(this::clearDeadline);
+        guarded(() -> drainEmbed(context));
         EMBED_TARGETS.remove(embedId);
         if (embedCancellable.address() != 0) { var cancellable = embedCancellable; embedCancellable = Ffm.NIL; guarded(() -> ffi.unref(cancellable)); }
         guarded(() -> commands.cancelAll(this::answer)); // drains finished actions first, after closing
@@ -384,6 +437,7 @@ final class AtSpiProvider {
         for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
         if (connection.address() != 0) {
             var closing = connection;
+            if (closedHandler != 0) { var handler = closedHandler; closedHandler = 0; guarded(() -> ffi.disconnectSignal(closing, handler)); }
             guarded(() -> flushReplies(closing)); // close would otherwise discard the replies just queued above
             guarded(() -> {
                 try { ffi.closeConnection(closing); }

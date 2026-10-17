@@ -18,6 +18,7 @@ package dev.desktopcontrol.fxatspi;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -59,6 +60,7 @@ final class CommandCoordinator {
 
     private volatile ActionLimits limits;
     private final LongSupplier clock;
+    private final Runnable notifyProvider;
     /** Admitted commands whose completion slot is still reserved. Provider thread only. */
     private final Map<Long, Command> outstanding = new LinkedHashMap<>();
     private volatile int outstandingSize;
@@ -70,8 +72,12 @@ final class CommandCoordinator {
     private final AtomicLong lateCompletions = new AtomicLong(), droppedCompletions = new AtomicLong();
 
     CommandCoordinator(ActionLimits limits, LongSupplier clock) {
+        this(limits, clock, () -> {});
+    }
+    CommandCoordinator(ActionLimits limits, LongSupplier clock, Runnable notifyProvider) {
         this.limits = limits;
         this.clock = clock;
+        this.notifyProvider = notifyProvider;
         completions = new ArrayBlockingQueue<>(256);
     }
 
@@ -136,6 +142,7 @@ final class CommandCoordinator {
         }
         command.startedAt = started; // published by the transition below to the provider's running-timeout check
         if (!command.phase.compareAndSet(Phase.STARTING, Phase.RUNNING)) return;
+        notifyProvider.run(); // publish the running deadline before application code can block (including showAndWait)
         depth++;
         var accepted = false;
         Throwable failure = null;
@@ -153,7 +160,29 @@ final class CommandCoordinator {
      */
     private void post(Completion completion) {
         if (!completions.offer(completion)) droppedCompletions.incrementAndGet();
-        else if (closed && completions.remove(completion)) droppedCompletions.incrementAndGet();
+        else {
+            if (closed && completions.remove(completion)) droppedCompletions.incrementAndGet();
+            notifyProvider.run(); // the gate safely ignores native wakes after teardown
+        }
+    }
+
+    /** Provider only. Compare differences from now so System.nanoTime wraparound does not change ordering. */
+    OptionalLong nextDeadline() {
+        var now = clock.getAsLong();
+        var found = false;
+        long nearest = 0;
+        for (var command : outstanding.values()) {
+            if (command.answered) continue;
+            var phase = command.phase.get();
+            long deadline;
+            switch (phase) {
+                case QUEUED, STARTING -> deadline = command.queueDeadline;
+                case RUNNING -> deadline = command.startedAt + command.runningNanos;
+                default -> { continue; } // the completion producer will wake us after enqueueing
+            }
+            if (!found || deadline - now < nearest - now) { nearest = deadline; found = true; }
+        }
+        return found ? OptionalLong.of(nearest) : OptionalLong.empty();
     }
 
     /** Provider thread. Answers every posted completion and frees its slot. */

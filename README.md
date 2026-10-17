@@ -129,6 +129,13 @@ At installation the bridge traverses `Window.getWindows()`, scenes, and containe
 
 Changes made within one event-loop turn are coalesced: the bridge synchronizes state, it does not record every transition, and a control added and removed within the same turn is never published. Listeners are removed when an object leaves the tree and when the bridge closes.
 
+The provider blocks in its own GLib context when idle. Publications, action starts/results and shutdown wake it;
+bus closure also ends the wait. It drains Java work between batches of at most 64 ready GLib iterations, so sustained
+bus traffic cannot indefinitely delay reconciliation or action replies. A single one-shot GLib source tracks the
+nearest unanswered action deadline; there is no periodic bridge timer when no deadline is pending. Wakeups are
+detached before the context is freed, so late action results cannot enter disposed native state. Cancellation of a
+pending registry `Embed` call uses the same blocking dispatch with a one-second drain limit during shutdown.
+
 ## Current coverage
 
 - Windows, containers, labels, buttons, TextField, and TextArea.

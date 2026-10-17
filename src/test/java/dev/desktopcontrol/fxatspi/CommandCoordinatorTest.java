@@ -55,6 +55,48 @@ class CommandCoordinatorTest {
         if (answers.putIfAbsent(id, new Answer(accepted, failure)) != null) duplicates.add(id);
     }
 
+    @Test void nearestDeadlineChangesOnStartAndDisappearsAfterRunningReplyTimeout() {
+        var notifications = new AtomicInteger();
+        var coordinator = new CommandCoordinator(new ActionLimits(4, 2, Duration.ofSeconds(60), Duration.ofMillis(10)), now::get,
+                notifications::incrementAndGet);
+        assertTrue(coordinator.nextDeadline().isEmpty());
+        var queuedUntil = now.get() + TimeUnit.SECONDS.toNanos(60);
+        var command = coordinator.admit("a", () -> {
+            assertEquals(1, notifications.get(), "RUNNING must be published and notified before application code");
+            assertEquals(now.get() + 10 * MS, coordinator.nextDeadline().orElseThrow());
+            now.addAndGet(10 * MS);
+            coordinator.expire(this::answer);
+            assertTrue(coordinator.nextDeadline().isEmpty(), "an answered running action has no further reply deadline");
+            assertEquals(1, coordinator.outstandingCount(), "the completion slot stays reserved");
+            return true;
+        });
+        assertEquals(queuedUntil, coordinator.nextDeadline().orElseThrow());
+        coordinator.run(command);
+        assertEquals(2, notifications.get(), "completion notifies after enqueueing");
+        assertEquals(1, coordinator.queuedCompletions());
+        coordinator.drain(this::answer);
+        assertTrue(coordinator.nextDeadline().isEmpty());
+        assertEquals(0, coordinator.outstandingCount());
+        assertEquals(1, coordinator.lateCompletions());
+    }
+
+    @Test void deadlinesKeepAdmissionLimitsAndOrderAcrossNanoTimeWraparound() {
+        now.set(Long.MAX_VALUE - 50 * MS);
+        var coordinator = coordinator(4, 2);
+        var firstDeadline = now.get() + 100 * MS;
+        var first = coordinator.admit("a", () -> true);
+        coordinator.updateLimits(new ActionLimits(4, 2, Duration.ofMillis(10), Duration.ofMillis(10)));
+        coordinator.admit("b", () -> true);
+        assertEquals(now.get() + 10 * MS, coordinator.nextDeadline().orElseThrow());
+        now.addAndGet(10 * MS);
+        coordinator.expire(this::answer);
+        assertEquals(firstDeadline, coordinator.nextDeadline().orElseThrow());
+        now.addAndGet(90 * MS);
+        coordinator.expire(this::answer);
+        assertEquals(Phase.EXPIRED, first.phase());
+        assertTrue(coordinator.nextDeadline().isEmpty());
+    }
+
     @Test void completedActionIsAnsweredOnceWithItsResult() {
         var coordinator = coordinator(4, 2);
         var command = coordinator.admit("a", () -> true);

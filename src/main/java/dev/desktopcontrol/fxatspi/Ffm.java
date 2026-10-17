@@ -22,6 +22,8 @@ import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
@@ -54,6 +56,17 @@ final class Ffm implements AutoCloseable {
     private final MethodHandle mainContextPop = bind("g_main_context_pop_thread_default", FunctionDescriptor.ofVoid(ADDRESS));
     private final MethodHandle mainContextUnref = bind("g_main_context_unref", FunctionDescriptor.ofVoid(ADDRESS));
     private final MethodHandle mainContextIteration = bind("g_main_context_iteration", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+    private final MethodHandle mainContextWakeup = bind("g_main_context_wakeup", FunctionDescriptor.ofVoid(ADDRESS));
+    private final MethodHandle timeoutSourceNew = bind("g_timeout_source_new", FunctionDescriptor.of(ADDRESS, JAVA_INT));
+    private final MethodHandle sourceSetCallback = bind("g_source_set_callback", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+    private final MethodHandle sourceAttach = bind("g_source_attach", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    private final MethodHandle sourceIsDestroyed = bind("g_source_is_destroyed", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private final MethodHandle sourceDestroy = bind("g_source_destroy", FunctionDescriptor.ofVoid(ADDRESS));
+    private final MethodHandle sourceUnref = bind("g_source_unref", FunctionDescriptor.ofVoid(ADDRESS));
+    private final MethodHandle signalConnectData = bind("g_signal_connect_data",
+            FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
+    private final MethodHandle signalHandlerDisconnect = bind("g_signal_handler_disconnect", FunctionDescriptor.ofVoid(ADDRESS, JAVA_LONG));
+    private MemorySegment timeoutCallback = NIL;
     private final MethodHandle busGet = bind("g_bus_get_sync", FunctionDescriptor.of(ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
     private final MethodHandle connectionNew = bind("g_dbus_connection_new_for_address_sync",
             FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
@@ -114,8 +127,64 @@ final class Ffm implements AutoCloseable {
     }
     /** One non-blocking iteration; true when an event was dispatched. */
     boolean iterate(MemorySegment context) {
+        return iterate(context, false);
+    }
+    /** One iteration; a wake can return false even when mayBlock is true. Never call with a shared lock held. */
+    boolean iterate(MemorySegment context, boolean mayBlock) {
         open();
-        try { return (int) mainContextIteration.invokeExact(context, 0) != 0; } catch (Throwable error) { throw failed("g_main_context_iteration", error); }
+        try { return (int) mainContextIteration.invokeExact(context, mayBlock ? 1 : 0) != 0; } catch (Throwable error) { throw failed("g_main_context_iteration", error); }
+    }
+    /** Thread-safe, nonblocking. The caller must serialize this with context/arena disposal. */
+    void wakeup(MemorySegment context) {
+        open();
+        try { mainContextWakeup.invokeExact(context); } catch (Throwable error) { throw failed("g_main_context_wakeup", error); }
+    }
+    /** Provider-owned one-shot source attached to this context; destroy and unref it even after it fires. */
+    MemorySegment timeoutSource(MemorySegment context, long delayNanos) {
+        open();
+        // Round up without overflowing; our action deadlines are bounded to at most 120 seconds.
+        var positive = Math.max(0L, delayNanos);
+        var millis = (int) Math.min(Integer.MAX_VALUE, positive / 1_000_000L + (positive % 1_000_000L == 0 ? 0 : 1));
+        MemorySegment source;
+        try { source = (MemorySegment) timeoutSourceNew.invokeExact(millis); }
+        catch (Throwable error) { throw failed("g_timeout_source_new", error); }
+        try {
+            if (timeoutCallback.address() == 0) {
+                var handle = MethodHandles.lookup().findStatic(Ffm.class, "timeoutElapsed", MethodType.methodType(int.class, MemorySegment.class));
+                timeoutCallback = Linker.nativeLinker().upcallStub(handle, FunctionDescriptor.of(JAVA_INT, ADDRESS), arena);
+            }
+            sourceSetCallback.invokeExact(source, timeoutCallback, NIL, NIL);
+            var id = (int) sourceAttach.invokeExact(source, context);
+            if (id == 0) throw new IllegalStateException("Source attachment failed");
+            return source;
+        } catch (Throwable error) {
+            try { destroySource(source); } finally { unrefSource(source); }
+            throw failed("g_source_attach", error);
+        }
+    }
+    private static int timeoutElapsed(MemorySegment ignored) { return 0; } // G_SOURCE_REMOVE; no application callback
+    boolean sourceDestroyed(MemorySegment source) {
+        open();
+        try { return (int) sourceIsDestroyed.invokeExact(source) != 0; } catch (Throwable error) { throw failed("g_source_is_destroyed", error); }
+    }
+    void destroySource(MemorySegment source) {
+        open();
+        try { sourceDestroy.invokeExact(source); } catch (Throwable error) { throw failed("g_source_destroy", error); }
+    }
+    void unrefSource(MemorySegment source) {
+        open();
+        try { sourceUnref.invokeExact(source); } catch (Throwable error) { throw failed("g_source_unref", error); }
+    }
+    long connectClosed(MemorySegment connection, MemorySegment callback) {
+        open();
+        try (var temporary = Arena.ofConfined()) {
+            try { return (long) signalConnectData.invokeExact(connection, temporary.allocateFrom("closed"), callback, NIL, NIL, 0); }
+            catch (Throwable error) { throw failed("g_signal_connect_data", error); }
+        }
+    }
+    void disconnectSignal(MemorySegment connection, long handler) {
+        open();
+        try { signalHandlerDisconnect.invokeExact(connection, handler); } catch (Throwable error) { throw failed("g_signal_handler_disconnect", error); }
     }
 
     // GDBus connection
