@@ -44,11 +44,28 @@ def linear(xs, ys):
             'r2': 1 - sum(r*r for r in residuals)/total if total else 1.0}
 
 
-def bootstrap(xs):
-    """Percentile interval of paired mean, 20,000 resamples, fixed seed; descriptive with five pairs."""
+def independent_comparison(baseline, candidate):
+    """Independent campaign means; sorting makes seeded resampling invariant to repetition labels."""
+    baseline, candidate = sorted(baseline), sorted(candidate)
+    if not baseline or not candidate or any(not math.isfinite(x) for x in baseline+candidate):
+        raise ValueError('comparison needs finite nonempty samples')
     rng = random.Random(22)
-    means = sorted(st.mean(rng.choices(xs, k=len(xs))) for _ in range(20_000))
-    return means[499], means[19499]
+    means = sorted(st.mean(rng.choices(baseline, k=len(baseline))) -
+                   st.mean(rng.choices(candidate, k=len(candidate))) for _ in range(20_000))
+    lo, hi = means[499], means[19499]
+    # Stronger than five arbitrarily numbered differences: EVERY possible matching is positive.
+    # This is a descriptive separation check, not 25 independent observations.
+    gap = min(baseline)-max(candidate)
+    return {'mean': st.mean(baseline)-st.mean(candidate), 'ci': (lo, hi),
+            'minimumReduction': gap, 'maximumReduction': max(baseline)-min(candidate),
+            'passed': gap > 0 and lo > 0}
+
+
+def marginal_slopes(lower, upper, distance):
+    """All cross-size contrasts are descriptive only; they are not matched repetitions or extra samples."""
+    if distance <= 0:
+        raise ValueError('size interval must be positive')
+    return sorted((y-x)/distance for x in lower for y in upper)
 
 
 def malloc(text):
@@ -219,28 +236,35 @@ def summary(path, before=None):
             fit = linear([audits[n]['accessibles'] for n in sizes], [st.mean(pairs(data, n, metric)) for n in sizes])
             residuals = ', '.join(f'{v:.1f}' for v in fit['residuals'])
             out.append(f"| {metric} | {fit['intercept']:.1f} | {fit['slope']:.3f} | {fit['r2']:.9f} | {residuals} |")
-        out += ['', '| Metric | Interval (buttons) | Marginal bytes/additional accessible, paired by repetition |',
+        out += ['', '| Metric | Interval (buttons) | Marginal bytes/additional accessible, all cross-size contrasts (descriptive) |',
                 '| --- | --- | --- |']
         for metric in ('inUse', 'totalInUse'):
             for a, b in zip(sizes, sizes[1:]):
-                slopes = [(y-x)/(audits[b]['accessibles']-audits[a]['accessibles'])
-                          for x, y in zip(pairs(data, a, metric), pairs(data, b, metric))]
+                slopes = marginal_slopes(pairs(data, a, metric), pairs(data, b, metric),
+                                         audits[b]['accessibles']-audits[a]['accessibles'])
                 out.append(f'| {metric} | {a} → {b} | {display(slopes)} |')
+        out += ['', 'Cross-size contrasts do not create additional independent observations; no repetition pairing across sizes is assumed.']
     else:
         out.append('Smoke only: no scaling fit or optimization decision.')
     if before:
         base, base_audits, base_fingerprint, base_profile = records(before)
         if profile != 'scaling' or base_profile != profile or fingerprint != base_fingerprint or audits != base_audits:
             raise ValueError('before/after environment, audit or profile mismatch')
-        reduction = [x-y for x, y in zip(pairs(base, 10000, 'inUse'), pairs(data, 10000, 'inUse'))]
-        lo, hi = bootstrap(reduction)
-        passed = all(x > 0 for x in reduction) and lo > 0
-        out += ['', '## Before/after decision', '', f'10,000-button paired reductions (baseline − candidate): {reduction} bytes.',
-                f'Mean reduction: {st.mean(reduction):.1f} bytes; percentile bootstrap 95% CI [{lo:.1f}, {hi:.1f}] (20,000 resamples, seed 22).',
-                f'Memory criterion: {"PASS" if passed else "FAIL"}. Independent regression checks are also required.',
-                'Five pairs give limited uncertainty resolution; this interval is descriptive for this machine/workload.']
-        combined = [x-y for x, y in zip(pairs(base, 10000, 'totalInUse'), pairs(data, 10000, 'totalInUse'))]
-        out.append(f'Arena + mmap reductions: {display(combined)} bytes; paired values {combined}.')
+        baseline = pairs(base, 10000, 'inUse')
+        candidate = pairs(data, 10000, 'inUse')
+        comparison = independent_comparison(baseline, candidate)
+        lo, hi = comparison['ci']
+        out += ['', '## Before/after decision', '',
+                'Campaigns are independent. Within each campaign an observation is an intact bridge on−off pair; repetition labels do not match campaigns.',
+                f'10,000-button baseline on−off observations (sorted): {sorted(baseline)} bytes.',
+                f'10,000-button candidate on−off observations (sorted): {sorted(candidate)} bytes.',
+                f"Difference of means (baseline − candidate): {comparison['mean']:.1f} bytes; independent percentile bootstrap 95% CI [{lo:.1f}, {hi:.1f}] (20,000 resamples per campaign, seed 22).",
+                f"Minimum possible reduction over any matching: {comparison['minimumReduction']:.1f} bytes. Full sample separation is required, together with a positive interval lower bound.",
+                f'Memory criterion: {"PASS" if comparison["passed"] else "FAIL"}. Independent regression checks are also required.',
+                'Five observations per campaign give limited uncertainty resolution; this interval is descriptive for this machine/workload. No paired-campaign inference is made.']
+        combined = independent_comparison(pairs(base, 10000, 'totalInUse'), pairs(data, 10000, 'totalInUse'))
+        cl, ch = combined['ci']
+        out.append(f"Arena + mmap difference of means: {combined['mean']:.1f} bytes; independent bootstrap 95% CI [{cl:.1f}, {ch:.1f}].")
         for label, d in [('baseline', base), ('candidate', data)]:
             fit = linear([audits[n]['accessibles'] for n in sizes], [st.mean(pairs(d, n, 'inUse')) for n in sizes])
             out.append(f"{label}: slope {fit['slope']:.3f} bytes/accessible; intercept {fit['intercept']:.1f} bytes.")
@@ -258,7 +282,7 @@ def export(source, dest):
     if 'scaling_artifacts=afterIdleGc-only' not in env.split('\n'):
         env += '\nscaling_artifacts=afterIdleGc-only\n'
     (dest/'environment.txt').write_text(env)
-    for name in ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt'):
+    for name in ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt', 'full-environment-recheck.txt'):
         if (source/name).exists():
             shutil.copyfile(source/name, dest/name)
     for path in source.glob('*.json'):

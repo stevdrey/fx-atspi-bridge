@@ -45,6 +45,9 @@ missing receipts, reordered/overlapping timestamps, different sessions or change
 pre-receipt campaign only, qualify chronology from original raw artifact mtimes and recorded resume markers,
 verify recorded compiled harness hashes and Git sources/build inputs, and rerun any pair crossing an interruption.
 Document this retrospective provenance explicitly; it is not a claim that original process-start times were captured.
+The collector, resume and original-pair repair share scaling-environment.sh. Before any repair preparation or benchmark JVM,
+recompute the full JDK/JavaFX/native packages/kernel/CPU/session/options/workload/limits fingerprint and compare
+against the unique recorded value. A mismatch or missing input fails before mutating the original collection.
 Preflight imports Python gi/Gio/GLib and requires xprop when DISPLAY permits X11/XWayland before collecting any cells.
 Raw artifacts stay outside the repo. Export validates the full collection first and preserves only the checkpoint's
 malloc/smaps/NMT snapshots (sanitized), run JSON, audit counts, environment, harness manifest, pair receipts and retries; compact exports remain analyzable.
@@ -68,15 +71,22 @@ closes/releases the connection, then unrefs every pooled node info, before freei
 Pool survives removal of any individual node, including its last current user, until provider disposal. Partial register
 failures retain already acquired IDs for teardown. Counters distinguish exports from shared definitions.
 
-Run the identical full campaign before/after. Publish the candidate only if all five 10,000-button paired reductions in
-arena in-use bytes are positive and a fixed-seed percentile bootstrap 95% interval for mean reduction excludes zero
-(20,000 resamples, seed 22), plus independent protocol regressions pass. Also report slopes and limited five-pair resolution.
+Run the identical full campaign before/after. Campaigns are collected separately: only the on/off observations
+within each campaign are paired. Do not match baseline/candidate or cross-size repetition numbers.
+For the independent campaigns, bootstrap each sample separately and subtract their means (20,000 resamples,
+seed 22, percentile 95% interval). Sort input samples before seeded resampling so labels cannot change the result.
+Publish only if the lower interval bound is positive AND min(baseline on−off) > max(candidate on−off) at 10,000 buttons,
+plus independent protocol regressions pass. This conservative separation condition makes every possible five-to-five
+matching positive; it does not treat the 25 contrasts as independent observations. It replaces the original plan's
+invalid paired-campaign inference without weakening the requirement for consistent reductions.
+Report cross-size marginal contrasts descriptively, never as matched repetitions or additional sample size.
+Also report slopes and the limited resolution of five independent on/off observations per campaign.
 If it fails, retain the evidence and decision; no larger export-model rewrite is implied.
 
 ## Acceptance and verification
 
 Synthetic tests: fixed/linear/nonlinear cost, mmap separation, statistics, complete pairs, invalid/missing artifacts and NMT category-total consistency,
-counts/workload/environment/harness mismatch, atomic pair restart and chronology/result-integrity checks, audit dependency preflight, export roundtrip and positive/negative optimization gate.
+counts/workload/environment/harness mismatch, atomic pair restart and chronology/result-integrity checks, audit dependency preflight, export roundtrip, independent resampling, repetition-renumbering invariance, complete sample separation, full-environment repair refusal and positive/negative optimization gate.
 Smoke then full campaigns from clean isolated checkouts. Java lifecycle tests cover shared metadata, capability transitions,
 removal while shared, close/reinstall, partial export failures and bus loss. Independent libatspi/Gio regression checks cover
 roles/interfaces, actions/text Unicode, privacy, events and stale references. Run Python tests and Gradle Wrapper

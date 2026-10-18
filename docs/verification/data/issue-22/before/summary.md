@@ -132,9 +132,11 @@ Three sizes characterize this workload; R² alone does not establish universal l
 | inUse | 916985.2 | 12064.918 | 0.999608262 | 1241049.8, -1365154.8, 124105.0 |
 | totalInUse | 2438744.3 | 11653.965 | 0.999984504 | -238381.1, 262219.2, -23838.1 |
 
-| Metric | Interval (buttons) | Marginal bytes/additional accessible, paired by repetition |
+| Metric | Interval (buttons) | Marginal bytes/additional accessible, all cross-size contrasts (descriptive) |
 | --- | --- | --- |
-| inUse | 100 → 1000 | 9169.1 ± 12961.6; 12046.0 (-3738.2–26567.5) |
-| inUse | 1000 → 10000 | 12230.4 ± 866.1; 11765.5 (11482.8–13537.1) |
-| totalInUse | 100 → 1000 | 12210.2 ± 1378.6; 11544.5 (11362.2–14631.0) |
-| totalInUse | 1000 → 10000 | 11622.2 ± 317.5; 11676.4 (11169.6–12016.5) |
+| inUse | 100 → 1000 | 9169.1 ± 15404.4; 12046.0 (-19271.0–27947.3) |
+| inUse | 1000 → 10000 | 12230.4 ± 765.0; 11946.9 (11482.8–14252.8) |
+| totalInUse | 100 → 1000 | 12210.2 ± 1139.5; 11828.2 (10941.0–14631.0) |
+| totalInUse | 1000 → 10000 | 11622.2 ± 273.3; 11676.4 (11142.1–12016.5) |
+
+Cross-size contrasts do not create additional independent observations; no repetition pairing across sizes is assumed.

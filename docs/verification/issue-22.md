@@ -67,8 +67,9 @@ OLS on mean paired deltas versus actual accessibles:
 | Arena in-use | 916,985.2 | 12,064.918 | 0.999608262 | 1,241,049.8; -1,365,154.8; 124,105.0 |
 | Arena + mmap in-use | 2,438,744.3 | 11,653.965 | 0.999984504 | -238,381.1; 262,219.2; -23,838.1 |
 
-Combined marginal slopes are 12,210 ± 1,379 bytes/accessible between 100 and 1,000, and 11,622 ± 318 between 1,000
-and 10,000. Scaling is approximately linear **for these three sizes and this button workload on this machine**.
+Combined marginal slopes are 12,210 ± 1,139 bytes/accessible between 100 and 1,000, and 11,622 ± 273 between 1,000
+and 10,000. These are all cross-size contrasts, with descriptive SD; the 25 contrasts are not 25 independent
+observations and no cross-size pairing is assumed. Scaling is approximately linear **for these three sizes and this button workload on this machine**.
 Dividing total cost by N would fold fixed costs into the small-tree estimate: combined average cost is ~33,017 bytes
 per exported accessible at N=100 and ~11,895 at N=10,000. RSS is a different metric, not an allocator in-use estimate.
 
@@ -93,9 +94,10 @@ current combinations) until all exports and the connection are disposed, on the 
 arena disposal. It must separate export and definition counters, retain partial registrations for teardown, and preserve
 all current privacy/action behavior. This is an experiment proposal, **not production code in this PR**.
 
-The next PR is eligible only if all five 10,000-button paired arena reductions are positive, their fixed-seed percentile
-bootstrap 95% mean interval excludes zero, and independent protocol/native-lifecycle regressions pass. Record combined
-arena+mmap reductions and slope change too. A five-pair interval describes this workload, not universal uncertainty.
+The next PR is eligible only if every candidate 10,000-button on−off observation is below every baseline
+observation and the independently resampled difference-of-means bootstrap 95% interval is strictly positive,
+with independent protocol/native-lifecycle regressions passing. Campaign repetition numbers do not form pairs. Record combined
+arena+mmap reductions and slope change too. Five observations per campaign describe this workload, not universal uncertainty.
 
 ## Commands and outcomes
 
@@ -104,7 +106,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 152 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 160 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -124,7 +126,7 @@ Before the Codex review follow-up, changes after `4682dab` were analysis/docs/ev
 visible, numeric table formatting, added synthetic coverage, and the independent regression client. No production,
 BenchApp, MemoryDiagnostics or collection profiles changed. Existing #17 numbers and evidence are untouched.
 
-Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 152 tests, no skips. This changes validation only, not either measured JVM path.
+Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 160 tests, no skips. This changes validation only, not either measured JVM path.
 
 ## Codex review follow-up
 
@@ -160,7 +162,39 @@ Verification after review: 152 Python tests, no skips; real audit preflight; she
 raw/export parsed equality and reproducible retained summary. Java/desktop tests reuse prior passing evidence because
 production and Java benchmark are unchanged. No simultaneous desktop benchmark ran during pair repair or smoke.
 
+## Second Codex review: independent campaigns and full repair environment
+
+The original analysis incorrectly matched repetition labels between separately collected campaigns. On/off pairs
+inside a campaign remain intact; before/after comparisons now resample the two five-observation samples independently.
+The difference of means and its fixed-seed percentile interval are invariant to renumbering either campaign. The release
+gate additionally requires complete observed sample separation, so all possible matchings show a reduction. This is
+more conservative than accepting one arbitrary set of five differences; the 25 possible contrasts are not extra samples.
+Cross-size contrasts received the same correction and are descriptive, without a matched-repetition claim.
+
+The resampling distinction follows the documented semantics of
+[SciPy bootstrap paired=False](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html).
+The implementation remains dependency-free. A synthetic equal-but-variable two-sample case now has a nonzero-width
+interval (the former artificial pairing would collapse it to zero); unequal sample sizes and label permutations are tested.
+
+Original-pair repair now calls the exact same full fingerprint implementation as collection/resume, before any pair
+preparation, archive mutation or benchmark launch. JavaFX jars, baseline.conf, JDK, native package output, kernel/CPU,
+session, options and workload all participate. Tests change each dependency class, remove an input, or duplicate the
+recorded fingerprint and confirm refusal before the simulated cell marker or collection mutation.
+
+The shared implementation recomputed the original full fingerprint exactly:
+`b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638`.
+This is a post-review environment recheck, not a claim that the old repair script performed the full guard before its
+historical execution. The [recheck record](data/issue-22/before/full-environment-recheck.txt) makes the timing explicit.
+Measurements, raw snapshots, observation JSON and pair receipts are unchanged; summaries are regenerated with the
+corrected analysis. The previous cross-campaign paired intervals and differences must not be used as matched evidence.
+
+Executed after this review: 160 Python tests, no skips; bash syntax; original-fingerprint compatibility; strict retained
+reference reanalysis. Java/desktop evidence remains applicable because production, Java benchmark, snapshot sequence
+and workload are unchanged. The corrected collector passed `/tmp/issue22-review2-smoke scaling-smoke`: four cells, two completed pair receipts
+and the independent audit. Its environment fingerprint matches the earlier smoke collection. The real repair entry
+point also rejected a deliberately incompatible recorded environment before pair preparation or output mutation.
+
 ## Qualified optimization follow-up
 
 The separate [shared-introspection report](issue-22-optimization.md) records the measured candidate, lifecycle/protocol
-regressions and passed publication criterion. The reference results above remain the measurement PR’s baseline.
+regressions and the corrected independent-campaign publication criterion. The reference results above remain the measurement PR’s baseline.

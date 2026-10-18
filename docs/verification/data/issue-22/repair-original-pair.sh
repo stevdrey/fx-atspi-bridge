@@ -7,6 +7,8 @@ scripts="$root/examples/fx-lab/scripts"
 out="${1:?original raw directory}"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
 source "$scripts/baseline-lib.sh"
+source "$scripts/scaling-environment.sh"
+java_bin="${JAVA_HOME:+$JAVA_HOME/bin/}java"
 require_default_allocator
 require_safe_home
 for option_name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
@@ -16,7 +18,8 @@ for option_name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX
   }
   if [[ "${!option_name:-}" = *NativeMemoryTracking* ]]; then exit 1; fi
 done
-require_jdk27 "${JAVA_HOME:+$JAVA_HOME/bin/}java"
+require_jdk27 "$java_bin"
+repair_environment="$(require_scaling_environment "$out/environment.txt" "$root" "$scripts/baseline.conf" "$java_bin" 50 200 10)"
 check_clean_tree "$root" "$out"
 python3 "$scripts/scaling_audit.py" --preflight
 PYTHONPATH="$scripts" python3 - "$root" "$out" "$bin" <<'PY_CHECK'
@@ -39,6 +42,7 @@ if any(line not in env for line in version[:3]):
 PY_CHECK
 key=scaling-n100-plain-r4
 [ "$(python3 "$scripts/scaling_collection.py" prepare "$out" "$key")" = run ]
+echo "pair_repair_environment_sha256=$repair_environment" >> "$out/environment.txt"
 echo "pair_repair_revision=$(git -C "$root" rev-parse HEAD)" >> "$out/environment.txt"
 for bridge in on off; do
   name="scaling-n100-${bridge}-plain-r4"

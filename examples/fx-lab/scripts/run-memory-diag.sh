@@ -15,6 +15,7 @@ fi
 script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 # shellcheck source=baseline-lib.sh
 source "$script_dir/baseline-lib.sh"
+source "$script_dir/scaling-environment.sh"
 limits="$script_dir/baseline.conf"
 
 out="${1:?output directory}"
@@ -74,21 +75,10 @@ if [[ "$profile" = scaling* ]]; then
     echo "Refusing to resume: scaling harness differs or is unrecorded." >&2; exit 1
   fi
   mv "$harness_file" "$out_abs/harness.txt"
-  scaling_fingerprint="$({
-    "$java_bin" -version 2>&1
-    uname -srm
-    rpm -q glibc glib2 at-spi2-core 2>/dev/null || true
-    nproc
-    grep -m1 'model name' /proc/cpuinfo
-    echo "session=${XDG_SESSION_TYPE:-unknown} workload=$warmup,$samples,$idle_seconds"
-    for opts_var in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS FX_LAB_OPTS; do
-      printf '%s=%s\n' "$opts_var" "${!opts_var:-}"
-    done
-    (cd "$root/examples/fx-lab/build/install/fx-lab/lib" && sha256sum javafx-*.jar)
-    sha256sum "$limits" | cut -d' ' -f1
-  } | sha256sum | cut -d' ' -f1)"
-  if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ] && ! grep -qx "scaling_environment_sha256=$scaling_fingerprint" "$out_abs/environment.txt"; then
-    echo "Refusing to resume: scaling environment differs." >&2; exit 1
+  if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
+    scaling_fingerprint="$(require_scaling_environment "$out_abs/environment.txt" "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
+  else
+    scaling_fingerprint="$(scaling_environment_fingerprint "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
   fi
 fi
 if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
