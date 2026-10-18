@@ -99,6 +99,34 @@ roles/interfaces, actions/text Unicode, privacy, events and stale references. Ru
 PR1: harness + measured evidence + decision, Refs #22. PR2: narrow production optimization with same-harness comparison,
 regression evidence and Closes #22 only when criteria pass. Preserve unrelated local changes and #17 evidence.
 
+## Shared-definition candidate implementation
+
+After the full baseline campaign and independent audits in PR #37 established approximately linear combined in-use
+cost (~11.6 KB/additional accessible), the separate candidate changes only provider metadata ownership. An array
+of GDBusNodeInfo indexed by `AtSpiObjects.schemaIndex` (capability bits plus a root bit; Cache last) has
+`SCHEMA_COUNT` slots derived from `Capability` (17 today), constant lookup cost and provider-thread confinement.
+Indexes are built from capabilities alone, so no application values or FX references can become keys. Individual exports retain registration IDs only;
+removing the last current user does not evict a schema, so reintroduction is safe and retention stays bounded.
+
+| Resource | Owner/reference | Disposal |
+| --- | --- | --- |
+| Parsed node info | Provider pool owns one reference per successful parse | After unregistering all exports and closing/unrefing connection; before FFM arena closes |
+| Registered interface | GDBus holds its own interface-info reference per registration | Existing per-object unregister; connection teardown also disposes remaining registrations |
+| Upcall stubs/vtable arena | Existing provider FFM lifetime, unchanged | After provider teardown and native deregistration |
+| Schema-index array and counters | Provider instance only, `SCHEMA_COUNT` slots | Clear at native teardown; acquired/released definition counters remain primitive diagnostics |
+
+Storing a parsed definition in its slot cannot fail. An existing id whose capabilities change is reported as
+`SnapshotDiff.Reshaped`: the provider unregisters it, registers it again with the new shared definition, and emits
+`AddAccessible`. Invalid object paths are rejected in Java before GDBus. An export failure leaves successfully acquired registration IDs in its export record for teardown. No public
+API, action admission, error, capability, text, event or object-path contracts change. Java tests exercise shared users,
+last-user removal/reintroduction, capability transitions, 25 close/restart cycles, bus loss and a registration failure
+after earlier objects have registered. The pure protocol test enumerates all current schemas and varies values/IDs.
+The independent-campaign criterion passes: all observed baseline on−off costs exceed all candidate observations,
+with minimum separation 92.050 MB. Mean arena reduction is 109.728 MB; independent bootstrap 95% interval
+[101.631, 117.444] MB. This replaces the invalid historical paired-campaign inference; no measurement changes.
+Protocol/lifecycle and desktop regressions pass. The [candidate report](../verification/issue-22-optimization.md)
+retains both samples, separate mmap/RSS/heap effects, slopes, corrected uncertainty and qualification limits.
+
 ## Third Codex review: audit bounds and display/backend integrity
 
 Discovery has one monotonic 60-second budget. Before each app, RPC and poll delay, check remaining time and JVM

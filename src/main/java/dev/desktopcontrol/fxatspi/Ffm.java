@@ -88,6 +88,7 @@ final class Ffm implements AutoCloseable {
     private final MethodHandle unregisterObject = bind("g_dbus_connection_unregister_object", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
     private final MethodHandle emitSignal = bind("g_dbus_connection_emit_signal",
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+    private final MethodHandle isObjectPath = bind("g_variant_is_object_path", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private final MethodHandle invocationReturnValue = bind("g_dbus_method_invocation_return_value", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
     private final MethodHandle invocationReturnError = bind("g_dbus_method_invocation_return_dbus_error", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
     private final MethodHandle variantParse = bind("g_variant_parse", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
@@ -325,7 +326,8 @@ final class Ffm implements AutoCloseable {
         try (Arena temporary = Arena.ofConfined()) {
             var error = temporary.allocate(ADDRESS);
             int id;
-            try { id = (int) registerObject.invokeExact(connection, temporary.allocateFrom(path), interfaceInfo, vtable, NIL, NIL, error); }
+            var nativePath = objectPath(temporary, path);
+            try { id = (int) registerObject.invokeExact(connection, nativePath, interfaceInfo, vtable, NIL, NIL, error); }
             catch (Throwable failure) { throw failed("g_dbus_connection_register_object", failure); }
             check(error);
             if (id == 0) throw new IllegalStateException("Registration failed");
@@ -336,11 +338,24 @@ final class Ffm implements AutoCloseable {
         open();
         try { var ignored = (int) unregisterObject.invokeExact(connection, registration); } catch (Throwable error) { throw failed("g_dbus_connection_unregister_object", error); }
     }
+    /**
+     * GDBus checks paths with g_return_val_if_fail: a CRITICAL (fatal under G_DEBUG=fatal-criticals) that builds with
+     * G_DISABLE_CHECKS skip entirely. Rejecting invalid paths here keeps that path out of native code; the message
+     * carries no value.
+     */
+    private MemorySegment objectPath(Arena arena, String path) {
+        var nativePath = arena.allocateFrom(path);
+        int valid;
+        try { valid = (int) isObjectPath.invokeExact(nativePath); } catch (Throwable failure) { throw failed("g_variant_is_object_path", failure); }
+        if (valid == 0) throw new IllegalArgumentException("Invalid object path");
+        return nativePath;
+    }
     void emitSignal(MemorySegment connection, String path, String iface, String member, MemorySegment parameters) {
         open();
         try (Arena temporary = Arena.ofConfined()) {
             var error = temporary.allocate(ADDRESS);
-            try { var ignored = (int) emitSignal.invokeExact(connection, NIL, temporary.allocateFrom(path), temporary.allocateFrom(iface),
+            var nativePath = objectPath(temporary, path);
+            try { var ignored = (int) emitSignal.invokeExact(connection, NIL, nativePath, temporary.allocateFrom(iface),
                     temporary.allocateFrom(member), parameters, error); }
             catch (Throwable failure) { throw failed("g_dbus_connection_emit_signal", failure); }
             check(error);

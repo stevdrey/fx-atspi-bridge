@@ -27,6 +27,7 @@ import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Name;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Removed;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Reshaped;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextDeleted;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextInserted;
 import javafx.application.Platform;
@@ -58,6 +59,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
+import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_SCHEMA;
+import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.SCHEMA_COUNT;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.DESCRIPTION;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.PREFIX;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.ROOT_PATH;
@@ -124,7 +127,14 @@ final class AtSpiProvider {
     private volatile MemorySegment deadlineSource = Ffm.NIL;
     private long armedDeadline;
     private final AtomicLong deadlineSourcesAcquired = new AtomicLong(), deadlineSourcesReleased = new AtomicLong();
-    private record Export(List<Integer> registrations, MemorySegment info) {}
+    private record Export(List<Integer> registrations) {}
+    /**
+     * Provider-confined parsed definitions indexed by {@link AtSpiObjects#schemaIndex}, so the bound follows the
+     * protocol and no application value can become a key. Definitions survive individual removals and remain owned
+     * until all exports and the connection close.
+     */
+    private final MemorySegment[] introspection = new MemorySegment[SCHEMA_COUNT];
+    private final AtomicLong definitionsAcquired = new AtomicLong(), definitionsReleased = new AtomicLong();
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
     /** Pull source of whole trees (tests); {@code null} when the scene pushes its changes through {@link #publish}. */
@@ -233,6 +243,8 @@ final class AtSpiProvider {
     Snapshot publishedSnapshot() { return snapshot.get(); }
     long exportsAcquired() { return exportsAcquired.get(); }
     long exportsReleased() { return exportsReleased.get(); }
+    long definitionsAcquired() { return definitionsAcquired.get(); }
+    long definitionsReleased() { return definitionsReleased.get(); }
     long reconciledChanges() { return reconciledChanges.get(); }
     boolean deadlineArmed() { return deadlineSource.address() != 0; }
     long deadlineSourcesAcquired() { return deadlineSourcesAcquired.get(); }
@@ -437,6 +449,17 @@ final class AtSpiProvider {
             guarded(() -> ffi.unref(closing));
             connection = Ffm.NIL;
         }
+        // GDBus holds interface references while registered. Release our node-info references only after
+        // unregistering and closing the connection, before the FFM arena and its upcalls can be disposed.
+        for (int i = 0; i < introspection.length; i++) {
+            var info = introspection[i];
+            if (info == null) continue;
+            introspection[i] = null;
+            guarded(() -> {
+                ffi.nodeInfoUnref(info);
+                definitionsReleased.incrementAndGet();
+            });
+        }
         if (pushed) guarded(() -> ffi.popThreadDefault(context));
         if (context.address() != 0) guarded(() -> ffi.mainContextUnref(context));
     }
@@ -516,15 +539,25 @@ final class AtSpiProvider {
         } finally { nativeApi.unref(session); }
     }
     private void export(String id) {
-        var info = ffi.nodeInfoFromXml(xml(id));
+        var info = definition(id);
         exportsAcquired.incrementAndGet();
         var registrations = new ArrayList<Integer>();
-        exports.put(id,new Export(registrations,info));
+        exports.put(id,new Export(registrations));
         var vector = info.reinterpret(40).get(ADDRESS,16).reinterpret(64);
         for (int i=0;i<8;i++) {
             var iface = vector.getAtIndex(ADDRESS,i); if (iface.address()==0) break;
             registrations.add(ffi.registerObject(connection, path(id), iface, vtable));
         }
+    }
+    /** One owning native reference per schema, regardless of how many registered objects use it. */
+    private MemorySegment definition(String id) {
+        var index = id.equals(CACHE_ID) ? CACHE_SCHEMA : AtSpiObjects.schemaIndex(snapshot.get().get(id));
+        var existing = introspection[index];
+        if (existing != null) return existing;
+        var parsed = ffi.nodeInfoFromXml(xml(id)); // XML is built only for a schema not parsed yet
+        definitionsAcquired.incrementAndGet();
+        introspection[index] = parsed;
+        return parsed;
     }
     /**
      * Provider thread, before the first export. A generation published before the provider thread started (the
@@ -542,7 +575,7 @@ final class AtSpiProvider {
         Export exported = exports.remove(id); if (exported==null) return;
         try {
             for (int registration : exported.registrations()) ffi.unregisterObject(connection, registration);
-        } finally { exportsReleased.incrementAndGet(); ffi.nodeInfoUnref(exported.info()); }
+        } finally { exportsReleased.incrementAndGet(); }
     }
     /**
      * Provider thread. Exports, signals and unexports only the ids touched since the last reconciled generation, in
@@ -574,6 +607,13 @@ final class AtSpiProvider {
                 case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
                 case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
                 case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
+                case Reshaped(var id) -> {
+                    // Same path, new interfaces: GDBus refuses a second Accessible registration, so unregister first.
+                    // Calls dispatch on this thread, so none can arrive between the two steps.
+                    unexport(id);
+                    export(id);
+                    signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+                }
                 case Removed(var id) -> { signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
             }
         }
