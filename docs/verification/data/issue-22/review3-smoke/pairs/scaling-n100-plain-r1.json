@@ -1,0 +1,23 @@
+{
+  "backend": "gtk-x11",
+  "cells": [
+    {
+      "endNs": 1792284616935745847,
+      "name": "scaling-n100-off-plain-r1",
+      "session": "087830ca7b934eefa758d56780546be1",
+      "sha256": "b606800c7705d9f14fd054a06ed0754766d58da3dafd1694a9ad2d938720482c",
+      "startNs": 1792284607246884668
+    },
+    {
+      "endNs": 1792284626884867391,
+      "name": "scaling-n100-on-plain-r1",
+      "session": "087830ca7b934eefa758d56780546be1",
+      "sha256": "93d4bbc9e78088340afb5bee17eb735f702eac532420b08960c97ee0922710a0",
+      "startNs": 1792284617062678372
+    }
+  ],
+  "displaySha256": "f476e3f0e735328c64dd86cfedf78eea39ed9709639629118a468b4d8abf3f92",
+  "provenance": "runner",
+  "session": "087830ca7b934eefa758d56780546be1",
+  "version": 2
+}

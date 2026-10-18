@@ -106,7 +106,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 160 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 179 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -229,4 +229,9 @@ checkpoints across 120 cells); exact before/after equality of all original parse
 audits; qualified raw/retained reference equality. New synthetic tests exercise timeout budgets, process/bus cleanup,
 backend/display drift, replaced sockets, legacy resume refusal, unknown/mixed/corrupt proofs, incompatible contracts
 and the selected-Java check. Production Java, benchmark Java, workload and snapshot sequence remain unchanged.
-The new collector will additionally run scaling-smoke from a clean commit before publication.
+The revised collector ran `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-review3-smoke scaling-smoke`
+from clean commit `b4eace5d4641e81b1e082bbad6f86df95ab27272`: four cells, two version-2 receipts,
+four Glass GTK/X11 proofs and the independent audit passed (103 accessibles / 205 explicit registrations).
+The [sanitized smoke export](data/issue-22/review3-smoke/summary.md) is retained for collector validation only.
+Re-running the collector with only GDK_BACKEND changed failed before build/collection; SHA-256 inventories of every
+file before and after were identical. The display hash and backend proofs passed strict analysis/export.
