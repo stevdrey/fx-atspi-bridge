@@ -160,8 +160,9 @@ def records(path):
             raise ValueError('incomplete independent audit')
         audits[nodes] = audit
     names = [name for runs in cells.values() for name, _ in runs]
-    backend_contract = sb.validate_collection(path, names, next(iter(audits.values()))['backend'])
-    fingerprint += (backend_contract,)
+    # Display/session binding governs resume and repair only. Campaigns are comparable across sessions and
+    # legacy/bound contracts when environment, harness and the independently proven Glass backend agree.
+    fingerprint += (sb.validate_collection(path, names, next(iter(audits.values()))['backend'])[2],)
     if len({a['backend'] for a in audits.values()}) != 1:
         raise ValueError('mixed JavaFX backends')
     for (kind, nodes, bridge, variant), runs in cells.items():
@@ -199,12 +200,16 @@ def records(path):
                 nmt = parse_complete_nmt(nt)
                 values.update({f'NMT {k}': v*1024 for k, v in nmt.items()})
             result[(nodes, bridge, variant, md.cell_key(name)[1])] = values
+    for nodes in expected_sizes:
+        for variant in ('plain', 'nmt'):
+            if len({frozenset(v) for (n, _, var, _), v in result.items() if n == nodes and var == variant}) != 1:
+                raise ValueError(f'metric set differs between cells at {nodes} {variant}')
     return result, audits, fingerprint, profile
 
 
 def pairs(data, nodes, metric, variant='plain'):
     reps = sorted(r for n, b, v, r in data if n == nodes and b == 'on' and v == variant)
-    return [data[nodes, 'on', variant, r].get(metric, 0) - data[nodes, 'off', variant, r].get(metric, 0) for r in reps]
+    return [data[nodes, 'on', variant, r][metric] - data[nodes, 'off', variant, r][metric] for r in reps]
 
 
 def summary(path, before=None):
@@ -226,8 +231,8 @@ def summary(path, before=None):
             seen = set.union(*(set(values) for (size, _, v, _), values in data.items() if size == n and v == variant))
             metrics = sorted(k for k in seen if k.startswith('NMT ')) if variant == 'nmt' else list(MALLOC_FIELDS)+['rss', 'anonymous', 'filePss', 'heap']
             for metric in metrics:
-                off = [values.get(metric, 0) for (size, b, v, _), values in sorted(data.items()) if size == n and b == 'off' and v == variant]
-                on = [values.get(metric, 0) for (size, b, v, _), values in sorted(data.items()) if size == n and b == 'on' and v == variant]
+                off = [values[metric] for (size, b, v, _), values in sorted(data.items()) if size == n and b == 'off' and v == variant]
+                on = [values[metric] for (size, b, v, _), values in sorted(data.items()) if size == n and b == 'on' and v == variant]
                 delta = pairs(data, n, metric, variant)
                 out.append(f'| {n} | {variant} | {metric} | {display(off)} | {display(on)} | {display(delta)} | {display([x/audits[n]["accessibles"] for x in delta])} |')
     out += ['', '`inUse` = arena system − free; `totalInUse` = inUse + direct mmap; `totalHeld` = system + mmap. These are allocator accounting, not allocation-stack attribution. Neither RSS nor free allocator pages establish a leak.',

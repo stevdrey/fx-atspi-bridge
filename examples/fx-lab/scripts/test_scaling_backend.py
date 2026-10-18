@@ -119,7 +119,7 @@ class DisplayBackendTest(unittest.TestCase):
         p.write_text(p.read_text()+'\n')
         with self.assertRaisesRegex(ValueError,'raw pmap'): sd.records(self.root)
 
-    def test_incompatible_legacy_bound_or_display_contracts_never_compare(self):
+    def test_legacy_and_bound_campaigns_compare_across_sessions_with_same_backend(self):
         collection(self.root)
         with tempfile.TemporaryDirectory() as tmp:
             other=Path(tmp)
@@ -130,10 +130,49 @@ class DisplayBackendTest(unittest.TestCase):
                     receipt=json.loads(path.read_text())
                     receipt.update(version=2,displaySha256=token,backend='gtk-x11')
                     path.write_text(json.dumps(receipt))
+            # Display/session binding governs resume and repair only, never cross-campaign comparison.
             bind(other,'f'*64)
-            with self.assertRaisesRegex(ValueError,'environment'): sd.summary(other,self.root)
+            self.assertIn('Memory criterion', sd.summary(other,self.root))
             bind(self.root,'e'*64)
+            self.assertIn('Memory criterion', sd.summary(other,self.root))
+
+    def test_different_glass_backend_never_compares(self):
+        collection(self.root)
+        with tempfile.TemporaryDirectory() as tmp:
+            other=Path(tmp)
+            collection(other)
+            for name in [p.stem for p in other.glob('scaling-*.json')]:
+                for cp in sb.CHECKPOINTS:
+                    p=other/name/(cp+'.pmap.txt')
+                    p.write_text(p.read_text().replace('libglassgtk3.so','libglasswayland.so'))
+                (other/'backend'/(name+'.json')).write_text(json.dumps(sb.cell_evidence(other,name)))
+            for path in (other/'audit').glob('*.json'):
+                audit=json.loads(path.read_text()); audit['backend']='native Wayland (libglasswayland mapped)'
+                path.write_text(json.dumps(audit))
+            sd.records(other)
             with self.assertRaisesRegex(ValueError,'environment'): sd.summary(other,self.root)
+
+    def test_write_cell_checks_one_reference_proof_not_every_previous_cell(self):
+        sb.initialize(self.root)
+        names=[f'scaling-n100-off-plain-r{r}' for r in range(1,6)]
+        for name in names:
+            (self.root/name).mkdir()
+            (self.root/(name+'.json')).write_text(name)
+            backend_fixture(self.root,name)
+        new='scaling-n100-on-plain-r5'
+        (self.root/new).mkdir()
+        (self.root/(new+'.json')).write_text(new)
+        for cp in sb.CHECKPOINTS:
+            (self.root/new/(cp+'.pmap.txt')).write_text(BACKEND_PMAP)
+        real=sb.validate_cell
+        with patch.object(sb,'validate_cell',side_effect=real) as validate:
+            self.assertEqual(sb.write_cell(self.root,new),'gtk-x11')
+        self.assertEqual(validate.call_count,2)  # the new proof and one reference
+        for cp in sb.CHECKPOINTS:
+            p=self.root/new/(cp+'.pmap.txt')
+            p.write_text(p.read_text().replace('libglassgtk3.so','libglasswayland.so'))
+        with self.assertRaisesRegex(ValueError,'differs'):
+            sb.write_cell(self.root,new)
 
     def test_legacy_graphics_jar_hash_must_match_original_environment(self):
         collection(self.root)
@@ -158,7 +197,7 @@ class RepairJavaTest(unittest.TestCase):
             bridge=lib/'fx-atspi-bridge-0.1.0-SNAPSHOT.jar';bridge.write_text('bridge')
             out=root/'out';out.mkdir()
             (out/'harness.txt').write_text(json.dumps(sc.harness(root,launcher)))
-            (out/'environment.txt').write_text(f'{sc.digest(bridge)}  {bridge.name}\nmeasured JDK 27\n')
+            (out/'environment.txt').write_text(f'{sb.digest(bridge)}  {bridge.name}\nmeasured JDK 27\n')
             chosen=root/'selected-java';chosen.write_text('#!/bin/sh\necho "measured JDK 27" >&2\n');chosen.chmod(0o755)
             other=root/'path-bin';other.mkdir()
             wrong=other/'java';wrong.write_text('#!/bin/sh\necho "wrong PATH Java" >&2\nexit 99\n');wrong.chmod(0o755)

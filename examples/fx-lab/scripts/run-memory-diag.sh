@@ -68,22 +68,29 @@ if [[ "$profile" = scaling* ]] && [ -f "$out_abs/environment.txt" ]; then
 fi
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
 # Fingerprint comparison contracts, excluding the production bridge artifact being compared.
+# A fresh collection stages its display contract and harness manifest outside the output directory and publishes them
+# only after environment.txt is written, so a refused or failed start leaves nothing that blocks a clean rerun.
 scaling_fingerprint=""
 harness_fingerprint=""
+scaling_stage=""
+audit_partial=""
+cleanup_scaling() { rm -rf "${scaling_stage:-}" "${audit_partial:-}"; }
+trap cleanup_scaling EXIT
 if [[ "$profile" = scaling* ]]; then
-  harness_file="$(mktemp)"
-  harness_fingerprint="$(python3 "$script_dir/scaling_collection.py" harness "$root" "$bin" "$harness_file")"
-  if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ] && ! grep -qx "scaling_harness_sha256=$harness_fingerprint" "$out_abs/environment.txt"; then
-    rm -f "$harness_file"
-    echo "Refusing to resume: scaling harness differs or is unrecorded." >&2; exit 1
-  fi
+  scaling_stage="$(mktemp -d)"
+  harness_fingerprint="$(python3 "$script_dir/scaling_collection.py" harness "$root" "$bin" "$scaling_stage/harness.txt")"
   if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
+    if ! grep -qx "scaling_harness_sha256=$harness_fingerprint" "$out_abs/environment.txt"; then
+      echo "Refusing to resume: scaling harness differs or is unrecorded." >&2; exit 1
+    fi
     scaling_fingerprint="$(require_scaling_environment "$out_abs/environment.txt" "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
+    python3 "$script_dir/scaling_backend.py" initialize "$out_abs" >/dev/null
+    mv "$scaling_stage/harness.txt" "$out_abs/harness.txt"
   else
     scaling_fingerprint="$(scaling_environment_fingerprint "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
+    # Capture the display identity now, before any output is written.
+    python3 "$script_dir/scaling_backend.py" initialize "$scaling_stage" >/dev/null
   fi
-  python3 "$script_dir/scaling_backend.py" initialize "$out_abs" >/dev/null
-  mv "$harness_file" "$out_abs/harness.txt"
 fi
 if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
   echo "resumed=$(date -u +%FT%TZ)" >> "$out_abs/environment.txt"
@@ -102,7 +109,11 @@ else
       echo "scaling_harness_sha256=$harness_fingerprint"
     fi
   } | write_environment "$out_abs/environment.txt"
+  if [[ "$profile" = scaling* ]]; then
+    mv "$scaling_stage/backend-contract.txt" "$scaling_stage/harness.txt" "$out_abs/"
+  fi
 fi
+ran_pairs=0
 
 for entry in "${plan[@]}"; do
   IFS=: read -r kind nodes reps bridges variants structural install <<< "$entry"
@@ -114,6 +125,7 @@ for entry in "${plan[@]}"; do
         pair="scaling-n${nodes}-${variant}-r${rep}"
         action="$(python3 "$script_dir/scaling_collection.py" prepare "$out_abs" "$pair")"
         if [ "$action" = skip ]; then echo "skip $pair (complete pair receipt)"; continue; fi
+        ran_pairs=1
       fi
       for bridge in $bridge_order; do
         name="${kind}-n${nodes}-${bridge}-${variant}-r${rep}"
@@ -129,7 +141,9 @@ for entry in "${plan[@]}"; do
         trim=()
         [ "$kind" = install ] && trim=(--trim-native-heap=true)
         if [ "$kind" = scaling ]; then python3 "$script_dir/scaling_backend.py" require-display "$out_abs" >/dev/null; fi
-        if [ "$kind" = scaling ]; then cell_start="$(date +%s%N)"; fi
+        if [ "$kind" = scaling ]; then
+          cell_start="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import scaling_collection; print(scaling_collection.clock_ns())' "$script_dir")"
+        fi
         run_cell "$max_attempts" "$name" "$out_abs" \
           env "${cell_env[@]}" timeout -k 30 1200 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty=10 \
           --warmup="$warmup" --samples="$samples" --idle-seconds="$idle_seconds" \
@@ -149,7 +163,15 @@ if [[ "$profile" = scaling* ]]; then
   mkdir -p "$out_abs/audit"
   for entry in "${plan[@]}"; do
     IFS=: read -r kind nodes rest <<< "$entry"
-    python3 "$script_dir/scaling_audit.py" --bin "$bin" --nodes "$nodes" --out "$out_abs/audit/n$nodes.json"
+    # A resume that ran no pair keeps the retained audits; otherwise re-audit on the bound display only.
+    if [ "$resume" -eq 1 ] && [ "$ran_pairs" -eq 0 ] && [ -f "$out_abs/audit/n$nodes.json" ]; then
+      echo "skip audit n$nodes (retained, no pair ran)"; continue
+    fi
+    python3 "$script_dir/scaling_backend.py" require-display "$out_abs" >/dev/null
+    audit_partial="$out_abs/audit/n$nodes.json.partial"
+    python3 "$script_dir/scaling_audit.py" --bin "$bin" --nodes "$nodes" --out "$audit_partial"
+    mv "$audit_partial" "$out_abs/audit/n$nodes.json"
+    audit_partial=""
   done
   echo "Summarize with: python3 $script_dir/scaling_diag.py $out"
   exit 0

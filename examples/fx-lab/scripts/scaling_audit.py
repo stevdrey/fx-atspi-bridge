@@ -44,6 +44,27 @@ class Deadline:
         return min(5000, int(self.remaining()*1000))
 
 
+def a11y_bus(Gio):
+    """A private connection to the accessibility bus; the caller owns close_sync."""
+    session = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    address = session.call_sync('org.a11y.Bus', '/org/a11y/bus', 'org.a11y.Bus', 'GetAddress',
+                                None, None, 0, 5000, None).unpack()[0]
+    return Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
+                                                   Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+
+
+def bus_caller(bus):
+    """Synchronous calls capped at five seconds, or at a shared Deadline's remaining time when one is given."""
+    def call(name, path, interface, method, params=None, *, timeout_ms=5000, budget=None):
+        if budget is not None:
+            timeout_ms = budget.timeout_ms()
+        result = bus.call_sync(name, path, interface, method, params, None, 0, timeout_ms, None).unpack()
+        if budget is not None:
+            budget.remaining()
+        return result
+    return call
+
+
 def discover_provider(call, proc, variant, remote_error, *, seconds=60):
     budget = Deadline(seconds, lambda: proc.poll() is None)
     def bounded(*args):
@@ -85,13 +106,8 @@ def audit(bin_path, nodes):
     import gi
     gi.require_version('Gio', '2.0')
     from gi.repository import Gio, GLib
-    session = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-    address = session.call_sync('org.a11y.Bus', '/org/a11y/bus', 'org.a11y.Bus', 'GetAddress',
-                                None, None, 0, 5000, None).unpack()[0]
-    bus = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
-                                                  Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
-    def call(name, path, interface, method, params=None, *, timeout_ms=5000):
-        return bus.call_sync(name, path, interface, method, params, None, 0, timeout_ms, None).unpack()
+    bus = a11y_bus(Gio)
+    call = bus_caller(bus)
     with tempfile.TemporaryDirectory(prefix='atspi-scaling-audit-') as tmp:
         # A separate JVM; its measurements are discarded, never mixed into a campaign.
         with open(Path(tmp)/'app.log', 'w') as log:
@@ -128,7 +144,7 @@ def audit(bin_path, nodes):
                 if [e.attrib['name'] for e in ET.fromstring(xml).findall('interface')
                     if e.attrib['name'].startswith(prefix)] != [prefix+'Cache']:
                     raise ValueError('cache introspection mismatch')
-                backend = detect_backend(proc.pid)
+                backend = detect_backend(proc)
                 if roles[43] != nodes:  # ATSPI_ROLE_PUSH_BUTTON
                     raise ValueError('wrong button count')
                 result = {'buttons': nodes, 'accessibles': len(items), 'interfaces': dict(sorted(counts.items())),
@@ -144,8 +160,10 @@ def audit(bin_path, nodes):
                     bus.close_sync(None)
 
 
-def detect_backend(pid):
-    budget = Deadline(5, lambda: Path(f'/proc/{pid}').exists())
+def detect_backend(proc):
+    # poll() reaps the child: an exited but unreaped JVM still has /proc/<pid> as a zombie.
+    budget = Deadline(5, lambda: proc.poll() is None)
+    pid = proc.pid
     mappings = Path(f'/proc/{pid}/maps').read_text()
     budget.remaining()
     if 'libglasswayland' in mappings:

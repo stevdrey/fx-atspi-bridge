@@ -78,7 +78,7 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
                 key = f'scaling-n{n}-{v}-r{rep}'
                 receipt = {'version': 1, 'provenance': 'runner', 'cells': [
                     {'name': name, 'session': 'synthetic', 'startNs': 100+i*20, 'endNs': 110+i*20,
-                     'sha256': sc.digest(root/(name+'.json'))} for i, name in enumerate(sc.names(key))]}
+                     'sha256': sb.digest(root/(name+'.json'))} for i, name in enumerate(sc.names(key))]}
                 (root/'pairs'/(key+'.json')).write_text(json.dumps(receipt))
     (root/'environment.txt').write_text('\n'.join(env)+'\n')
 
@@ -165,10 +165,10 @@ class ScalingTest(unittest.TestCase):
                 if not audit:
                     receipt_path = root/'pairs'/'scaling-n100-plain-r1.json'
                     receipt = json.loads(receipt_path.read_text())
-                    receipt['cells'][1]['sha256'] = sc.digest(path)
+                    receipt['cells'][1]['sha256'] = sb.digest(path)
                     receipt_path.write_text(json.dumps(receipt))
                     bp = root/'backend'/path.name
-                    proof = json.loads(bp.read_text()); proof['resultSha256'] = sc.digest(path)
+                    proof = json.loads(bp.read_text()); proof['resultSha256'] = sb.digest(path)
                     bp.write_text(json.dumps(proof))
                 with self.assertRaises(ValueError):
                     sd.records(root)
@@ -184,10 +184,10 @@ class ScalingTest(unittest.TestCase):
                 p.write_text(json.dumps(run))
                 receipt_path = root/'pairs'/'scaling-n100-plain-r1.json'
                 receipt = json.loads(receipt_path.read_text())
-                receipt['cells'][1]['sha256'] = sc.digest(p)
+                receipt['cells'][1]['sha256'] = sb.digest(p)
                 receipt_path.write_text(json.dumps(receipt))
                 bp = root/'backend'/p.name
-                proof = json.loads(bp.read_text()); proof['resultSha256'] = sc.digest(p)
+                proof = json.loads(bp.read_text()); proof['resultSha256'] = sb.digest(p)
                 bp.write_text(json.dumps(proof))
                 with self.assertRaises(ValueError):
                     sd.records(root)
@@ -202,6 +202,16 @@ class ScalingTest(unittest.TestCase):
             self.assertIn('Memory criterion: FAIL', sd.summary(base, candidate))
             with self.assertRaises(ValueError):
                 sd.summary(mismatch, base)
+
+    def test_metric_missing_from_one_cell_fails_instead_of_counting_as_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            collection(root)
+            nmt = root/'scaling-n100-off-nmt-r1'/'afterIdleGc.nmt.txt'
+            # A category printed only in the off cell (NMT omits sub-KiB categories); Total stays within rounding.
+            nmt.write_text(nmt.read_text().rstrip('\n')+'\n-                 Synthetic (reserved=1KB, committed=1KB)\n')
+            with self.assertRaisesRegex(ValueError, 'metric set differs'):
+                sd.records(root)
 
     def test_bootstrap_is_reproducible_and_smoke_never_decides(self):
         self.assertEqual(sd.independent_comparison([100]*5, [0]*5)['ci'], (100, 100))

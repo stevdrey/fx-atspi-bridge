@@ -154,9 +154,11 @@ def write_cell(root, name):
     backend = validate_cell(root, name, value)
     directory = root/'backend'
     directory.mkdir(exist_ok=True)
-    for previous in directory.glob('*.json'):
-        if previous.stem != name and validate_cell(root, previous.stem) != backend:
-            raise ValueError('backend differs from previous campaign cells')
+    # Every stored proof was checked against this same reference when written, so one reference proof
+    # establishes a uniform campaign backend; validate_collection re-validates all proofs at analysis time.
+    reference = next((p.stem for p in sorted(directory.glob('*.json')) if p.stem != name), None)
+    if reference is not None and validate_cell(root, reference) != backend:
+        raise ValueError('backend differs from previous campaign cells')
     (directory/(name+'.json')).write_text(json.dumps(value, sort_keys=True, indent=2)+'\n')
     return backend
 
