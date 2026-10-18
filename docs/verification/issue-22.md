@@ -112,7 +112,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
 | `python3 examples/fx-lab/scripts/scaling_diag.py docs/verification/data/issue-22/before` | Passed: retained compact evidence independently reanalyzed |
 | Existing SC-07 `configuration_smoke.py --jar <bridge-jar> --fx-path <JavaFX-jars> --out <out>` | Passed: 16 independent libatspi/Gio privacy/configuration/cache/event checks |
-| `python3 examples/fx-lab/scripts/registration_regression.py --root . --jar <bridge-jar> --fx-path <JavaFX-jars> --out <result.json>` | Passed: 17 independent role/interface, Unicode/code-point/slice, action/effect, retired-reference and disposal checks; jar hash retained |
+| `python3 examples/fx-lab/scripts/registration_regression.py --root . --jar <bridge-jar> --fx-path <JavaFX-jars> --out <result.json> [--java <jdk27>/bin/java]` | Passed: 17 independent role/interface, Unicode/code-point/slice, action/effect, retired-reference and disposal checks; jar hash retained |
 | `git diff --check` | Passed |
 
 Desktop results: [configuration](data/issue-22/desktop-before/configuration.json),
@@ -218,8 +218,9 @@ contains `GDK_BACKEND=x11`. All 120 reference checkpoints show only `libglass.so
 uses X11. The separate audits establish XWayland in the recorded desktop session. Per-cell proof establishes uniform
 Glass GTK/X11, not an identity for the historical display server/socket, which was not captured. No identity is invented
 from today's environment. Qualified legacy collections remain analyzable but cannot be resumed/repaired with the new
-collector; a collection with a newly captured display binding must start fresh. Legacy and bound-display campaigns
-cannot be silently mixed in a comparison. See [backend/](data/issue-22/before/backend/) for all 60 cell proofs.
+collector; a collection with a newly captured display binding must start fresh. Comparison requires equal environment
+and harness fingerprints and the same proven Glass backend kind, not the same display/session (see the review
+follow-up below). See [backend/](data/issue-22/before/backend/) for all 60 cell proofs.
 
 The repair's embedded Python now receives and invokes the same `java_bin` selected for the launcher/fingerprint.
 Its regression executes the actual embedded checker with a selected JDK and a conflicting Java on PATH.
@@ -288,3 +289,37 @@ Actual independent audit with JDK 27, outside memory collection:
 passed: [103 accessibles / 205 explicit registrations, XWayland](data/issue-22/window-recovery-audit/n100.json).
 The disappearing-window race itself is covered deterministically; no real desktop window was closed for this test.
 Prior complete memory campaigns and Java checks remain applicable; this change only makes audit discovery resilient.
+
+## Review follow-up: scaling harness findings
+
+Ten review findings in the harness tooling were addressed; production Java and the measured Java harness still match
+`60b7a82`. Behavior changes are described in the spec's matching section.
+
+- Comparison is now bound to environment and harness fingerprints plus the proven Glass backend kind. Both retained
+  campaigns reduce to `gtk-x11`. `scaling_diag.py docs/verification/data/issue-22/review3-smoke --before
+  docs/verification/data/issue-22/before` is still refused, now only because the smoke profile and workload differ
+  from the full campaign, not because of display/session or contract mode.
+- Retained analyses are byte-identical: `python3 examples/fx-lab/scripts/scaling_diag.py <campaign>` matches the
+  committed `summary.md` for `before/` and `review3-smoke/`. All 30 retained NMT cells share one category set, so the
+  stricter missing-metric check changes nothing in the evidence.
+- Retained version-1 and version-2 receipts (no clock field) still validate; new receipts record `clock: boottime`.
+
+Executed:
+
+| Command | Result |
+| --- | --- |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 203 tests, zero skips |
+| `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` (JDK 27) | Passed: 187 Java tests, zero skips/failures/errors |
+| `python3 examples/fx-lab/scripts/registration_regression.py --root . --jar build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar --fx-path examples/fx-lab/build/install/fx-lab/lib --out <result.json>` | Passed: 17 checks; selected runtime `27+35` recorded |
+| `run-memory-diag.sh <empty-dir> scaling-smoke` with a stub `pmap` reporting an absolute path | Refused at the environment write; the output directory stayed empty and no staging directory remained |
+| `git diff --check` | Passed |
+
+New tests cover: legacy-versus-bound and cross-display comparison with the same backend, refusal for a different
+backend kind, a metric present in only one cell, an exited but unreaped audit JVM, a non-27 selected Java and real
+`-XshowSettings` output with empty values, the selected launcher being executed, a stalled libatspi traversal
+exhausting one shared budget, boottime and unknown receipt clocks, and one reference proof per `write_cell`.
+
+Not yet verified on the desktop: a complete `scaling-smoke` collection and a real 100-button audit with these runner
+changes. The attempted smoke was refused by the benchmark's own pulse validity check (two pulses of about 1,000 ms)
+because the session was locked and the display in power-save, which throttles the window; that is an invalid
+measurement environment, not a harness failure, and no result from it is retained.

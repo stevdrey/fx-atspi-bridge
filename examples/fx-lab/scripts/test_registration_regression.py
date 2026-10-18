@@ -141,7 +141,8 @@ class RegistrationDiscoveryTest(unittest.TestCase):
 
     def test_selected_java_must_be_27_and_runtime_is_recorded(self):
         def runtime(spec):
-            stderr = f'    java.runtime.version = {spec}+9\n    java.specification.version = {spec}\n'
+            # Real output has empty values (java.class.path) and indented continuation lines.
+            stderr = f'Property settings:\n    java.class.path = \n    java.library.path = /usr/lib64\n        /lib64\n    java.runtime.version = {spec}+9\n    java.specification.version = {spec}\n'
             return types.SimpleNamespace(stderr=stderr)
         with patch.object(rr.subprocess, 'run', return_value=runtime('27')) as run:
             self.assertEqual(rr.java_runtime('/selected/bin/java'), '27+9')

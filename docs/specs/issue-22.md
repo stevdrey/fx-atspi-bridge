@@ -114,8 +114,10 @@ display digest and backend; legacy version-1 receipts remain unchanged and canno
 
 Every cell has backend/NAME.json with JSON digest and warmup/idle pmap hashes, library basenames and Glass backend.
 Validate complete pmap artifacts before extraction; require both checkpoints, one backend across cells/pairs, and
-agreement with independent audits. Export these sanitized proofs and the backend contract. Mixed legacy/bound
-contracts, different bound displays, and absent/ambiguous/inconsistent proofs fail comparison.
+agreement with independent audits. Export these sanitized proofs and the backend contract. Absent, ambiguous or
+inconsistent proofs fail analysis. A before/after comparison requires equal environment and harness fingerprints and
+the same proven Glass backend kind; display/session identity and the legacy/bound contract mode govern resume and
+repair only (superseded by the review follow-up below).
 
 Retrospective qualification requires all original artifacts plus the originally recorded JavaFX 27 graphics jar.
 Verify its hash and GTK loader's GDK_BACKEND=x11 marker; qualify only uniform libglass.so + libglassgtk3.so maps.
@@ -147,3 +149,22 @@ read. Treat CalledProcessError for that candidate as recoverable only after chec
 budget and JVM liveness, then continue to the next window. Preserve the single budget, candidate limit and cleanup.
 Root-list failures, subprocess timeouts, deadline expiry and JVM exit must still fail; never infer a backend without
 matching the benchmark PID. Production/benchmark behavior and historical evidence remain unchanged.
+
+## Review follow-up: scaling harness findings
+
+Comparison: campaigns are compared by environment and harness fingerprints plus the per-cell and audit-proven Glass
+backend kind. The display digest includes the session bus, session id and socket inodes, which change on every login,
+so it must not decide comparability; it continues to block resume/repair of a collection from another display. A
+qualified legacy campaign and a bound-display campaign with the same backend kind are therefore comparable.
+
+Collection: a fresh run stages backend-contract.txt and harness.txt outside the output directory and publishes them only
+after environment.txt is written, so a refused start leaves nothing that blocks a clean rerun. A resume that runs no
+pair keeps the retained audits; otherwise each audit first requires the bound display and is replaced atomically. Pair
+chronology uses CLOCK_BOOTTIME (receipt `clock: boottime`); receipts without a clock field keep their wall-clock
+meaning and still validate. A new backend proof is checked against one reference proof; analysis still validates all.
+
+Clients and analysis: backend detection uses the audit JVM's poll(), because an exited unreaped child keeps
+/proc/<pid>. The regression client launches the selected Java (--java, default $JAVA_HOME/bin/java, else PATH java),
+requires specification 27, records its runtime version, and bounds the libatspi traversal and the following
+libatspi/Gio calls with one shared 30-second budget. Paired analysis rejects cells whose metric sets differ instead of
+treating a missing metric as zero. Retained summaries are unchanged.

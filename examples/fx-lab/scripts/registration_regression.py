@@ -23,7 +23,7 @@ def java_runtime(java):
     """The selected launcher's runtime version; refuse anything but Java 27 before launching the fixture."""
     output = subprocess.run([java, '-XshowSettings:properties', '-version'], capture_output=True, text=True,
                             timeout=30, check=True).stderr
-    properties = dict(line.strip().split(' = ', 1) for line in output.splitlines() if ' = ' in line)
+    properties = {key.strip(): value.strip() for key, separator, value in (line.partition(' = ') for line in output.splitlines()) if separator}
     if properties.get('java.specification.version') != '27':
         raise ValueError('Java specification 27 is required')
     return properties.get('java.runtime.version', 'unknown')
