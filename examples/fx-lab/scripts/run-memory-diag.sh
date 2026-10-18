@@ -63,6 +63,9 @@ require_jdk27 "$java_bin" || exit 1
 check_clean_tree "$root" "$out_abs" || exit 1
 head_sha="$(git -C "$root" rev-parse HEAD)"
 require_fresh_or_resumable "$out_abs" "$resume" "$head_sha" "$profile" "${plan[@]}" || exit 1
+if [[ "$profile" = scaling* ]] && [ -f "$out_abs/environment.txt" ]; then
+  python3 "$script_dir/scaling_backend.py" require-display "$out_abs" >/dev/null
+fi
 (cd "$root" && ./gradlew :examples:fx-lab:installDist --no-daemon -q)
 # Fingerprint comparison contracts, excluding the production bridge artifact being compared.
 scaling_fingerprint=""
@@ -74,12 +77,13 @@ if [[ "$profile" = scaling* ]]; then
     rm -f "$harness_file"
     echo "Refusing to resume: scaling harness differs or is unrecorded." >&2; exit 1
   fi
-  mv "$harness_file" "$out_abs/harness.txt"
   if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
     scaling_fingerprint="$(require_scaling_environment "$out_abs/environment.txt" "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
   else
     scaling_fingerprint="$(scaling_environment_fingerprint "$root" "$limits" "$java_bin" "$warmup" "$samples" "$idle_seconds")"
   fi
+  python3 "$script_dir/scaling_backend.py" initialize "$out_abs" >/dev/null
+  mv "$harness_file" "$out_abs/harness.txt"
 fi
 if [ "$resume" -eq 1 ] && [ -f "$out_abs/environment.txt" ]; then
   echo "resumed=$(date -u +%FT%TZ)" >> "$out_abs/environment.txt"
@@ -124,6 +128,7 @@ for entry in "${plan[@]}"; do
         esac
         trim=()
         [ "$kind" = install ] && trim=(--trim-native-heap=true)
+        if [ "$kind" = scaling ]; then python3 "$script_dir/scaling_backend.py" require-display "$out_abs" >/dev/null; fi
         if [ "$kind" = scaling ]; then cell_start="$(date +%s%N)"; fi
         run_cell "$max_attempts" "$name" "$out_abs" \
           env "${cell_env[@]}" timeout -k 30 1200 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty=10 \

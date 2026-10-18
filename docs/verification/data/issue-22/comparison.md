@@ -2,7 +2,7 @@
 
 Profile: scaling. Checkpoint: `afterIdleGc`. Units: bytes. Values: mean ± sample SD; median (min–max).
 Paired deltas are bridge on − off within size, variant and repetition. NMT and plain are separate JVMs.
-Harness identity and completed chronological pair receipts are validated; see harness.txt, pairs/ and chronology-provenance.txt when present.
+Per-cell Glass proofs, compatible backend/display contracts, harness identity and completed chronological pair receipts are validated; see harness.txt, pairs/ and chronology-provenance.txt when present.
 
 ## Independent counts
 

@@ -7,10 +7,22 @@ import unittest
 
 import scaling_diag as sd
 import scaling_collection as sc
-from test_memory_diag import MALLOC, NMT, SMAPS
+import scaling_backend as sb
+from test_memory_diag import MALLOC, NMT, SMAPS, PMAP
 
 # A self-consistent reduced NMT table for scaling tests, unlike the parser excerpt used by old tests.
 NMT = NMT.replace('reserved=5519572KB, committed=158692KB', 'reserved=3942041KB, committed=40305KB').replace('malloc: 53744KB', 'malloc: 1000KB')
+
+
+BACKEND_PMAP = PMAP.replace('classes.jsa', 'libglass.so').replace('----------------',
+    '0000000043000000       4       4       0 r-x-- libglassgtk3.so\n----------------')
+
+
+def backend_fixture(root, name):
+    for cp in sb.CHECKPOINTS:
+        (root/name/(cp+'.pmap.txt')).write_text(BACKEND_PMAP)
+    (root/'backend').mkdir(exist_ok=True)
+    (root/'backend'/(name+'.json')).write_text(json.dumps(sb.cell_evidence(root, name)))
 
 
 def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile='scaling'):
@@ -24,7 +36,9 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
     manifest = {'version': 1, 'inputs': inputs}
     (root/'harness.txt').write_text(json.dumps(manifest))
     (root/'pairs').mkdir()
-    env = ['scaling_environment_sha256='+fingerprint,
+    (root/'backend-contract.txt').write_text(json.dumps({'version': 1, 'mode': 'legacy-pmap',
+        'provenance': 'synthetic original pmap qualification', 'graphicsJarSha256': 'a'*64}))
+    env = ['a'*64+'  javafx-graphics-27-linux.jar', 'scaling_environment_sha256='+fingerprint,
            'scaling_harness_sha256='+sc.harness_digest(manifest),
            'scaling_contract=1 checkpoint:afterIdleGc order:alternating-on-off no-churn',
            'scaling_artifacts=afterIdleGc-only', 'profile='+profile]
@@ -33,7 +47,7 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
         env.append(f'plan=scaling:{n}:{reps}:off,on:plain,nmt:0:0')
         audit = {'buttons': n, 'accessibles': n+3, 'registrations': 2*n+5, 'cacheRegistrations': 1,
                  'interfaces': {'org.a11y.atspi.Accessible': n+3, 'org.a11y.atspi.Application': 1,
-                                'org.a11y.atspi.Action': n}, 'backend': 'test', 'introspectionChecked': True}
+                                'org.a11y.atspi.Action': n}, 'backend': 'X11 (window PID matched)', 'introspectionChecked': True}
         (root/'audit'/f'n{n}.json').write_text(json.dumps(audit))
         for rep in range(1, reps+1):
             for b in ('off', 'on'):
@@ -57,6 +71,7 @@ def collection(root, cost=lambda n, rep: 8000+100*n, fingerprint='same', profile
                     (artifact/'afterIdleGc.smaps_rollup.txt').write_text(SMAPS)
                     if v == 'nmt':
                         (artifact/'afterIdleGc.nmt.txt').write_text(NMT)
+                    backend_fixture(root, name)
     for n in sizes:
         for rep in range(1, reps+1):
             for v in ('plain', 'nmt'):
@@ -152,6 +167,9 @@ class ScalingTest(unittest.TestCase):
                     receipt = json.loads(receipt_path.read_text())
                     receipt['cells'][1]['sha256'] = sc.digest(path)
                     receipt_path.write_text(json.dumps(receipt))
+                    bp = root/'backend'/path.name
+                    proof = json.loads(bp.read_text()); proof['resultSha256'] = sc.digest(path)
+                    bp.write_text(json.dumps(proof))
                 with self.assertRaises(ValueError):
                     sd.records(root)
 
@@ -168,6 +186,9 @@ class ScalingTest(unittest.TestCase):
                 receipt = json.loads(receipt_path.read_text())
                 receipt['cells'][1]['sha256'] = sc.digest(p)
                 receipt_path.write_text(json.dumps(receipt))
+                bp = root/'backend'/p.name
+                proof = json.loads(bp.read_text()); proof['resultSha256'] = sc.digest(p)
+                bp.write_text(json.dumps(proof))
                 with self.assertRaises(ValueError):
                     sd.records(root)
 

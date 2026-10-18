@@ -113,7 +113,7 @@ Three sizes only characterize this workload; slope change is separate from the 1
 | Executed check | Result |
 | --- | --- |
 | JDK 27 `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 190 Java tests, zero skips/failures/errors |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 160 tests, no skips |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 179 tests, no skips |
 | Candidate `run-memory-diag.sh /tmp/issue22-after-smoke scaling-smoke` | Passed: four cells and independent audit before full campaign |
 | Candidate `run-memory-diag.sh /tmp/issue22-after scaling`, then `--resume` after archiving the incomplete pair | Passed: 60 accepted cells and three audits; both modes of the interrupted NMT pair repeated, no invalid-run retries |
 | Strict `scaling_diag.py /tmp/issue22-after --before /tmp/issue22-before` and compact export/reanalysis | Passed; matching environment/harness/audits, complete chronological pairs, raw/export equality |
@@ -138,3 +138,21 @@ receipt or measurement sequence changed in this correction. All summaries and th
 The native/Java code remains byte-identical to measured `9dbc5fb`; existing 190 Java and 33 desktop checks still apply.
 New tests cover independent resampling, unequal sample sizes, nonzero uncertainty in identical variable samples,
 renumbering invariance, conservative separation, cross-size contrasts, and full-environment repair refusal before work.
+
+## Third review of measurement PR #37
+
+The merged collector bounds audit discovery to 60 seconds, each RPC to five seconds or remaining time, and the entire
+xprop scan to five seconds; it checks JVM liveness and retains cleanup on failure. New collections hash display/session
+selectors and local socket identities before pair preparation, every JVM and receipt completion. Repair uses exactly
+the selected Java binary. The clean four-cell smoke and changed-backend rejection are retained in the
+[measurement report](issue-22.md#third-codex-review-bounded-audit-and-per-cell-displaybackend-proof).
+
+Both complete campaigns were retrospectively qualified from all 240 original warmup/idle pmap checkpoints and their
+original JavaFX 27 graphics jar hash. Every cell shows Glass GTK/X11; the independent session audits agree. The
+[candidate contract](data/issue-22/after/backend-contract.txt) and [60 cell proofs](data/issue-22/after/backend/)
+explicitly record reconstruction now, without claiming an uncaptured historical display/socket identity. The two
+legacy-pmap campaigns remain comparable to each other and frozen against resume/repair; comparison with a newly
+display-bound collection is rejected. No JSON, snapshot or pair receipt was rewritten. All original numerical metrics
+and audits compare exactly equal before/after qualification; raw/retained parsed equality also passes for both.
+The means, bootstrap interval, sample separation and slopes above are unchanged. Production Java and benchmark
+Java/tests still match measured candidate `9dbc5fb4a9d083dbd5bdbf9cef4b9bd5285fc540`.

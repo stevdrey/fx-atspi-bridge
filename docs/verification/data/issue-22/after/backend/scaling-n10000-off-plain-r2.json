@@ -1,0 +1,22 @@
+{
+  "checkpoints": {
+    "afterIdleGc": {
+      "backend": "gtk-x11",
+      "libraries": [
+        "libglass.so",
+        "libglassgtk3.so"
+      ],
+      "pmapSha256": "c56971d474c7518dfbfa8a22deca2e5f57309b0327b0f48146a47123f44a234b"
+    },
+    "afterWarmupGc": {
+      "backend": "gtk-x11",
+      "libraries": [
+        "libglass.so",
+        "libglassgtk3.so"
+      ],
+      "pmapSha256": "d39695727762faab323c0301661ea6b82237aad1e62b0bfbd7c548940ccaa077"
+    }
+  },
+  "resultSha256": "63fe69d364b38429a221999cd54c574bd6c8e7d99b8af3efc19cd2ad14e8aa9b",
+  "version": 1
+}

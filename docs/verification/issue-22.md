@@ -106,7 +106,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 160 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 179 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -198,3 +198,45 @@ point also rejected a deliberately incompatible recorded environment before pair
 
 The separate [shared-introspection report](issue-22-optimization.md) records the measured candidate, lifecycle/protocol
 regressions and the corrected independent-campaign publication criterion. The reference results above remain the measurement PR’s baseline.
+
+## Third Codex review: bounded audit and per-cell display/backend proof
+
+The discovery scan now has a single monotonic 60-second budget, checked before every app/RPC and bounded poll
+sleep, with each call capped at the remaining time or five seconds. Deadline/process-exit errors escape the remote
+application-error handler. X11 window detection has a single five-second budget across all xprop requests.
+Cleanup tests cover discovery failure, JVM exit, terminate/kill waits, failed launch and bus closure after cleanup errors.
+
+A separate versioned backend contract keeps the existing environment fingerprint unchanged. New collections bind a
+hash of DISPLAY, WAYLAND_DISPLAY, GDK_BACKEND, session identity and local display socket device/inode identities.
+The inputs, private socket paths and session-bus addresses are not retained. Check this binding before pair preparation,
+each JVM, result recording and receipt completion. Missing/changed bindings fail before archiving or resuming any pair.
+New version-2 receipts bind the display hash and observed backend. Existing version-1 receipts are not rewritten.
+
+Each cell also retains backend evidence for both original warmup/idle pmap snapshots, with their hashes, library
+basenames, backend classification and JSON hash. Unknown/ambiguous/missing/mixed proofs, audit contradictions and
+incompatible display/provenance contracts fail analysis. Compact export preserves these sanitized proofs.
+
+The [reference backend contract](data/issue-22/before/backend-contract.txt) explicitly records retrospective provenance.
+Qualification validated all original artifacts and the recorded JavaFX 27 graphics jar SHA-256, whose Glass loader
+contains `GDK_BACKEND=x11`. All 120 reference checkpoints show only `libglass.so` and `libglassgtk3.so`; the
+[JavaFX 27 GTK implementation](https://raw.githubusercontent.com/openjdk/jfx/jfx27/modules/javafx.graphics/src/main/native-glass/gtk/GlassApplication.cpp)
+uses X11. The separate audits establish XWayland in the recorded desktop session. Per-cell proof establishes uniform
+Glass GTK/X11, not an identity for the historical display server/socket, which was not captured. No identity is invented
+from today's environment. Qualified legacy collections remain analyzable but cannot be resumed/repaired with the new
+collector; a collection with a newly captured display binding must start fresh. Legacy and bound-display campaigns
+cannot be silently mixed in a comparison. See [backend/](data/issue-22/before/backend/) for all 60 cell proofs.
+
+The repair's embedded Python now receives and invokes the same `java_bin` selected for the launcher/fingerprint.
+Its regression executes the actual embedded checker with a selected JDK and a conflicting Java on PATH.
+
+Executed: 179 Python tests, no skips; shell syntax; all original reference and candidate artifacts qualified (240
+checkpoints across 120 cells); exact before/after equality of all original parsed numerical metrics and independent
+audits; qualified raw/retained reference equality. New synthetic tests exercise timeout budgets, process/bus cleanup,
+backend/display drift, replaced sockets, legacy resume refusal, unknown/mixed/corrupt proofs, incompatible contracts
+and the selected-Java check. Production Java, benchmark Java, workload and snapshot sequence remain unchanged.
+The revised collector ran `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-review3-smoke scaling-smoke`
+from clean commit `b4eace5d4641e81b1e082bbad6f86df95ab27272`: four cells, two version-2 receipts,
+four Glass GTK/X11 proofs and the independent audit passed (103 accessibles / 205 explicit registrations).
+The [sanitized smoke export](data/issue-22/review3-smoke/summary.md) is retained for collector validation only.
+Re-running the collector with only GDK_BACKEND changed failed before build/collection; SHA-256 inventories of every
+file before and after were identical. The display hash and backend proofs passed strict analysis/export.

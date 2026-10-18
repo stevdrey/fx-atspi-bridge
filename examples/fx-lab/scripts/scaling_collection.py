@@ -9,6 +9,8 @@ import shutil
 import time
 import uuid
 
+import scaling_backend as sb
+
 PAIR = re.compile(r'scaling-n(100|1000|10000)-(plain|nmt)-r([1-5])')
 
 
@@ -59,12 +61,19 @@ def validate_pair(root, key, receipt=None):
     if receipt is None:
         receipt = json.loads((root/'pairs'/f'{key}.json').read_text())
     cells = receipt.get('cells', [])
-    if receipt.get('version') != 1 or [c.get('name') for c in cells] != names(key):
+    expected_version = 2 if sb.contract(root)['mode'] == 'bound-display' else 1
+    if receipt.get('version') != expected_version or [c.get('name') for c in cells] != names(key):
         raise ValueError(f'{key}: missing or wrong pair receipt/order')
-    if receipt.get('provenance') not in ('runner', 'original-artifact-mtimes'):
+    if receipt.get('provenance') not in (('runner',) if expected_version == 2 else ('runner', 'original-artifact-mtimes')):
         raise ValueError(f'{key}: unknown chronology provenance')
     if not cells[0].get('session') or cells[0]['session'] != cells[1].get('session'):
         raise ValueError(f'{key}: pair crosses a collection interruption')
+    backend = {sb.validate_cell(root, name) for name in names(key)}
+    if len(backend) != 1:
+        raise ValueError(f'{key}: mixed pair backends')
+    if expected_version == 2 and (receipt.get('displaySha256') != sb.contract(root)['displaySha256'] or
+                                  receipt.get('backend') != next(iter(backend))):
+        raise ValueError(f'{key}: pair display/backend does not bind collection')
     previous = 0
     for cell in cells:
         start, end = cell.get('startNs'), cell.get('endNs')
@@ -79,6 +88,7 @@ def validate_pair(root, key, receipt=None):
 def prepare(root, key):
     """A complete receipt is the commit point. Preserve every abandoned result before rerunning BOTH modes."""
     root = Path(root)
+    display = sb.require_display(root)
     pair_names = names(key)
     directory = root/'pairs'
     directory.mkdir(exist_ok=True)
@@ -87,26 +97,33 @@ def prepare(root, key):
     if receipt.exists():
         validate_pair(root, key)
         return 'skip'
-    paths = [p for name in pair_names for p in (root/name, root/(name+'.json'), root/(name+'.log')) if p.exists()]
+    paths = [p for name in pair_names for p in (root/name, root/(name+'.json'), root/(name+'.log'), root/'backend'/(name+'.json')) if p.exists()]
     if pending.exists():
         paths.append(pending)
     if paths:
         archive = root/'interrupted'/f'{key}-{time.time_ns()}'
         archive.mkdir(parents=True)
         for p in paths:
-            shutil.move(str(p), archive/p.name)
+            target = archive/p.relative_to(root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(p), target)
         with (root/'pair-restarts.txt').open('a') as log:
             log.write(f'{key}: no completed pair receipt; archived both modes and reran the pair\n')
-    pending.write_text(json.dumps({'version': 1, 'provenance': 'runner', 'session': uuid.uuid4().hex, 'cells': []}))
+    pending.write_text(json.dumps({'version': 2, 'provenance': 'runner', 'session': uuid.uuid4().hex, 'displaySha256': display, 'cells': []}))
     return 'run'
 
 
 def record(root, key, name, start):
     root = Path(root)
+    sb.require_display(root)
     pending = root/'pairs'/f'{key}.pending'
     obj = json.loads(pending.read_text())
     if name != names(key)[len(obj['cells'])]:
         raise ValueError('unexpected cell order')
+    backend = sb.write_cell(root, name)
+    if obj.get('backend', backend) != backend:
+        raise ValueError('backend changes inside pair')
+    obj['backend'] = backend
     obj['cells'].append({'name': name, 'session': obj['session'], 'startNs': int(start),
                          'endNs': time.time_ns(), 'sha256': digest(root/(name+'.json'))})
     pending.write_text(json.dumps(obj, sort_keys=True, indent=2)+'\n')
@@ -114,6 +131,7 @@ def record(root, key, name, start):
 
 def finish(root, key):
     root = Path(root)
+    sb.require_display(root)
     pending = root/'pairs'/f'{key}.pending'
     obj = json.loads(pending.read_text())
     validate_pair(root, key, obj)
