@@ -9,7 +9,7 @@ import unittest
 LIB = Path(__file__).with_name('scaling-environment.sh')
 STUBS = '''
 uname() { printf '%s\\n' "${TEST_KERNEL:-kernel-original}"; }
-rpm() { printf '%s\\n' "${TEST_PACKAGES:-packages-original}"; }
+rpm() { printf '%b\\n' "${TEST_PACKAGES-glibc-2.43-9.fc44.x86_64\nglib2-2.88.4-1.fc44.x86_64\nat-spi2-core-2.60.7-1.fc44.x86_64}"; }
 nproc() { printf '%s\\n' "${TEST_CPUS:-16}"; }
 grep() {
   if [ "${*: -1}" = /proc/cpuinfo ]; then printf 'model name: %s\\n' "${TEST_CPU_MODEL:-cpu-original}";
@@ -54,7 +54,7 @@ class ScalingEnvironmentTest(unittest.TestCase):
         self.assertTrue((self.root/'cell-started').exists())
 
     def test_system_changes_refuse_before_any_cell_or_collection_mutation(self):
-        for variable, value in (('TEST_KERNEL','changed'), ('TEST_PACKAGES','changed'), ('TEST_CPUS','8'),
+        for variable, value in (('TEST_KERNEL','changed'), ('TEST_PACKAGES','glibc-2.44-1.x86_64\nglib2-2.88-1.x86_64\nat-spi2-core-2.60-1.x86_64'), ('TEST_CPUS','8'),
                                 ('TEST_CPU_MODEL','changed'), ('XDG_SESSION_TYPE','wayland'), ('JAVA_OPTS','-Xmx2g')):
             with self.subTest(variable=variable):
                 result = self.guard(**{variable:value})
@@ -76,6 +76,38 @@ class ScalingEnvironmentTest(unittest.TestCase):
         self.jar.unlink()
         self.assertNotEqual(self.guard().returncode,0)
         self.assertFalse((self.root/'cell-started').exists())
+
+    def test_missing_or_failed_rpm_refuses_before_mutation_and_emits_no_hash(self):
+        for status in (1, 127):
+            code = f'rpm() {{ printf "glibc-2.43-1.x86_64\\n"; return {status}; }}; '
+            for operation in ('scaling_environment_fingerprint "$1" "$2" "$3" 50 200 10',
+                              'require_scaling_environment "$4" "$1" "$2" "$3" 50 200 10; touch "$1/cell-started"'):
+                with self.subTest(status=status, operation=operation):
+                    result = self.run_shell(code+operation)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, '')
+                    self.assertIn('complete RPM versions', result.stderr)
+                    self.assertFalse((self.root/'cell-started').exists())
+                    self.assertEqual(self.environment.read_text(), 'scaling_environment_sha256='+self.fingerprint+'\n')
+
+    def test_empty_partial_and_malformed_successful_rpm_output_refuses(self):
+        for packages in ('', 'glibc-2.43-1.x86_64',
+                         'glibc-2.43-1.x86_64\nglib2-2.88-1.x86_64',
+                         'glibc-unknown\nglib2-2.88-1.x86_64\nat-spi2-core-2.60-1.x86_64',
+                         'glibc-2.43-1.x86_64\nglib2-2.88-1.x86_64\nat-spi2-core-2.60-1.x86_64\ninvalid row'):
+            with self.subTest(packages=packages):
+                result = self.guard(TEST_PACKAGES=packages)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
+                self.assertFalse((self.root/'cell-started').exists())
+
+    def test_successful_native_output_retains_original_fingerprint_format(self):
+        # Compare the new helper with the original direct successful query at the byte level.
+        old = self.run_shell('scaling_environment_inputs "$1" "$2" "$3" 50 200 10').stdout
+        result = self.run_shell('scaling_native_packages() { rpm -q glibc glib2 at-spi2-core; }; '
+                                'scaling_environment_inputs "$1" "$2" "$3" 50 200 10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, old)
 
     def test_missing_and_duplicate_recorded_fingerprint_refuse(self):
         for text in ('profile=scaling\n', self.environment.read_text()*2):

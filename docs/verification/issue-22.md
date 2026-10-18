@@ -106,7 +106,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 179 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 191 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -235,3 +235,33 @@ four Glass GTK/X11 proofs and the independent audit passed (103 accessibles / 20
 The [sanitized smoke export](data/issue-22/review3-smoke/summary.md) is retained for collector validation only.
 Re-running the collector with only GDK_BACKEND changed failed before build/collection; SHA-256 inventories of every
 file before and after were identical. The display hash and backend proofs passed strict analysis/export.
+
+## Fourth Codex review: native package evidence and registration discovery
+
+`scaling-environment.sh` now requires complete, successful RPM identities for glibc, glib2 and at-spi2-core.
+Missing rpm/non-RPM hosts, a nonzero query (including partial output), and empty/missing/malformed successful output
+fail without producing a fingerprint. Collection/resume/repair cannot prepare a pair using omitted native versions.
+The current scaling tool requires RPM metadata; production support is unchanged. Successful RPM output remains
+byte-compatible with the original format, including multilib ordering. On this Fedora host the revised shared guard
+reproduces both original campaigns' recorded environment digest
+`b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638` exactly. Original results and metadata were not rewritten.
+
+`registration_regression.py` now shares `scaling_audit` discovery with a 30-second budget: check deadline/JVM before
+every candidate and request, cap each PID/toolkit/registry call at min(5 seconds, remaining), and bound poll sleeps.
+Expiration after a reply escapes the recoverable remote-error handler. The libatspi application scan and provider-removal
+poll also use a shared budget; each public libatspi accessor receives the remaining timeout and then restores the
+existing five-second setting. [Atspi.set_timeout](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/func.set_timeout.html)
+uses milliseconds. JVM termination/kill waits remain bounded and the bus closes even when cleanup raises.
+
+Executed: all 191 Python tests, zero skips; shell syntax and git diff checks. New deterministic tests cover 256 slow
+candidates, expiry inside a scan, JVM exit, remaining request/sleep caps, successful PID/toolkit discovery, libatspi
+limits/restoration, and bus cleanup on failure. Native-version tests cover absent/failed queries, successful but
+incomplete metadata, no fingerprint/no mutation on refusal and exact successful-input compatibility. The actual shared
+fingerprint guard passes for both complete raw campaigns. The updated independent client also ran against both original
+bridge jars: all 17 protocol/Unicode/privacy/stale-reference checks passed each time, matching the earlier verdicts
+and measured jar hashes. [Reference rerun](data/issue-22/desktop-review4/registration.json) retains client/helper hashes.
+
+Desktop command from this worktree:
+`python3 examples/fx-lab/scripts/registration_regression.py --root . --jar build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar --fx-path examples/fx-lab/build/install/fx-lab/lib --out /tmp/issue22-review4-before-registration.json`.
+The candidate rerun used the same client script with root/jar/JavaFX paths in the candidate worktree. No production or
+Java benchmark/test code changed; prior complete memory campaigns, scaling-smoke and Java checks remain applicable.

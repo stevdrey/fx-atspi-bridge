@@ -126,3 +126,16 @@ no real native-Wayland qualification is implied by synthetic tests.
 
 The repair's embedded Python receives and invokes the exact java_bin selected by JAVA_HOME/PATH for the launcher,
 JDK validation and fingerprint. A different java earlier on PATH must not reject a valid selected JDK.
+
+## Fourth Codex review: complete native versions and client discovery
+
+Scaling fingerprints require successful, complete, nonempty RPM package identities for glibc, glib2 and at-spi2-core.
+Unavailable rpm, nonzero/partial queries, or missing/malformed identities refuse collection/resume/repair before pair
+preparation or result mutation. This tool currently requires RPM metadata; non-RPM hosts must not silently omit it.
+The successful output format is unchanged so the fully recorded Fedora campaigns retain their original fingerprints.
+
+The independent registration client uses one 30-second budget for bridge discovery, checked before each candidate
+and every PID/toolkit RPC; cap each request to min(5 seconds, remaining) and check JVM liveness throughout. Reuse the
+scaling audit's deadline implementation. Its libatspi application scan and removal polling also receive a shared
+budget, bounded calls and sleeps. Deadline/exit failures escape recoverable remote errors and still clean up the JVM
+and bus. Preserve the 17 independent protocol verdicts and all production/benchmark Java behavior.
