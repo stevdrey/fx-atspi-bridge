@@ -319,7 +319,14 @@ backend kind, a metric present in only one cell, an exited but unreaped audit JV
 `-XshowSettings` output with empty values, the selected launcher being executed, a stalled libatspi traversal
 exhausting one shared budget, boottime and unknown receipt clocks, and one reference proof per `write_cell`.
 
-Not yet verified on the desktop: a complete `scaling-smoke` collection and a real 100-button audit with these runner
-changes. The attempted smoke was refused by the benchmark's own pulse validity check (two pulses of about 1,000 ms)
-because the session was locked and the display in power-save, which throttles the window; that is an invalid
-measurement environment, not a harness failure, and no result from it is retained.
+Desktop checks from clean commit `4a22467` with JDK 27, outside the retained campaigns (no result retained except the audit):
+
+| Command | Result |
+| --- | --- |
+| `examples/fx-lab/scripts/run-memory-diag.sh <empty-dir> scaling-smoke` | Passed: four cells with no retries, two version-2 receipts with `clock: boottime` and backend `gtk-x11`, four backend proofs; the end-of-run audit found 103 accessibles / 205 registrations via XWayland; `scaling_diag.py <dir>` strict analysis passed |
+| Same command with `--resume` on the completed collection | Passed: both pairs and the audit skipped (`retained, no pair ran`); every file except the appended `resumed=` line byte-identical, audit unchanged |
+| `python3 examples/fx-lab/scripts/scaling_audit.py --bin "$PWD/examples/fx-lab/build/install/fx-lab/bin/fx-lab" --nodes 100 --out <result.json>` | Passed: [103 accessibles / 205 explicit registrations, XWayland](data/issue-22/review-followup-audit/n100.json) |
+
+An earlier smoke attempt while the session was locked and the display in power-save was refused by the benchmark's own
+pulse validity check (two pulses of about 1,000 ms); that was an invalid measurement environment, not a harness
+failure, and nothing from it is retained.
