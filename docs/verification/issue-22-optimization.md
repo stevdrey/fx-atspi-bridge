@@ -187,8 +187,7 @@ aggregate summaries cannot independently reproduce original samples, artifact va
 Those require the complete local data or a new controlled campaign, which may yield different numbers.
 
 The relocated source helpers live under `examples/fx-lab/scripts`, and deterministic tests use synthetic fixtures.
-The original campaigns and independent gate were checked unchanged before removal. PR #37 must merge first; then
-retarget PR #38 to main before merging. Measured history remains reachable; no rebase, squash or force-push was used
+The original campaigns and independent gate were checked unchanged before removal. PR #37 is merged as `0a3e67a1c85a0fd76763278d35d5117fa7d5f812`; PR #38 now targets main. Measured history remains reachable; no rebase, squash or force-push was used
 for this cleanup. Already merged #17 evidence and unrelated local changes remain untouched.
 
 P3 verification executed: all **203 Python tests passed, zero skips**, after removing the generated files and
@@ -197,3 +196,12 @@ datasets remain equal to their pre-removal parsed snapshots, and the independent
 generated files remain tracked; merged Python tooling/tests match PR #37. Production/benchmark Java and Java tests
 still match measured `9dbc5fb`; prior 190-test Java and desktop evidence is reused. CI reruns the full Gradle/Python
 checks on the published head. No new memory experiment was run for this hygiene change.
+
+## Integration after the measurement merge
+
+Integrated main at `0a3e67a1c85a0fd76763278d35d5117fa7d5f812` after PR #37 was squash-merged. The sole
+add/add conflict was `docs/specs/issue-22.md`: retain the entire main specification byte-for-byte and the existing
+shared-definition candidate section. Removing only that candidate section reproduces main's file exactly; no
+measurement, acceptance criterion, ownership contract or P3 retention rule was lost. The resolved merge tree was
+identical to the previous candidate tree before this status note. Production Java, tests, benchmark and Python
+tooling are unchanged; existing passing checks remain applicable. Fresh merge CI is reported on PR #38.
