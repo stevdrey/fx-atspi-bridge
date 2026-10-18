@@ -132,19 +132,24 @@ Three sizes characterize this workload; R² alone does not establish universal l
 | inUse | 5802218.8 | 614.272 | 0.974435231 | 516995.6, -568695.1, 51699.6 |
 | totalInUse | 2912356.0 | 901.939 | 0.981677165 | 640281.5, -704309.6, 64028.1 |
 
-| Metric | Interval (buttons) | Marginal bytes/additional accessible, paired by repetition |
+| Metric | Interval (buttons) | Marginal bytes/additional accessible, all cross-size contrasts (descriptive) |
 | --- | --- | --- |
-| inUse | 100 → 1000 | -592.1 ± 15950.7; 1056.3 (-17162.9–16329.8) |
-| inUse | 1000 → 10000 | 683.2 ± 1908.0; 1010.1 (-1885.8–2515.8) |
-| totalInUse | 100 → 1000 | -592.1 ± 1548.0; -1420.5 (-1957.6–1124.5) |
-| totalInUse | 1000 → 10000 | 987.3 ± 112.9; 995.2 (852.8–1155.2) |
+| inUse | 100 → 1000 | -592.1 ± 16044.8; 1147.5 (-29337.0–16329.8) |
+| inUse | 1000 → 10000 | 683.2 ± 1774.2; 1001.0 (-1885.8–4049.5) |
+| totalInUse | 100 → 1000 | -592.1 ± 1347.1; -827.4 (-2893.2–1147.5) |
+| totalInUse | 1000 → 10000 | 987.3 ± 128.7; 995.2 (822.2–1256.2) |
+
+Cross-size contrasts do not create additional independent observations; no repetition pairing across sizes is assumed.
 
 ## Before/after decision
 
-10,000-button paired reductions (baseline − candidate): [111290187, 119512249, 94022135, 105853186, 117962178] bytes.
-Mean reduction: 109727987.0 bytes; percentile bootstrap 95% CI [101176353.8, 117247808.2] (20,000 resamples, seed 22).
+Campaigns are independent. Within each campaign an observation is an intact bridge on−off pair; repetition labels do not match campaigns.
+10,000-button baseline on−off observations (sorted): [118076792, 119557416, 120049120, 122253871, 128695127] bytes.
+10,000-button candidate on−off observations (sorted): [45167, 10732949, 10963684, 12223606, 26026985] bytes.
+Difference of means (baseline − candidate): 109727987.0 bytes; independent percentile bootstrap 95% CI [101631193.4, 117444489.8] (20,000 resamples per campaign, seed 22).
+Minimum possible reduction over any matching: 92049807.0 bytes. Full sample separation is required, together with a positive interval lower bound.
 Memory criterion: PASS. Independent regression checks are also required.
-Five pairs give limited uncertainty resolution; this interval is descriptive for this machine/workload.
-Arena + mmap reductions: 106991039.8 ± 2692916.6; 105853186.0 (104277442.0–111290187.0) bytes; paired values [111290187, 105827513, 107706871, 105853186, 104277442].
+Five observations per campaign give limited uncertainty resolution; this interval is descriptive for this machine/workload. No paired-campaign inference is made.
+Arena + mmap difference of means: 106991039.8 bytes; independent bootstrap 95% CI [104599769.0, 109181945.4].
 baseline: slope 12064.918 bytes/accessible; intercept 916985.2 bytes.
 candidate: slope 614.272 bytes/accessible; intercept 5802218.8 bytes.

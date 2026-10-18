@@ -53,57 +53,67 @@ Candidate interrupted evidence: [archived result](data/issue-22/interrupted-cand
 No heaptrack/valgrind allocation-stack attribution is available. This controlled net difference does not identify
 all GIO allocation sources, qualify other workloads/backends or establish absence/presence of a leak.
 
-## Memory criterion
 
-All values in the following table are decimal MB. The reduction is the difference between corresponding
-bridge on−off deltas, baseline minus candidate, retaining all five valid repetitions.
+## Corrected memory criterion: independent campaigns
 
-| Repetition | Baseline arena on−off | Candidate arena on−off | Reduction |
-| ---: | ---: | ---: | ---: |
-| 1 | 122.253871 | 10.963684 | 111.290187 |
-| 2 | 119.557416 | 0.045167 | 119.512249 |
-| 3 | 120.049120 | 26.026985 | 94.022135 |
-| 4 | 118.076792 | 12.223606 | 105.853186 |
-| 5 | 128.695127 | 10.732949 | 117.962178 |
+Baseline and candidate were collected in separate campaigns. Their repetition numbers have no experimental
+matching. The earlier zipped reductions and paired-campaign bootstrap interval are withdrawn. The valid observation
+inside each campaign remains an intact on/off pair; the two five-observation samples are resampled independently.
 
-All five reductions are positive. Mean reduction: 109.728 ± 10.340 MB (sample SD).
-Paired percentile bootstrap 95% interval: **[101.176354, 117.247808] MB**, excluding zero.
-20,000 resamples, seed 22; five pairs give limited uncertainty resolution. **Memory criterion: PASS.**
+The mean reduction, sample-separation gate and fixed-seed independent bootstrap interval are invariant to renumbering
+either campaign. Input samples are sorted before seeded resampling. Following the second Codex review of #37, the
+criterion requires min(baseline) > max(candidate) and a strictly positive lower interval bound. This ensures every
+possible matching shows improvement and is more conservative than testing five arbitrarily matched reductions.
+The 25 possible contrasts are not 25 independent observations. No matched baseline/candidate blocks are claimed.
 
-10,000-button paired incremental metrics, mean ± sample SD, decimal MB:
+Arena on−off observations at 10,000 buttons, sorted separately (decimal MB):
 
-| Metric | Baseline | Candidate | Baseline − candidate |
-| --- | ---: | ---: | ---: |
-| system | 97.241 ± 51.910 | -6.442 ± 69.196 | 103.683 ± 115.754 |
-| free | -24.486 ± 52.074 | -18.441 ± 72.427 | -6.045 ± 116.679 |
-| inUse | 121.726 ± 4.174 | 11.998 ± 9.252 | 109.728 ± 10.340 |
-| mmap | -2.737 ± 6.120 | 0.000 ± 9.677 | -2.737 ± 11.449 |
-| totalInUse | 118.990 ± 2.682 | 11.998 ± 1.208 | 106.991 ± 2.693 |
-| totalHeld | 94.504 ± 51.431 | -6.442 ± 73.065 | 100.946 ± 116.604 |
-| rss | 252.167 ± 83.412 | 37.420 ± 172.449 | 214.747 ± 213.866 |
-| anonymous | 256.912 ± 73.274 | 41.769 ± 163.663 | 215.143 ± 198.294 |
-| filePss | -4.220 ± 9.685 | -3.965 ± 8.772 | -0.255 ± 14.737 |
-| heap | 9.134 ± 0.119 | 8.875 ± 0.297 | 0.258 ± 0.290 |
+- **Baseline, n=5:** 118.076792, 119.557416, 120.049120, 122.253871, 128.695127.
+- **Candidate, n=5:** 0.045167, 10.732949, 10.963684, 12.223606, 26.026985.
 
-Arena and direct mmap are reported separately and together; RSS is a different quantity. NMT categories,
-medians, ranges and absolute off/on metrics are retained in the summaries, not folded into plain allocator results.
+Difference of independent sample means: **109.727987 MB**.
+Independent percentile bootstrap 95% interval: **[101.631193, 117.444490] MB**.
+Minimum baseline minus maximum candidate: **92.049807 MB**.
+20,000 independent resamples per campaign, seed 22, nearest-rank percentile endpoints; **Memory criterion: PASS**.
+Five observations per campaign give limited uncertainty resolution. The full observed separation is descriptive, not a claim about every possible future run.
+
+10,000-button incremental metrics, decimal MB. Baseline/candidate show mean ± sample SD of their on/off observations;
+the reduction column is a difference of means with an independent bootstrap 95% interval, not an SD of arbitrary matched differences.
+
+| Metric | Baseline mean ± SD | Candidate mean ± SD | Mean reduction | Independent 95% interval |
+| --- | ---: | ---: | ---: | --- |
+| system | 97.241 ± 51.910 | -6.442 ± 69.196 | 103.683 | [36.701, 172.351] |
+| free | -24.486 ± 52.074 | -18.441 ± 72.427 | -6.045 | [-75.486, 64.450] |
+| inUse | 121.726 ± 4.174 | 11.998 ± 9.252 | 109.728 | [101.631, 117.444] |
+| mmap | -2.737 ± 6.120 | 0.000 ± 9.677 | -2.737 | [-10.948, 5.474] |
+| totalInUse | 118.990 ± 2.682 | 11.998 ± 1.208 | 106.991 | [104.600, 109.182] |
+| totalHeld | 94.504 ± 51.431 | -6.442 ± 73.065 | 100.946 | [31.217, 171.317] |
+| rss | 252.167 ± 83.412 | 37.420 ± 172.449 | 214.747 | [79.063, 377.345] |
+| anonymous | 256.912 ± 73.274 | 41.769 ± 163.663 | 215.143 | [88.506, 367.477] |
+| filePss | -4.220 ± 9.685 | -3.965 ± 8.772 | -0.255 | [-9.025, 8.169] |
+| heap | 9.134 ± 0.119 | 8.875 ± 0.297 | 0.258 | [0.020, 0.520] |
+
+Arena/direct mmap remain separate and combined. RSS is a distinct, highly variable quantity; its interval is
+conditional on this small sample and resampling model, not a guarantee for future runs or evidence of a leak.
+NMT categories, medians/ranges and absolute metrics remain in the summaries.
 
 ## Marginal cost
 
 | Metric | Baseline OLS slope bytes/accessible | Candidate OLS slope | Change |
-| --- | ---: | ---: | ---: |
+| --- | ---: | ---: | ---: | ---: |
 | inUse | 12064.918 | 614.272 | -11450.646 |
 | totalInUse | 11653.965 | 901.939 | -10752.026 |
 
-Slope change is separate from the 10,000-button publication criterion. Fits include an intercept; complete
-intercepts/residuals/R² and interval slopes remain in each summary. Three sizes only characterize this workload.
+Fits include an intercept; residuals/R² remain in each summary. Cross-size marginal contrasts are descriptive
+across all combinations of observations, without matched repetition labels or an inflated independent sample size.
+Three sizes only characterize this workload; slope change is separate from the 10,000-button qualification criterion.
 
 ## Regression verification
 
 | Executed check | Result |
 | --- | --- |
 | JDK 27 `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 190 Java tests, zero skips/failures/errors |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 152 tests, no skips |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 160 tests, no skips |
 | Candidate `run-memory-diag.sh /tmp/issue22-after-smoke scaling-smoke` | Passed: four cells and independent audit before full campaign |
 | Candidate `run-memory-diag.sh /tmp/issue22-after scaling`, then `--resume` after archiving the incomplete pair | Passed: 60 accepted cells and three audits; both modes of the interrupted NMT pair repeated, no invalid-run retries |
 | Strict `scaling_diag.py /tmp/issue22-after --before /tmp/issue22-before` and compact export/reanalysis | Passed; matching environment/harness/audits, complete chronological pairs, raw/export equality |
@@ -118,3 +128,13 @@ The deliberate partial-registration failure emits the expected GLib critical tes
 Later analysis/docs-only merges preserve the measured production and Java harness; passing Java/desktop evidence is reused.
 No Orca/full-screen-reader, physical input, other ABI or native-Wayland qualification is claimed. No allocator or desktop
 security setting changed. Reverting the isolated provider/test change restores per-object definitions; no API migration.
+
+
+## Second-review validation
+
+The shared full environment guard used by collector/resume/repair reproduces the original environment fingerprint;
+the measurement report records that this verification was performed after review. No observation, JSON, snapshot,
+receipt or measurement sequence changed in this correction. All summaries and this comparison were regenerated.
+The native/Java code remains byte-identical to measured `9dbc5fb`; existing 190 Java and 33 desktop checks still apply.
+New tests cover independent resampling, unequal sample sizes, nonzero uncertainty in identical variable samples,
+renumbering invariance, conservative separation, cross-size contrasts, and full-environment repair refusal before work.

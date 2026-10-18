@@ -117,7 +117,8 @@ failure. An export failure leaves successfully acquired registration IDs in its 
 API, action admission, error, capability, text, event or object-path contracts change. Java tests exercise shared users,
 last-user removal/reintroduction, capability transitions, 25 close/restart cycles, bus loss and a registration failure
 after earlier objects have registered. The pure protocol test enumerates all current schemas and varies values/IDs.
-The full before/after campaign now passes the publication criterion: all five 10,000-button arena reductions are
-positive, with mean 109.728 MB and paired bootstrap 95% interval [101.176, 117.248] MB. Protocol/lifecycle and
-independent desktop regressions pass. The [candidate report](../verification/issue-22-optimization.md) retains the
-exact pairs, separate mmap/RSS/heap effects, slope changes, chronology provenance and qualification limits.
+The independent-campaign criterion passes: all observed baseline on−off costs exceed all candidate observations,
+with minimum separation 92.050 MB. Mean arena reduction is 109.728 MB; independent bootstrap 95% interval
+[101.631, 117.444] MB. This replaces the invalid historical paired-campaign inference; no measurement changes.
+Protocol/lifecycle and desktop regressions pass. The [candidate report](../verification/issue-22-optimization.md)
+retains both samples, separate mmap/RSS/heap effects, slopes, corrected uncertainty and qualification limits.
