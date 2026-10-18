@@ -1,5 +1,0 @@
-{
-  "displaySha256": "f476e3f0e735328c64dd86cfedf78eea39ed9709639629118a468b4d8abf3f92",
-  "mode": "bound-display",
-  "version": 1
-}

@@ -125,6 +125,49 @@ class RegistrationDiscoveryTest(unittest.TestCase):
         self.assertIn((500,500),settings)
         self.assertEqual(settings[-1],(5000,5000))
 
+    def test_stalled_libatspi_traversal_exhausts_one_shared_budget(self):
+        settings = []
+        atspi = types.SimpleNamespace(set_timeout=lambda *a: settings.append(a))
+        budget = rr.Deadline(30, lambda: True)
+        def stalled_name():
+            self.now += settings[-1][0]/1000
+            return 'node'
+        node = types.SimpleNamespace(get_name=stalled_name, get_child_count=lambda: 1)
+        node.get_child_at_index = lambda i: node
+        with self.assertRaises(TimeoutError):
+            rr.collect_nodes(node, lambda op, *a: rr.atspi_bounded(budget, atspi, op, *a))
+        self.assertLessEqual(self.now, 30)
+        self.assertEqual(settings[-1], (5000, 5000))
+
+    def test_selected_java_must_be_27_and_runtime_is_recorded(self):
+        def runtime(spec):
+            # Real output has empty values (java.class.path) and indented continuation lines.
+            stderr = f'Property settings:\n    java.class.path = \n    java.library.path = /usr/lib64\n        /lib64\n    java.runtime.version = {spec}+9\n    java.specification.version = {spec}\n'
+            return types.SimpleNamespace(stderr=stderr)
+        with patch.object(rr.subprocess, 'run', return_value=runtime('27')) as run:
+            self.assertEqual(rr.java_runtime('/selected/bin/java'), '27+9')
+        self.assertEqual(run.call_args.args[0][0], '/selected/bin/java')
+        with patch.object(rr.subprocess, 'run', return_value=runtime('21')), self.assertRaisesRegex(ValueError, '27'):
+            rr.java_runtime('/other/bin/java')
+
+    def test_fixture_launches_the_selected_java(self):
+        app = Mock(pid=123, stdout=['PID=123\n'])
+        app.poll.return_value = None
+        app.wait.return_value = 0
+        bus = Mock()
+        session = Mock()
+        session.call_sync.return_value.unpack.return_value = ('synthetic address',)
+        gio = types.SimpleNamespace(BusType=types.SimpleNamespace(SESSION=1),bus_get_sync=lambda *a:session,
+            DBusConnectionFlags=types.SimpleNamespace(AUTHENTICATION_CLIENT=1,MESSAGE_BUS_CONNECTION=2),
+            DBusConnection=types.SimpleNamespace(new_for_address_sync=lambda *a:bus))
+        modules = {'gi': types.SimpleNamespace(require_version=lambda *a:None),
+                   'gi.repository': types.SimpleNamespace(Atspi=Mock(),Gio=gio,
+                       GLib=types.SimpleNamespace(Variant=lambda *a:a,Error=RemoteError))}
+        with patch.dict(sys.modules,modules), patch.object(rr.subprocess,'Popen',return_value=app) as popen, patch.object(rr,'discover_bridge',side_effect=TimeoutError('expired')):
+            with self.assertRaises(TimeoutError):
+                rr.run(Path('/fixture'),Path('/bridge.jar'),'/javafx','/selected/bin/java')
+        self.assertEqual(popen.call_args.args[0][0], '/selected/bin/java')
+
     def test_failure_closes_bus_even_if_process_cleanup_fails(self):
         for cleanup_fails in (False, True):
             with self.subTest(cleanup_fails=cleanup_fails):
@@ -144,7 +187,7 @@ class RegistrationDiscoveryTest(unittest.TestCase):
                                GLib=types.SimpleNamespace(Variant=lambda *a:a,Error=RemoteError))}
                 with patch.dict(sys.modules,modules), patch.object(rr.subprocess,'Popen',return_value=app), patch.object(rr,'discover_bridge',side_effect=TimeoutError('expired')):
                     with self.assertRaises((TimeoutError,RuntimeError)):
-                        rr.run(Path('/fixture'),Path('/bridge.jar'),'/javafx')
+                        rr.run(Path('/fixture'),Path('/bridge.jar'),'/javafx','/selected/bin/java')
                 app.terminate.assert_called_once()
                 bus.close_sync.assert_called_once_with(None)
 

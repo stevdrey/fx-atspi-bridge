@@ -1,6 +1,0 @@
-{
-  "graphicsJarSha256": "93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0",
-  "mode": "legacy-pmap",
-  "provenance": "Retrospective original warmup/idle pmap qualification; historical display/socket identity was not captured.",
-  "version": 1
-}

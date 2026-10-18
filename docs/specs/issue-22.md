@@ -38,7 +38,7 @@ fx-lab.jar and the complete generated launcher (including default JVM options); 
 excluded. Comparisons reject either fingerprint mismatch or missing harness identity. Resume also checks
 revision/profile/plan and both fingerprints.
 
-A pair receipt is committed only after both modes complete in alternating order in one uninterrupted session.
+A local pair receipt is finalized only after both modes complete in alternating order in one uninterrupted session.
 It binds the result JSON hashes, timestamps and session identity. Resume preserves completed pairs; without a
 receipt it archives both halves (even if one or both JSONs exist) and repeats the entire pair. Analysis rejects
 missing receipts, reordered/overlapping timestamps, different sessions or changed result hashes. For the original
@@ -49,8 +49,10 @@ The collector, resume and original-pair repair share scaling-environment.sh. Bef
 recompute the full JDK/JavaFX/native packages/kernel/CPU/session/options/workload/limits fingerprint and compare
 against the unique recorded value. A mismatch or missing input fails before mutating the original collection.
 Preflight imports Python gi/Gio/GLib and requires xprop when DISPLAY permits X11/XWayland before collecting any cells.
-Raw artifacts stay outside the repo. Export validates the full collection first and preserves only the checkpoint's
-malloc/smaps/NMT snapshots (sanitized), run JSON, audit counts, environment, harness manifest, pair receipts and retries; compact exports remain analyzable.
+Generated artifacts stay outside the tracked tree, following policy issue #39. Export validates the full collection
+first and can retain sanitized checkpoint snapshots/JSON/audits/manifests/receipts in a local directory. These local
+exports remain analyzable but are not committed. Commit concise authored methodology/results, not generated output.
+A summary alone cannot reconstruct samples, uncertainty or artifact validation; original local data or new runs are needed.
 
 ## Limits and failure modes
 
@@ -140,8 +142,10 @@ display digest and backend; legacy version-1 receipts remain unchanged and canno
 
 Every cell has backend/NAME.json with JSON digest and warmup/idle pmap hashes, library basenames and Glass backend.
 Validate complete pmap artifacts before extraction; require both checkpoints, one backend across cells/pairs, and
-agreement with independent audits. Export these sanitized proofs and the backend contract. Mixed legacy/bound
-contracts, different bound displays, and absent/ambiguous/inconsistent proofs fail comparison.
+agreement with independent audits. Export these sanitized proofs and the backend contract. Absent, ambiguous or
+inconsistent proofs fail analysis. A before/after comparison requires equal environment and harness fingerprints and
+the same proven Glass backend kind; display/session identity and the legacy/bound contract mode govern resume and
+repair only (superseded by the review follow-up below).
 
 Retrospective qualification requires all original artifacts plus the originally recorded JavaFX 27 graphics jar.
 Verify its hash and GTK loader's GDK_BACKEND=x11 marker; qualify only uniform libglass.so + libglassgtk3.so maps.
@@ -173,3 +177,35 @@ read. Treat CalledProcessError for that candidate as recoverable only after chec
 budget and JVM liveness, then continue to the next window. Preserve the single budget, candidate limit and cleanup.
 Root-list failures, subprocess timeouts, deadline expiry and JVM exit must still fail; never infer a backend without
 matching the benchmark PID. Production/benchmark behavior and historical evidence remain unchanged.
+
+## Review follow-up: scaling harness findings
+
+Comparison: campaigns are compared by environment and harness fingerprints plus the per-cell and audit-proven Glass
+backend kind. The display digest includes the session bus, session id and socket inodes, which change on every login,
+so it must not decide comparability; it continues to block resume/repair of a collection from another display. A
+qualified legacy campaign and a bound-display campaign with the same backend kind are therefore comparable.
+
+Collection: a fresh run stages backend-contract.txt and harness.txt outside the output directory and publishes them only
+after environment.txt is written, so a refused start leaves nothing that blocks a clean rerun. A resume that runs no
+pair keeps the retained audits; otherwise each audit first requires the bound display and is replaced atomically. Pair
+chronology uses CLOCK_BOOTTIME (receipt `clock: boottime`); receipts without a clock field keep their wall-clock
+meaning and still validate. A new backend proof is checked against one reference proof; analysis still validates all.
+
+Clients and analysis: backend detection uses the audit JVM's poll(), because an exited unreaped child keeps
+/proc/<pid>. The regression client launches the selected Java (--java, default $JAVA_HOME/bin/java, else PATH java),
+requires specification 27, records its runtime version, and bounds the libatspi traversal and the following
+libatspi/Gio calls with one shared 30-second budget. Paired analysis rejects cells whose metric sets differ instead of
+treating a missing metric as zero. The reported numerical conclusions are unchanged.
+
+## P3 follow-up: summarized evidence only
+
+Address the PR #37 review comment "keep raw benchmark evidence out of Git" and link policy
+https://github.com/stevdrey/fx-atspi-bridge/issues/39. Remove generated Issue-22 output from both PR trees, including
+JSON, snapshots, receipts, manifests, desktop results and bulk summaries. Preserve originals locally without
+publishing a separate evidence-only PR. Keep authored aggregate results with n/mean/SD/median/range, per-accessible
+costs, counts, exact measured SHAs/environment, commands, invalid/interrupted attempts, design decision and limitations.
+The candidate report preserves the independent comparison and ownership evidence; no measured values change.
+Move qualification/repair source to examples/fx-lab/scripts and make tests depend on those source paths. Align the
+moved repair's start timestamp with the collector's existing CLOCK_BOOTTIME receipt contract. No production Java
+or benchmark workload changes. Recheck Python, shell syntax, local data/summary equality, links and CI. Do not
+rewrite measured history or touch already merged #17 evidence. Repository-wide guidance changes belong to #39.

@@ -10,12 +10,17 @@ import time
 import uuid
 
 import scaling_backend as sb
+# One SHA-256 helper; the original-pair repair source script also calls scaling_collection.digest.
+from scaling_backend import digest
 
 PAIR = re.compile(r'scaling-n(100|1000|10000)-(plain|nmt)-r([1-5])')
+# Receipts without a clock field predate this change and used the wall clock (date +%s%N / time.time_ns).
+CLOCKS = (None, 'boottime')
 
 
-def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def clock_ns():
+    """Monotonic across suspend and immune to NTP steps; the pair session id rules out a reboot inside a pair."""
+    return time.clock_gettime_ns(time.CLOCK_BOOTTIME)
 
 
 def harness(root, launcher):
@@ -66,6 +71,8 @@ def validate_pair(root, key, receipt=None):
         raise ValueError(f'{key}: missing or wrong pair receipt/order')
     if receipt.get('provenance') not in (('runner',) if expected_version == 2 else ('runner', 'original-artifact-mtimes')):
         raise ValueError(f'{key}: unknown chronology provenance')
+    if receipt.get('clock') not in CLOCKS:
+        raise ValueError(f'{key}: unknown chronology clock')
     if not cells[0].get('session') or cells[0]['session'] != cells[1].get('session'):
         raise ValueError(f'{key}: pair crosses a collection interruption')
     backend = {sb.validate_cell(root, name) for name in names(key)}
@@ -109,7 +116,7 @@ def prepare(root, key):
             shutil.move(str(p), target)
         with (root/'pair-restarts.txt').open('a') as log:
             log.write(f'{key}: no completed pair receipt; archived both modes and reran the pair\n')
-    pending.write_text(json.dumps({'version': 2, 'provenance': 'runner', 'session': uuid.uuid4().hex, 'displaySha256': display, 'cells': []}))
+    pending.write_text(json.dumps({'version': 2, 'provenance': 'runner', 'session': uuid.uuid4().hex, 'clock': 'boottime', 'displaySha256': display, 'cells': []}))
     return 'run'
 
 
@@ -125,7 +132,7 @@ def record(root, key, name, start):
         raise ValueError('backend changes inside pair')
     obj['backend'] = backend
     obj['cells'].append({'name': name, 'session': obj['session'], 'startNs': int(start),
-                         'endNs': time.time_ns(), 'sha256': digest(root/(name+'.json'))})
+                         'endNs': clock_ns(), 'sha256': digest(root/(name+'.json'))})
     pending.write_text(json.dumps(obj, sort_keys=True, indent=2)+'\n')
 
 

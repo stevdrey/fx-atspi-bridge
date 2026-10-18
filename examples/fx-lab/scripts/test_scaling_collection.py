@@ -97,15 +97,17 @@ class CollectionTest(unittest.TestCase):
                 (root/(name+'.json')).write_text(name)
                 (root/name).mkdir()
                 backend_fixture(root, name)
-                sc.record(root, key, name, sc.time.time_ns())
+                sc.record(root, key, name, sc.clock_ns())
             sc.finish(root, key)
+            receipt = json.loads((root/'pairs'/(key+'.json')).read_text())
+            self.assertEqual(receipt['clock'], 'boottime')
             self.assertEqual(sc.prepare(root, key), 'skip')
             (root/(sc.names(key)[0]+'.json')).write_text('changed')
             with self.assertRaisesRegex(ValueError, 'result'):
                 sc.prepare(root, key)
 
     def test_missing_receipt_cross_session_and_reversed_chronology_rejected(self):
-        for bad in ('missing', 'session', 'time', 'order'):
+        for bad in ('missing', 'session', 'time', 'order', 'clock'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 collection(root)
@@ -118,6 +120,8 @@ class CollectionTest(unittest.TestCase):
                         receipt['cells'][1]['session'] = 'resumed'
                     elif bad == 'time':
                         receipt['cells'][1]['startNs'] = 1
+                    elif bad == 'clock':
+                        receipt['clock'] = 'realtime'
                     else:
                         receipt['cells'].reverse()
                     path.write_text(json.dumps(receipt))

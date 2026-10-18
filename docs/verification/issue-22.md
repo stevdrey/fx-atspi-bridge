@@ -1,295 +1,222 @@
 # Verification — Issue 22: native registration scaling
 
 Issue: [#22](https://github.com/stevdrey/fx-atspi-bridge/issues/22). Spec: [issue-22](../specs/issue-22.md).
-Measurement PR #37 adds measurement/analysis and a design decision; its production Java is unchanged from `60b7a82`.
-It does not retrospectively change #17 or replace #15's broader baseline.
+PR #37 supplies measurement tooling and the reference/design decision; the production optimization is separate in
+[PR #38](https://github.com/stevdrey/fx-atspi-bridge/pull/38). Historical #17 results are unchanged.
 
-## Environment and attribution
+## Scope, environment and provenance
 
-Measured harness revision: `4682dab`; production/BenchApp/MemoryDiagnostics match `60b7a82` byte-for-byte.
-Fedora 44 / GNOME / Wayland session, Linux `7.2.10-200.fc44.x86_64`; AMD Ryzen 7 7730U, 16 CPUs, 15 GiB RAM.
-Zulu JDK 27 `27+35`; JavaFX 27 Linux jars; glibc `2.43-9.fc44`, GLib `2.88.4-1.fc44`, procps-ng/pmap `4.0.6`.
-Independent audits establish **XWayland** by matching an X11 window PID to each benchmark JVM; this is not native
-Wayland qualification. Exact jar hashes, JVM options, allocator-default check and environment fingerprint are in
-[before/environment.txt](data/issue-22/before/environment.txt).
+- Reference production: `60b7a82545911b2f5cedb463b9a51eeb0c10762b`.
+- Original reference collection/harness: `4682dab27c59f1fa7cf3ed19e1353b3a16ab0093`.
+- Repaired reference pair: `b46e5fd0992fde3aac53ec393aa8216bc2aab6c5`, unchanged Java/source/installed artifacts.
+- Measured candidate: `9dbc5fb4a9d083dbd5bdbf9cef4b9bd5285fc540` (PR #38).
+- Reference bridge jar SHA-256: `43decefd90c43b9c3a374bfadc94a102a559b58c891d6607df239cbc44f230ac`.
+- Candidate bridge jar SHA-256: `e100917c66a93e754e0b03a788c2dbe7a1429421ea9424b084f6b920f7c2528c`.
 
-Collection started 2026-10-17 22:00 UTC and finished that evening. A user interruption left 13 complete results;
-no benchmark remained alive. The original `--resume` preserved individual results and split the 100-button plain
-repetition-4 pair across that interruption. Codex review identified this pairing defect. Both halves were subsequently
-archived and rerun together from a clean checkout with identical production, Java benchmark, compiled harness,
-launcher and JVM/workload inputs. The 60-cell analysis uses that repaired pair; it does not treat the interrupted
-halves as paired observations. [Original results](data/issue-22/interrupted-reference-pair/) remain available, excluded
-for chronology rather than their memory values. [Pair restart](data/issue-22/before/pair-restarts.txt) is recorded.
-One later attempt (`scaling-n1000-on-nmt-r2`) was invalidated by a 1,013.482283 ms pulse, beyond the existing 900 ms
-limit; its prescribed retry passed. [retries.txt](data/issue-22/before/retries.txt) records the attempt. No valid run
-was dropped based on memory or latency results; the two individually valid interrupted halves were replaced solely
-because they did not form one uninterrupted pair. The display was not locked during the investigated stall.
+Fedora 44 / GNOME Wayland session, JavaFX **GTK/X11 via XWayland**, Linux `7.2.10-200.fc44.x86_64`,
+AMD Ryzen 7 7730U, 16 CPUs, 15 GiB RAM. Zulu JDK 27 `27+35` (Zulu27.28+101-CA), JavaFX 27 Linux jars;
+glibc `2.43-9.fc44`, GLib `2.88.4-1.fc44`, at-spi2-core `2.60.7-1.fc44`, pmap/procps-ng `4.0.6`.
+The allocator and inherited JVM options were default/unset; no global allocator or desktop security setting changed.
+The environment digest was `b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638` and the
+harness digest was `c182c1c732003c0f07ec05988b89548539ceb4ad8e1c2a7ec1ccedbafb937752` in both campaigns.
+These are provenance identifiers, not an inventory from which excluded artifacts can be recovered.
 
-## Method and retained evidence
+## Method and validity
 
-60 accepted fresh-JVM cells (plus both original interrupted halves and one invalid attempt): 100/1,000/10,000 buttons × bridge off/on × plain/NMT × five repetitions. Warmup 50, samples 200,
-10 dirty buttons, idle 10 seconds, structural/install churn zero. Mode order alternates by repetition.
-Use `afterIdleGc`; diagnostics and their order are unchanged. NMT adds allocator headers, so primary malloc
-comparisons use **plain** cells; NMT categories are reported separately. All run JSON, checkpoint malloc/smaps/NMT,
-independent counts and a reproducible [summary](data/issue-22/before/summary.md) are committed. The full raw collection
-also has warmup snapshots, histograms and pmap; these remain outside the repository. Export validates the full raw
-artifacts first, removes addresses/PID headers from selected snapshots, and omits logs and local paths. Parsed raw and
-exported metrics, counts, profile and fingerprint compare exactly equal for every run.
+Each complete campaign used **60 accepted JVMs**: three sizes × bridge off/on × plain/NMT × five repetitions,
+plus three separate independent audit JVMs. Warmup 50, samples 200, dirty nodes 10, idle 10 seconds, no structural or
+installation churn. Within each size/variant, mode order alternated off/on and on/off. Use `afterIdleGc`; keep the same
+Java diagnostic order. Main allocator/RSS values below use the plain JVMs; NMT was measured in separate JVMs.
 
-`inUse = arena system − free`; `totalInUse = inUse + direct mmap`; `totalHeld = system + mmap`. These describe allocator
-accounting, not allocation-stack attribution or proof of a leak. glibc 2.43 omits the removed fastbin total; the parser
-accepts its absence, while requiring complete XML and process-wide rest/mmap/system totals. Both formats are tested.
-The separate total matters: some runs shift ~13.7 MB between mmap and arenas. Taking arena bytes alone exaggerates
-small-tree variance. Histograms/diagnostics can perturb subsequent readings; this experiment consistently uses the same
-checkpoint and sequence, and every JSON records snapshot RSS cost.
+A reference interruption split the 100-button plain repetition-4 pair; both halves were preserved locally and rerun
+together. Their replacement was for chronology, never memory values. One 1,000-button on/NMT attempt hit a
+1,013.482283 ms pulse (900 ms validity limit); its prescribed retry passed. No valid memory outlier was dropped.
+The candidate's incomplete 10,000-button NMT pair was likewise rerun as a whole. Historical chronology was explicitly
+reconstructed from original raw mtimes/resume markers; original process-start times were not captured. Original
+launcher identity was reconstructed from unchanged Gradle inputs and compiled jar hashes. All 240 warmup/idle pmap
+checkpoints across the two campaigns were retrospectively qualified as Glass GTK/X11 against the recorded JavaFX jar.
+No historical display/socket identity is invented. Independent Gio audits matched each JVM's X11 window PID.
 
-## Measured scaling
+`inUse = system − free`, `totalInUse = inUse + direct mmap`, `totalHeld = system + mmap`.
+Arena, free retained pages, OS-held memory and direct mmap remain distinct. glibc 2.43 omits removed fastbin totals;
+the parser handles both complete formats. Diagnostic allocation can perturb later readings, so both campaigns used
+the same checkpoint/order. At small sizes ~13.7 MB can shift between arenas and direct mmap.
 
-All values below are **decimal MB (1,000,000 bytes)**. Differences are paired bridge on − off within repetition.
-Every metric column reports mean ± sample standard deviation; exact per-run values, median/range, all allocator/free/held and NMT categories are
-in the summary.
+## Reference measurements
 
-| Buttons | Actual accessibles | Explicit registrations incl. Cache | Arena in-use Δ MB | Arena + mmap in-use Δ MB | RSS Δ MB | Used heap Δ MB |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100 | 103 | 205 | 3.401 ± 13.827 | 3.401 ± 1.093 | 9.313 ± 5.248 | 0.740 ± 0.081 |
-| 1,000 | 1,003 | 2,005 | 11.653 ± 6.283 | 14.390 ± 0.258 | 12.571 ± 11.501 | 1.510 ± 0.086 |
-| 10,000 | 10,003 | 20,005 | 121.726 ± 4.174 | 118.990 ± 2.682 | 252.167 ± 83.412 | 9.134 ± 0.119 |
+Units are **decimal MB (1,000,000 bytes)**. Each cell below is **mean ± sample SD; median; [min, max]** of five
+intact on−off observations. Negative deltas are retained. On/off observations inside a campaign are paired;
+repetition labels across sizes or campaigns are not matched.
 
-Counts come from independent Gio Cache/GetItems and live introspection, corroborating the provider's one successful
-`registerObject` per advertised interface. They are derived registration counts, not sampled allocation stacks.
-There are N+3 Accessible interfaces, N Action interfaces, one Application and one separately counted Cache registration;
-automatic Properties/Introspectable/Peer do not count. The accessible count includes application, window and panel.
+| Buttons | Pairs | Arena in-use Δ | Arena + direct mmap Δ | RSS Δ |
+| ---: | ---: | --- | --- | --- |
+| 100 | 5 | 3.401 ± 13.827; 1.564; [-10.421, 17.764] | 3.401 ± 1.093; 3.839; [1.564, 4.258] | 9.313 ± 5.248; 9.462; [1.692, 15.741] |
+| 1,000 | 5 | 11.653 ± 6.283; 14.470; [0.420, 14.731] | 14.390 ± 0.258; 14.470; [14.105, 14.731] | 12.571 ± 11.501; 16.286; [-2.408, 24.289] |
+| 10,000 | 5 | 121.726 ± 4.174; 120.049; [118.077, 128.695] | 118.990 ± 2.682; 119.557; [115.010, 122.254] | 252.167 ± 83.412; 275.468; [109.916, 326.963] |
 
-OLS on mean paired deltas versus actual accessibles:
+| Buttons | Exported accessibles | Explicit registrations incl. Cache | Arena bytes/accessible | Arena + mmap bytes/accessible |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 103 | 205 | 33016.7 | 33016.7 |
+| 1,000 | 1,003 | 2,005 | 11618.1 | 14346.8 |
+| 10,000 | 10,003 | 20,005 | 12169.0 | 11895.4 |
 
-| Metric | Fixed intercept bytes | Slope bytes / additional accessible | R² | Residuals at 100/1,000/10,000 buttons, bytes |
+Counts are independent Gio Cache/GetItems plus representative live introspection: N+3 Accessible, N Action,
+one Application, one separately counted Cache registration. Automatic GDBus interfaces are excluded. The count is
+corroborated by the provider export loop; it is not allocation-stack attribution. Per-accessible costs are means;
+the distributions above are divided by the corresponding exported-accessible count.
+
+Supplementary reference on−off accounting (same five pairs):
+
+| Buttons | Metric | Mean ± SD; median; [min, max] MB |
+| ---: | --- | --- |
+| 100 | system | 5.564 ± 19.760; -1.995; [-4.731, 40.817] |
+| 100 | free | 2.163 ± 15.859; 4.696; [-19.137, 23.052] |
+| 100 | mmap | 0.000 ± 13.685; 0.000; [-13.685, 13.685] |
+| 100 | totalHeld | 5.564 ± 16.232; 8.954; [-15.299, 27.132] |
+| 100 | anonymous | 9.329 ± 5.294; 9.449; [1.618, 15.761] |
+| 100 | filePss | -0.776 ± 1.873; -0.048; [-4.110, 0.367] |
+| 100 | heap | 0.740 ± 0.081; 0.752; [0.650, 0.859] |
+| 1,000 | system | -4.891 ± 33.916; 0.737; [-61.067, 30.712] |
+| 1,000 | free | -16.544 ± 28.180; -13.747; [-61.488, 16.242] |
+| 1,000 | mmap | 2.737 ± 6.120; 0.000; [0.000, 13.685] |
+| 1,000 | totalHeld | -2.154 ± 28.344; 0.737; [-47.383, 30.712] |
+| 1,000 | anonymous | 12.530 ± 11.636; 16.355; [-2.781, 24.187] |
+| 1,000 | filePss | -0.001 ± 0.181; -0.006; [-0.258, 0.250] |
+| 1,000 | heap | 1.510 ± 0.086; 1.461; [1.438, 1.643] |
+| 10,000 | system | 97.241 ± 51.910; 106.602; [31.474, 170.320] |
+| 10,000 | free | -24.486 ± 52.074; -18.742; [-88.575, 52.243] |
+| 10,000 | mmap | -2.737 ± 6.120; 0.000; [-13.685, 0.000] |
+| 10,000 | totalHeld | 94.504 ± 51.431; 96.268; [31.474, 170.320] |
+| 10,000 | anonymous | 256.912 ± 73.274; 275.309; [133.878, 326.967] |
+| 10,000 | filePss | -4.220 ± 9.685; 0.081; [-21.544, 0.201] |
+| 10,000 | heap | 9.134 ± 0.119; 9.088; [8.999, 9.272] |
+
+Absolute reference plain-JVM accounting, same statistic format and MB units:
+
+| Buttons | Arena off | Arena on | RSS off | RSS on |
+| ---: | --- | --- | --- | --- |
+| 100 | 45.730 ± 7.490; 49.985; [37.192, 51.818] | 49.131 ± 7.493; 53.271; [40.559, 55.471] | 250.866 ± 8.561; 246.911; [243.483, 260.841] | 260.179 ± 6.273; 259.461; [254.489, 270.303] |
+| 1,000 | 47.387 ± 7.408; 52.789; [39.229, 52.808] | 59.040 ± 7.516; 53.961; [53.228, 67.278] | 331.494 ± 8.993; 327.373; [325.603, 347.070] | 344.066 ± 9.288; 347.202; [328.921, 351.662] |
+| 10,000 | 42.416 ± 6.471; 40.103; [38.070, 53.882] | 164.142 ± 6.742; 160.324; [157.752, 173.440] | 791.995 ± 31.659; 785.687; [747.409, 828.051] | 1044.162 ± 73.179; 1075.466; [926.233, 1109.475] |
+
+Separate NMT-JVM aggregate deltas (five pairs per size); detailed categories remain available from rerunning the
+analyzer, not from these condensed tables:
+
+| Buttons | NMT metric | On−off mean ± SD; median; [min, max] MB |
+| ---: | --- | --- |
+| 100 | Total | 17.096 ± 21.746; 7.698; [5.349, 55.926] |
+| 100 | malloc | 2.114 ± 1.163; 2.189; [0.561, 3.801] |
+| 100 | Native Memory Tracking | 0.239 ± 0.008; 0.240; [0.226, 0.247] |
+| 1,000 | Total | 9.309 ± 1.996; 8.297; [7.373, 12.220] |
+| 1,000 | malloc | 2.421 ± 0.143; 2.438; [2.249, 2.559] |
+| 1,000 | Native Memory Tracking | 0.245 ± 0.011; 0.248; [0.231, 0.257] |
+| 10,000 | Total | 77.387 ± 75.819; 123.251; [-50.688, 124.856] |
+| 10,000 | malloc | 1.604 ± 0.762; 1.219; [0.947, 2.528] |
+| 10,000 | Native Memory Tracking | 0.179 ± 0.131; 0.257; [-0.034, 0.267] |
+
+## Candidate comparison and design decision
+
+The candidate principal deltas from the separately collected campaign are recorded here to preserve the before/after
+conclusions. Implementation, ownership and regression details belong to PR #38. Same units/statistic format:
+
+| Buttons | Pairs | Arena in-use Δ | Arena + direct mmap Δ | RSS Δ |
+| ---: | ---: | --- | --- | --- |
+| 100 | 5 | 6.382 ± 5.465; 4.567; [2.321, 15.985] | 3.646 ± 1.271; 4.011; [2.300, 5.028] | 19.178 ± 21.502; 32.096; [-9.585, 36.422] |
+| 1,000 | 5 | 5.850 ± 14.845; 16.109; [-10.418, 17.018] | 3.113 ± 0.386; 3.266; [2.424, 3.333] | 17.295 ± 8.925; 20.124; [7.492, 28.426] |
+| 10,000 | 5 | 11.998 ± 9.252; 10.964; [0.045, 26.027] | 11.998 ± 1.208; 12.224; [10.733, 13.730] | 37.420 ± 172.449; 84.242; [-252.039, 172.933] |
+
+Reference OLS on mean deltas versus exported accessibles includes a fixed intercept:
+
+| Metric | Intercept bytes | Slope bytes/accessible | R² | Residuals at 100/1,000/10,000 buttons, bytes |
 | --- | ---: | ---: | ---: | --- |
-| Arena in-use | 916,985.2 | 12,064.918 | 0.999608262 | 1,241,049.8; -1,365,154.8; 124,105.0 |
-| Arena + mmap in-use | 2,438,744.3 | 11,653.965 | 0.999984504 | -238,381.1; 262,219.2; -23,838.1 |
+| Arena in-use | 916985.2 | 12064.918 | 0.999608262 | 1241049.8; -1365154.8; 124105.0 |
+| Arena + mmap | 2438744.3 | 11653.965 | 0.999984504 | -238381.1; 262219.2; -23838.1 |
 
-Combined marginal slopes are 12,210 ± 1,139 bytes/accessible between 100 and 1,000, and 11,622 ± 273 between 1,000
-and 10,000. These are all cross-size contrasts, with descriptive SD; the 25 contrasts are not 25 independent
-observations and no cross-size pairing is assumed. Scaling is approximately linear **for these three sizes and this button workload on this machine**.
-Dividing total cost by N would fold fixed costs into the small-tree estimate: combined average cost is ~33,017 bytes
-per exported accessible at N=100 and ~11,895 at N=10,000. RSS is a different metric, not an allocator in-use estimate.
+Combined cross-size marginal contrasts: 12,210 ± 1,139 bytes/additional accessible at 100→1,000 and
+11,622 ± 273 at 1,000→10,000. These describe all cross-size contrasts, not matched pairs or 25 independent samples.
+Three sizes indicate approximately linear scaling only for this workload/machine.
 
-## Attribution limitation and design decision
+At 10,000 buttons, mean arena increment falls from **121.726 ± 4.174 MB** to **11.998 ± 9.252 MB**.
+Difference of independent means: **109.727987 MB (90.1%)**; independent bootstrap 95% interval
+**[101.631193, 117.444490] MB**. Minimum baseline observation minus maximum candidate: **92.049807 MB**.
+Combined arena+mmap reduction: **106.9910398 MB**, interval **[104.599769, 109.1819454] MB**.
+The arena gate requires full observed sample separation and a positive independently resampled interval, plus
+independent regressions. It passes for the recorded campaigns. Resampling: 20,000 draws per campaign, seed 22,
+sorted inputs, nearest-rank percentile endpoints. Five observations give limited uncertainty resolution.
+RSS remains noisy: baseline **252.167 ± 83.412 MB**, candidate **37.420 ± 172.449 MB**; it is not glibc in-use.
 
-**No allocation hotspot has been established by call-stack attribution.** heaptrack/heaptrack_print/valgrind/perf/bpftrace
-are unavailable. `malloc_info` measures process-wide allocator state; NMT does not attribute external GLib/GIO malloc.
-Source inspection establishes one parsed GDBusNodeInfo per object and independent interface registrations, but does
-not prove those operations account for the measured increment. No memory-leak diagnosis follows from this experiment.
+The ~119 MB combined reference increment and ~11.6 KB marginal cost justify testing provider-local shared immutable
+introspection while retaining per-object registrations. `register_subtree`/object-manager models remain deferred:
+they change enumerate/introspect/dispatch, stale-reference and ownership contracts without demonstrated benefit here.
+GIO's [register_object contract](https://docs.gtk.org/gio/method.DBusConnection.register_object.html) retains interface
+info while registered. A provider owns shared definitions until exports and the connection are closed, before FFM
+callback/arena disposal. The current bound is 17 schemas; no application values/IDs enter canonical keys.
 
-The measured ~119 MB combined increment and ~11.6 KB marginal cost justify a controlled, separate candidate:
+**No allocation hotspot was identified by call stack.** heaptrack/valgrind/perf/bpftrace were unavailable.
+Global allocator comparisons measure a controlled net difference, not the complete origin of native allocation.
+Neither RSS, free allocator pages nor these measurements establish a leak. No Orca/full-screen-reader, physical
+input, other ABI, native-Wayland or other-workload qualification is claimed.
 
-| Alternative | Decision |
+## Reproduction and checks
+
+Fresh collection requires a clean isolated checkout, JDK 27, JavaFX 27, a live graphical session, RPM versions for
+glibc/GLib/AT-SPI, pmap, Python gi/Gio/GLib and xprop for X11. Do not overlap desktop workloads. New runs record
+private display/session/socket inputs only as hashes; this binding governs resume/repair, while cross-campaign
+comparison uses equal environment/harness fingerprints and proven backend kind. Missing/truncated artifacts fail.
+Receipts bind each intact pair; interrupted pairs are preserved locally and both modes rerun. New receipts use
+CLOCK_BOOTTIME. Audits have per-request/shared deadlines and process/bus cleanup, including retired X11 windows.
+
+From the selected clean checkout, use fresh local paths (replace the example directories as needed):
+
+```bash
+java -version
+examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-new-smoke scaling-smoke
+examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-new-reference scaling
+python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-new-reference
+# Collect candidate from its clean checkout with identical environment/workload, then:
+python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-new-candidate --before /tmp/issue22-new-reference
+# Optional sanitized export is still local generated output:
+python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-new-reference --export /tmp/issue22-local-export
+```
+
+Historical executed checks (reused where the relevant sources did not change):
+
+| Check | Recorded outcome |
 | --- | --- |
-| Provider-local sharing of immutable canonical introspection | First experiment: preserve object paths, interface registrations, vtable and dispatch; compare identical campaigns before publication |
-| GDBus register_subtree | Defer: new enumerate/introspect/dispatch upcalls and stale-reference/error behavior need a broader design |
-| GDBusObjectManager-style export | Defer: adds wrappers; no demonstrated AT-SPI compatibility or memory benefit here |
+| `./gradlew check generatePomFileForMavenJavaPublication --no-daemon`, JDK 27 | 187 Java tests passed; zero skips/errors/failures. Candidate: 190 at `9dbc5fb` |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` at review follow-up `4a22467` | 203 passed, zero skips |
+| Complete scaling campaigns | 60 accepted cells + three audits each; invalid/interrupted attempts handled as described above |
+| Clean `scaling-smoke` at `4a22467663fbf9214b1a1501b73dcec65d0fd15e` | Four cells/no retries; boottime receipts; 103 accessibles / 205 registrations; strict analysis passed |
+| Completed-smoke `--resume` | Pairs/audit retained; only the `resumed=` line changed |
+| Forced unsafe environment-output refusal | Output remained empty; staging cleaned up |
+| Independent libatspi/Gio configuration/event client | 16 checks passed per bridge |
+| `registration_regression.py` with selected JDK `27+35` | 17 checks passed per bridge; Unicode/actions/privacy/stale references/disposal |
+| Original raw/compact reanalysis before removal | Parsed metrics, audits, profiles and fingerprints equal; summaries unchanged |
 
-GIO [register_object](https://docs.gtk.org/gio/method.DBusConnection.register_object.html) retains interface_info while
-registered and copies the vtable. A future pool can own one node-info reference per canonical schema (maximum 17
-current combinations) until all exports and the connection are disposed, on the provider thread, before FFM/upcall
-arena disposal. It must separate export and definition counters, retain partial registrations for teardown, and preserve
-all current privacy/action behavior. This is an experiment proposal, **not production code in this PR**.
+The 203-test follow-up also covered selected-Java validation, one shared libatspi budget, poll()-based audit liveness,
+cross-login comparison, strict metric sets, atomic audit replacement and one reference backend proof per write.
 
-The next PR is eligible only if every candidate 10,000-button on−off observation is below every baseline
-observation and the independently resampled difference-of-means bootstrap 95% interval is strictly positive,
-with independent protocol/native-lifecycle regressions passing. Campaign repetition numbers do not form pairs. Record combined
-arena+mmap reductions and slope change too. Five observations per campaign describe this workload, not universal uncertainty.
+## P3 repository hygiene and retention limits
 
-## Commands and outcomes
+Following [review feedback on PR #37](https://github.com/stevdrey/fx-atspi-bridge/pull/37#issuecomment-6245581711)
+and [policy follow-up #39](https://github.com/stevdrey/fx-atspi-bridge/issues/39), generated Issue-22 results, snapshots,
+logs, receipts, manifests and bulk derived output are removed from the tracked tree in both PRs. They are not moved
+to a separate evidence PR. Source scripts and synthetic tests remain. The historical qualification/repair helpers are
+now source files under `examples/fx-lab/scripts/`; they require locally retained compatible originals and never recover
+data from this summary or fabricate historical display identity. Legacy collections cannot resume without that identity.
 
-Run from the repository root with JDK 27. Output directories must be fresh unless explicitly resuming.
+The original datasets were preserved locally outside the tracked tree. Retention is local, not a permanent hosted
+archive or a guarantee of availability to other contributors. No uploads, CI retention service or recovery from old
+commits is required for ordinary review. These rounded aggregate tables **cannot independently reconstruct/recalculate
+the original samples, bootstrap interval or artifact validation**. Those operations require full local originals or a
+new controlled campaign; reruns need not reproduce the same numerical values. All reported conclusions remain unchanged.
+The repository-wide guidance update is scoped to #39; already merged #17 and unrelated local work are untouched.
 
-| Check | Actual result |
-| --- | --- |
-| `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 196 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
-| `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
-| `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
-| `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
-| `python3 examples/fx-lab/scripts/scaling_diag.py docs/verification/data/issue-22/before` | Passed: retained compact evidence independently reanalyzed |
-| Existing SC-07 `configuration_smoke.py --jar <bridge-jar> --fx-path <JavaFX-jars> --out <out>` | Passed: 16 independent libatspi/Gio privacy/configuration/cache/event checks |
-| `python3 examples/fx-lab/scripts/registration_regression.py --root . --jar <bridge-jar> --fx-path <JavaFX-jars> --out <result.json>` | Passed: 17 independent role/interface, Unicode/code-point/slice, action/effect, retired-reference and disposal checks; jar hash retained |
-| `git diff --check` | Passed |
-
-Desktop results: [configuration](data/issue-22/desktop-before/configuration.json),
-[events](data/issue-22/desktop-before/events.json), [registration/Unicode](data/issue-22/desktop-before/registration.json).
-This is synthetic independent-client qualification on one Fedora/GNOME/XWayland backend, not Orca/full-screen-reader,
-physical-input, other-ABI or native-Wayland qualification. No system allocator or desktop security settings changed.
-
-## Post-collection changes
-
-Before the Codex review follow-up, changes after `4682dab` were analysis/docs/evidence only: combined arena+mmap totals and fits to make allocator shifts
-visible, numeric table formatting, added synthetic coverage, and the independent regression client. No production,
-BenchApp, MemoryDiagnostics or collection profiles changed. Existing #17 numbers and evidence are untouched.
-
-Analysis follow-up: validate NMT Total against the committed-category sum (allowing per-category KiB rounding) and reject malloc larger than total. A synthetic valid-looking prefix retaining Total/malloc/Java Heap now fails. All retained NMT snapshots pass and the summary is byte-for-byte unchanged; the complete Python suite passed 160 tests, no skips. This changes validation only, not either measured JVM path.
-
-## Codex review follow-up
-
-All four findings on PR #37 were validated and addressed:
-
-- **Harness identity:** separate fingerprint of every example Java source, Gradle application configuration,
-  compiled fx-lab.jar and the complete generated launcher/default JVM options. Production bridge jar contents
-  remain excluded. Both environment and harness fingerprints must match before comparison.
-- **Uncertainty:** the condensed table now includes RSS and used-heap sample SD as well as allocator SD.
-  At 10,000 buttons RSS is 252.167 ± 83.412 MB; this variability must remain visible.
-- **Audit prerequisites:** Python gi/Gio/GLib imports and conditional X11/XWayland xprop availability are checked
-  before building/launching any benchmark cells. Historical smoke/diag behavior is unchanged.
-- **Pair integrity:** the runner commits a receipt only after both modes complete; it archives and repeats both
-  halves of an incomplete pair. Analysis validates result hashes, alternating order, timestamps and session identity.
-  Missing receipts fail rather than silently pairing results from separate sessions.
-
-The original raw collections predate receipts. Their [qualification script](data/issue-22/qualify-original-chronology.py)
-checks the original environment's compiled harness/bridge jar hashes and exact tracked harness/build/wrapper sources
-against the measured revision. It reconstructs chronology from original raw warmup-snapshot/result mtimes and all
-recorded resume timestamps. It qualified 29 reference pairs and rejected the interrupted pair, whose two modes were
-rerun together using [repair-original-pair.sh](data/issue-22/repair-original-pair.sh). The repaired pair has runner
-process-start/end timestamps. Original pairs' startNs is the first warmup snapshot, not process start.
-
-[harness.txt](data/issue-22/before/harness.txt) and [chronology provenance](data/issue-22/before/chronology-provenance.txt)
-make this retrospective qualification explicit. The original compiled harness hash was recorded at collection start;
-the original launcher hash was not. Launcher identity is reconstructed from unchanged Gradle configuration/wrapper
-and compared with both installed outputs. New campaigns capture it before any cell launches. These validation and
-pair-bookkeeping changes do not change the Java workload or snapshot sequence. Both original interrupted halves
-remain retained; no valid memory outlier was removed.
-
-Verification after review: 152 Python tests, no skips; real audit preflight; shell syntax check; updated scaling-smoke
-(four JVMs/two completed receipts plus audit); strict rejection before pair repair, full validation after repair;
-raw/export parsed equality and reproducible retained summary. Java/desktop tests reuse prior passing evidence because
-production and Java benchmark are unchanged. No simultaneous desktop benchmark ran during pair repair or smoke.
-
-## Second Codex review: independent campaigns and full repair environment
-
-The original analysis incorrectly matched repetition labels between separately collected campaigns. On/off pairs
-inside a campaign remain intact; before/after comparisons now resample the two five-observation samples independently.
-The difference of means and its fixed-seed percentile interval are invariant to renumbering either campaign. The release
-gate additionally requires complete observed sample separation, so all possible matchings show a reduction. This is
-more conservative than accepting one arbitrary set of five differences; the 25 possible contrasts are not extra samples.
-Cross-size contrasts received the same correction and are descriptive, without a matched-repetition claim.
-
-The resampling distinction follows the documented semantics of
-[SciPy bootstrap paired=False](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html).
-The implementation remains dependency-free. A synthetic equal-but-variable two-sample case now has a nonzero-width
-interval (the former artificial pairing would collapse it to zero); unequal sample sizes and label permutations are tested.
-
-Original-pair repair now calls the exact same full fingerprint implementation as collection/resume, before any pair
-preparation, archive mutation or benchmark launch. JavaFX jars, baseline.conf, JDK, native package output, kernel/CPU,
-session, options and workload all participate. Tests change each dependency class, remove an input, or duplicate the
-recorded fingerprint and confirm refusal before the simulated cell marker or collection mutation.
-
-The shared implementation recomputed the original full fingerprint exactly:
-`b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638`.
-This is a post-review environment recheck, not a claim that the old repair script performed the full guard before its
-historical execution. The [recheck record](data/issue-22/before/full-environment-recheck.txt) makes the timing explicit.
-Measurements, raw snapshots, observation JSON and pair receipts are unchanged; summaries are regenerated with the
-corrected analysis. The previous cross-campaign paired intervals and differences must not be used as matched evidence.
-
-Executed after this review: 160 Python tests, no skips; bash syntax; original-fingerprint compatibility; strict retained
-reference reanalysis. Java/desktop evidence remains applicable because production, Java benchmark, snapshot sequence
-and workload are unchanged. The corrected collector passed `/tmp/issue22-review2-smoke scaling-smoke`: four cells, two completed pair receipts
-and the independent audit. Its environment fingerprint matches the earlier smoke collection. The real repair entry
-point also rejected a deliberately incompatible recorded environment before pair preparation or output mutation.
-
-## Qualified optimization follow-up
-
-The separate [shared-introspection report](issue-22-optimization.md) records the measured candidate, lifecycle/protocol
-regressions and the corrected independent-campaign publication criterion. The reference results above remain the measurement PR’s baseline.
-
-## Third Codex review: bounded audit and per-cell display/backend proof
-
-The discovery scan now has a single monotonic 60-second budget, checked before every app/RPC and bounded poll
-sleep, with each call capped at the remaining time or five seconds. Deadline/process-exit errors escape the remote
-application-error handler. X11 window detection has a single five-second budget across all xprop requests.
-Cleanup tests cover discovery failure, JVM exit, terminate/kill waits, failed launch and bus closure after cleanup errors.
-
-A separate versioned backend contract keeps the existing environment fingerprint unchanged. New collections bind a
-hash of DISPLAY, WAYLAND_DISPLAY, GDK_BACKEND, session identity and local display socket device/inode identities.
-The inputs, private socket paths and session-bus addresses are not retained. Check this binding before pair preparation,
-each JVM, result recording and receipt completion. Missing/changed bindings fail before archiving or resuming any pair.
-New version-2 receipts bind the display hash and observed backend. Existing version-1 receipts are not rewritten.
-
-Each cell also retains backend evidence for both original warmup/idle pmap snapshots, with their hashes, library
-basenames, backend classification and JSON hash. Unknown/ambiguous/missing/mixed proofs, audit contradictions and
-incompatible display/provenance contracts fail analysis. Compact export preserves these sanitized proofs.
-
-The [reference backend contract](data/issue-22/before/backend-contract.txt) explicitly records retrospective provenance.
-Qualification validated all original artifacts and the recorded JavaFX 27 graphics jar SHA-256, whose Glass loader
-contains `GDK_BACKEND=x11`. All 120 reference checkpoints show only `libglass.so` and `libglassgtk3.so`; the
-[JavaFX 27 GTK implementation](https://raw.githubusercontent.com/openjdk/jfx/jfx27/modules/javafx.graphics/src/main/native-glass/gtk/GlassApplication.cpp)
-uses X11. The separate audits establish XWayland in the recorded desktop session. Per-cell proof establishes uniform
-Glass GTK/X11, not an identity for the historical display server/socket, which was not captured. No identity is invented
-from today's environment. Qualified legacy collections remain analyzable but cannot be resumed/repaired with the new
-collector; a collection with a newly captured display binding must start fresh. Legacy and bound-display campaigns
-cannot be silently mixed in a comparison. See [backend/](data/issue-22/before/backend/) for all 60 cell proofs.
-
-The repair's embedded Python now receives and invokes the same `java_bin` selected for the launcher/fingerprint.
-Its regression executes the actual embedded checker with a selected JDK and a conflicting Java on PATH.
-
-Executed: 179 Python tests, no skips; shell syntax; all original reference and candidate artifacts qualified (240
-checkpoints across 120 cells); exact before/after equality of all original parsed numerical metrics and independent
-audits; qualified raw/retained reference equality. New synthetic tests exercise timeout budgets, process/bus cleanup,
-backend/display drift, replaced sockets, legacy resume refusal, unknown/mixed/corrupt proofs, incompatible contracts
-and the selected-Java check. Production Java, benchmark Java, workload and snapshot sequence remain unchanged.
-The revised collector ran `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-review3-smoke scaling-smoke`
-from clean commit `b4eace5d4641e81b1e082bbad6f86df95ab27272`: four cells, two version-2 receipts,
-four Glass GTK/X11 proofs and the independent audit passed (103 accessibles / 205 explicit registrations).
-The [sanitized smoke export](data/issue-22/review3-smoke/summary.md) is retained for collector validation only.
-Re-running the collector with only GDK_BACKEND changed failed before build/collection; SHA-256 inventories of every
-file before and after were identical. The display hash and backend proofs passed strict analysis/export.
-
-## Fourth Codex review: native package evidence and registration discovery
-
-`scaling-environment.sh` now requires complete, successful RPM identities for glibc, glib2 and at-spi2-core.
-Missing rpm/non-RPM hosts, a nonzero query (including partial output), and empty/missing/malformed successful output
-fail without producing a fingerprint. Collection/resume/repair cannot prepare a pair using omitted native versions.
-The current scaling tool requires RPM metadata; production support is unchanged. Successful RPM output remains
-byte-compatible with the original format, including multilib ordering. On this Fedora host the revised shared guard
-reproduces both original campaigns' recorded environment digest
-`b74a063d314d7fbca6c474ed2bfded264e73a4a654c37960245254afc4f91638` exactly. Original results and metadata were not rewritten.
-
-`registration_regression.py` now shares `scaling_audit` discovery with a 30-second budget: check deadline/JVM before
-every candidate and request, cap each PID/toolkit/registry call at min(5 seconds, remaining), and bound poll sleeps.
-Expiration after a reply escapes the recoverable remote-error handler. The libatspi application scan and provider-removal
-poll also use a shared budget; each public libatspi accessor receives the remaining timeout and then restores the
-existing five-second setting. [Atspi.set_timeout](https://gnome.pages.gitlab.gnome.org/at-spi2-core/libatspi/func.set_timeout.html)
-uses milliseconds. JVM termination/kill waits remain bounded and the bus closes even when cleanup raises.
-
-Executed: all 191 Python tests, zero skips; shell syntax and git diff checks. New deterministic tests cover 256 slow
-candidates, expiry inside a scan, JVM exit, remaining request/sleep caps, successful PID/toolkit discovery, libatspi
-limits/restoration, and bus cleanup on failure. Native-version tests cover absent/failed queries, successful but
-incomplete metadata, no fingerprint/no mutation on refusal and exact successful-input compatibility. The actual shared
-fingerprint guard passes for both complete raw campaigns. The updated independent client also ran against both original
-bridge jars: all 17 protocol/Unicode/privacy/stale-reference checks passed each time, matching the earlier verdicts
-and measured jar hashes. [Reference rerun](data/issue-22/desktop-review4/registration.json) retains client/helper hashes.
-
-Desktop command from this worktree:
-`python3 examples/fx-lab/scripts/registration_regression.py --root . --jar build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar --fx-path examples/fx-lab/build/install/fx-lab/lib --out /tmp/issue22-review4-before-registration.json`.
-The candidate rerun used the same client script with root/jar/JavaFX paths in the candidate worktree. No production or
-Java benchmark/test code changed; prior complete memory campaigns, scaling-smoke and Java checks remain applicable.
-
-## Review fix: tolerate disappearing foreign X11 windows
-
-The review reproduced a race: a window could disappear after `_NET_CLIENT_LIST` was read, making its subsequent
-xprop query return 1/BadWindow. The old check=True propagated CalledProcessError and aborted the audit before a later,
-live benchmark window was inspected. A read-only real xprop query against an absent window confirmed the exit status.
-
-The per-window handler now catches only CalledProcessError, rechecks the existing deadline and JVM liveness, then
-continues with the next candidate. All candidates still share one five-second budget; no retry extends it. Root-list
-failures and subprocess timeouts still propagate, and no matching PID still fails backend identification. No production,
-benchmark, snapshot, fingerprint or historical metric changed.
-
-Executed: `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_scaling_audit.py'` passed all 13 tests;
-`REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` passed all 196 tests,
-zero skips. Five new tests cover a retired window before the live target with diminishing timeouts, deadline/JVM exit
-during a failed query, nonrecoverable timeout/root-list failure and failure when all candidates are retired.
-`git diff --check` passed; Java production/test and benchmark sources still match `60b7a82`.
-
-Actual independent audit with JDK 27, outside memory collection:
-`python3 examples/fx-lab/scripts/scaling_audit.py --bin "$PWD/examples/fx-lab/build/install/fx-lab/bin/fx-lab" --nodes 100 --out /tmp/issue22-window-fix-audit.json`
-passed: [103 accessibles / 205 explicit registrations, XWayland](data/issue-22/window-recovery-audit/n100.json).
-The disappearing-window race itself is covered deterministically; no real desktop window was closed for this test.
-Prior complete memory campaigns and Java checks remain applicable; this change only makes audit discovery resilient.
+P3 verification executed: all **203 Python tests passed, zero skips**, including the selected-Java repair regression
+from its new source path. Shell syntax and git diff checks passed. Both local 60-cell datasets compare exactly equal
+to their pre-removal parsed metrics/audits/profile/fingerprint snapshots; the independent arena comparison remains
+109727987 bytes, interval [101631193.4, 117444489.8], minimum separation 92049807 bytes, PASS. No generated files
+remain tracked under the Issue-22 output directory. Production/Java benchmark/test sources still match the measured
+reference; fresh Java and desktop workloads were not rerun for this source relocation/documentation-only cleanup.
+The moved repair now uses the same CLOCK_BOOTTIME start timestamp as the existing collector/receipt implementation.
+CI will rerun the normal full Gradle/Python checks on the published heads.

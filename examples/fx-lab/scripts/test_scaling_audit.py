@@ -87,8 +87,8 @@ class AuditDeadlineTest(unittest.TestCase):
                 return types.SimpleNamespace(stdout='0x1, 0x2, 0x3')
             self.now += 1
             return types.SimpleNamespace(stdout='_NET_WM_PID = 999')
-        with patch.object(sa.Path, 'exists', return_value=True), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run), self.assertRaises(TimeoutError):
-            sa.detect_backend(123)
+        with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run), self.assertRaises(TimeoutError):
+            sa.detect_backend(self.proc)
         self.assertEqual(requests, [5, 1])
 
     def test_disappeared_foreign_window_does_not_hide_target_or_reset_budget(self):
@@ -101,8 +101,8 @@ class AuditDeadlineTest(unittest.TestCase):
             if '0x1' in args:
                 raise subprocess.CalledProcessError(1, args, stderr='BadWindow')
             return types.SimpleNamespace(stdout='_NET_WM_PID = 123')
-        with patch.dict(sa.os.environ, {'XDG_SESSION_TYPE': 'wayland'}), patch.object(sa.Path, 'exists', return_value=True), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run):
-            self.assertEqual(sa.detect_backend(123), 'XWayland (X11 window PID matched)')
+        with patch.dict(sa.os.environ, {'XDG_SESSION_TYPE': 'wayland'}), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run):
+            self.assertEqual(sa.detect_backend(self.proc), 'XWayland (X11 window PID matched)')
         self.assertEqual([timeout for _, timeout in requests], [5, 4, 3])
         self.assertEqual(requests[-1][0], ['xprop', '-id', '0x2', '_NET_WM_PID'])
 
@@ -122,26 +122,35 @@ class AuditDeadlineTest(unittest.TestCase):
                         alive[0] = False
                     raise subprocess.CalledProcessError(1, args, stderr='BadWindow')
                 expected = TimeoutError if failure == 'deadline' else RuntimeError
-                with patch.object(sa.Path, 'exists', side_effect=lambda: alive[0]), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run), self.assertRaises(expected):
-                    sa.detect_backend(123)
+                self.proc.poll.side_effect = lambda: None if alive[0] else 0
+                with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', side_effect=run), self.assertRaises(expected):
+                    sa.detect_backend(self.proc)
                 self.assertEqual(len(requests), 2)
+
+    def test_exited_unreaped_jvm_stops_backend_detection(self):
+        # /proc/<pid> survives as a zombie until reaped; liveness must come from poll().
+        self.proc.poll.return_value = 0
+        run = Mock()
+        with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaisesRegex(RuntimeError, 'exited'):
+            sa.detect_backend(self.proc)
+        run.assert_not_called()
 
     def test_window_timeout_is_not_recovered_as_a_disappeared_window(self):
         run = Mock(side_effect=[types.SimpleNamespace(stdout='0x1, 0x2'), subprocess.TimeoutExpired('xprop', 5)])
-        with patch.object(sa.Path, 'exists', return_value=True), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaises(subprocess.TimeoutExpired):
-            sa.detect_backend(123)
+        with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaises(subprocess.TimeoutExpired):
+            sa.detect_backend(self.proc)
         self.assertEqual(run.call_count, 2)
 
     def test_root_window_list_failure_is_not_recovered(self):
         run = Mock(side_effect=subprocess.CalledProcessError(1, 'xprop'))
-        with patch.object(sa.Path, 'exists', return_value=True), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaises(subprocess.CalledProcessError):
-            sa.detect_backend(123)
+        with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaises(subprocess.CalledProcessError):
+            sa.detect_backend(self.proc)
         self.assertEqual(run.call_count, 1)
 
     def test_only_retired_windows_do_not_establish_a_backend(self):
         run = Mock(side_effect=[types.SimpleNamespace(stdout='0x1'), subprocess.CalledProcessError(1, 'xprop')])
-        with patch.object(sa.Path, 'exists', return_value=True), patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaisesRegex(ValueError, 'not established'):
-            sa.detect_backend(123)
+        with patch.object(sa.Path, 'read_text', return_value='libglassgtk3.so'), patch.object(sa.subprocess, 'run', run), self.assertRaisesRegex(ValueError, 'not established'):
+            sa.detect_backend(self.proc)
         self.assertEqual(run.call_count, 2)
 
     def test_cleanup_terminates_and_kills_with_bounded_waits(self):
