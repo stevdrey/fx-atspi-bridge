@@ -1,0 +1,25 @@
+{
+  "result": "passed",
+  "checks": {
+    "fixture_roles": true,
+    "password_interfaces": true,
+    "password_metadata_safe": true,
+    "libatspi_discovers_controls": true,
+    "libatspi_writes_unicode": true,
+    "gio_unicode_roundtrip": true,
+    "libatspi_unicode_count": true,
+    "gio_unicode_slice": true,
+    "libatspi_action": true,
+    "action_effect": true,
+    "privacy_retires_reference": true,
+    "privacy_removes_editable_interface": true,
+    "retired_text_reference_uncallable": true,
+    "replacement_introspection_matches_policy": true,
+    "fixture_exit": true,
+    "provider_removed": true,
+    "logs_safe": true
+  },
+  "bridgeJarSha256": "e100917c66a93e754e0b03a788c2dbe7a1429421ea9424b084f6b920f7c2528c",
+  "clientSha256": "61bcfa56b14d03bead3402df4983bbfc725338e2fb45ec4f3c97bcd443b17f8d",
+  "discoveryHelperSha256": "1c06a5fe184a1b5e3a2180fc58080e1f5c5c2ad68c9cc285c3f600adcd2812fb"
+}

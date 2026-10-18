@@ -113,7 +113,7 @@ Three sizes only characterize this workload; slope change is separate from the 1
 | Executed check | Result |
 | --- | --- |
 | JDK 27 `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 190 Java tests, zero skips/failures/errors |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 179 tests, no skips |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 191 tests, no skips |
 | Candidate `run-memory-diag.sh /tmp/issue22-after-smoke scaling-smoke` | Passed: four cells and independent audit before full campaign |
 | Candidate `run-memory-diag.sh /tmp/issue22-after scaling`, then `--resume` after archiving the incomplete pair | Passed: 60 accepted cells and three audits; both modes of the interrupted NMT pair repeated, no invalid-run retries |
 | Strict `scaling_diag.py /tmp/issue22-after --before /tmp/issue22-before` and compact export/reanalysis | Passed; matching environment/harness/audits, complete chronological pairs, raw/export equality |
@@ -156,3 +156,20 @@ display-bound collection is rejected. No JSON, snapshot or pair receipt was rewr
 and audits compare exactly equal before/after qualification; raw/retained parsed equality also passes for both.
 The means, bootstrap interval, sample separation and slopes above are unchanged. Production Java and benchmark
 Java/tests still match measured candidate `9dbc5fb4a9d083dbd5bdbf9cef4b9bd5285fc540`.
+
+## Fourth review of measurement PR #37
+
+Inherited native-version validation refuses unavailable, failed, partial or malformed RPM metadata instead of silently
+omitting glibc/GLib/AT-SPI versions. Non-RPM hosts cannot collect with this fingerprint contract. The successful Fedora
+inputs still reproduce both original campaigns' environment digest exactly; no measurement or metadata changed.
+The independent registration client shares the audit's discovery with a 30-second budget inside every candidate/RPC,
+checks JVM exit, caps calls/sleeps by remaining time, and also bounds its libatspi application scan/removal polling.
+Process/bus cleanup remains verified. The [measurement report](issue-22.md#fourth-codex-review-native-package-evidence-and-registration-discovery)
+records the new deterministic failure tests and 191-test Python suite, zero skips.
+
+The updated client ran from the measurement worktree against this candidate worktree's fixture, measured jar and JavaFX
+libraries, using `registration_regression.py --root . --jar build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar --fx-path examples/fx-lab/build/install/fx-lab/lib --out /tmp/issue22-review4-after-registration.json`.
+All [17 independent checks](data/issue-22/desktop-review4/candidate-registration.json) passed; verdicts and the bridge jar
+hash match the previous candidate evidence exactly. Client and shared discovery helper hashes identify this rerun.
+Production/benchmark Java and Java tests remain identical to measured `9dbc5fb`; the original memory evidence and
+before/after gate remain unchanged. No new memory campaign is claimed for this tooling correction.
