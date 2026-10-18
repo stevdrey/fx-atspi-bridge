@@ -113,7 +113,7 @@ Three sizes only characterize this workload; slope change is separate from the 1
 | Executed check | Result |
 | --- | --- |
 | JDK 27 `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 190 Java tests, zero skips/failures/errors |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 191 tests, no skips |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` after measurement merge | Passed: 196 tests, no skips |
 | Candidate `run-memory-diag.sh /tmp/issue22-after-smoke scaling-smoke` | Passed: four cells and independent audit before full campaign |
 | Candidate `run-memory-diag.sh /tmp/issue22-after scaling`, then `--resume` after archiving the incomplete pair | Passed: 60 accepted cells and three audits; both modes of the interrupted NMT pair repeated, no invalid-run retries |
 | Strict `scaling_diag.py /tmp/issue22-after --before /tmp/issue22-before` and compact export/reanalysis | Passed; matching environment/harness/audits, complete chronological pairs, raw/export equality |
@@ -173,3 +173,12 @@ All [17 independent checks](data/issue-22/desktop-review4/candidate-registration
 hash match the previous candidate evidence exactly. Client and shared discovery helper hashes identify this rerun.
 Production/benchmark Java and Java tests remain identical to measured `9dbc5fb`; the original memory evidence and
 before/after gate remain unchanged. No new memory campaign is claimed for this tooling correction.
+
+## Disappearing-window review fix
+
+Inherited the measurement audit correction: ignore a failed per-window xprop query after rechecking the same five-second
+budget and JVM liveness, so a retired foreign window cannot hide a later live benchmark window. Root failures, timeouts
+and missing PID matches still fail. The [measurement report](issue-22.md#review-fix-tolerate-disappearing-foreign-x11-windows)
+retains the actual 103-accessible/205-registration audit and five new deterministic regressions (196 Python tests total,
+zero skips). The merged Python tooling/tests are byte-identical to the tested measurement branch; production/benchmark
+Java and Java tests still match `9dbc5fb`. Historical memory results and the optimization gate are unchanged.
