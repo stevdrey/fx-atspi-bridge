@@ -165,3 +165,11 @@ and every PID/toolkit RPC; cap each request to min(5 seconds, remaining) and che
 scaling audit's deadline implementation. Its libatspi application scan and removal polling also receive a shared
 budget, bounded calls and sleeps. Deadline/exit failures escape recoverable remote errors and still clean up the JVM
 and bus. Preserve the 17 independent protocol verdicts and all production/benchmark Java behavior.
+
+## Review follow-up: disappearing X11 windows
+
+An individual xprop property query may fail because an unrelated window disappeared after the root window list was
+read. Treat CalledProcessError for that candidate as recoverable only after checking the existing shared five-second
+budget and JVM liveness, then continue to the next window. Preserve the single budget, candidate limit and cleanup.
+Root-list failures, subprocess timeouts, deadline expiry and JVM exit must still fail; never infer a backend without
+matching the benchmark PID. Production/benchmark behavior and historical evidence remain unchanged.

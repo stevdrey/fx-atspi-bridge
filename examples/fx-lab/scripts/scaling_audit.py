@@ -157,8 +157,14 @@ def detect_backend(pid):
         raise ValueError('too many X windows')
     for window in windows:
         budget.remaining()
-        out = subprocess.run(['xprop', '-id', window, '_NET_WM_PID'], capture_output=True, text=True,
-                             timeout=min(5, budget.remaining()), check=True).stdout
+        try:
+            out = subprocess.run(['xprop', '-id', window, '_NET_WM_PID'], capture_output=True, text=True,
+                                 timeout=min(5, budget.remaining()), check=True).stdout
+        except subprocess.CalledProcessError:
+            # Windows can disappear between the root list and their property query.
+            # Do not let a stale foreign window conceal the benchmark's later window.
+            budget.remaining()
+            continue
         budget.remaining()
         if re.search(r'=\s*'+str(pid)+r'\s*$', out):
             return 'XWayland (X11 window PID matched)' if os.environ.get('XDG_SESSION_TYPE') == 'wayland' else 'X11 (window PID matched)'

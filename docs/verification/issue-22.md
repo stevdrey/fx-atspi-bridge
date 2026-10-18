@@ -106,7 +106,7 @@ Run from the repository root with JDK 27. Output directories must be fresh unles
 | Check | Actual result |
 | --- | --- |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 187 Java tests, zero skips/failures/errors; same production and Java harness as collection |
-| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 191 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 196 tests, zero skips; fixed/linear/nonlinear data, mmap shifts, bootstrap, invalid/missing artifacts, wrong counts/workload/environment, export roundtrip |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-scaling-smoke scaling-smoke` | Passed: four short cells and independent 100-button audit; tooling validation, not scaling evidence |
 | `examples/fx-lab/scripts/run-memory-diag.sh /tmp/issue22-before scaling` then same with `--resume` | Passed: 60 valid cells and three audits; one recorded invalid attempt, interrupted pair repaired together, no memory-based exclusions |
 | `python3 examples/fx-lab/scripts/scaling_diag.py /tmp/issue22-before --export <fresh-destination>` | Passed: strict validation; raw/export parsed equality; compact summary reproducible |
@@ -270,3 +270,26 @@ Desktop command from this worktree:
 `python3 examples/fx-lab/scripts/registration_regression.py --root . --jar build/libs/fx-atspi-bridge-0.1.0-SNAPSHOT.jar --fx-path examples/fx-lab/build/install/fx-lab/lib --out /tmp/issue22-review4-before-registration.json`.
 The candidate rerun used the same client script with root/jar/JavaFX paths in the candidate worktree. No production or
 Java benchmark/test code changed; prior complete memory campaigns, scaling-smoke and Java checks remain applicable.
+
+## Review fix: tolerate disappearing foreign X11 windows
+
+The review reproduced a race: a window could disappear after `_NET_CLIENT_LIST` was read, making its subsequent
+xprop query return 1/BadWindow. The old check=True propagated CalledProcessError and aborted the audit before a later,
+live benchmark window was inspected. A read-only real xprop query against an absent window confirmed the exit status.
+
+The per-window handler now catches only CalledProcessError, rechecks the existing deadline and JVM liveness, then
+continues with the next candidate. All candidates still share one five-second budget; no retry extends it. Root-list
+failures and subprocess timeouts still propagate, and no matching PID still fails backend identification. No production,
+benchmark, snapshot, fingerprint or historical metric changed.
+
+Executed: `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_scaling_audit.py'` passed all 13 tests;
+`REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` passed all 196 tests,
+zero skips. Five new tests cover a retired window before the live target with diminishing timeouts, deadline/JVM exit
+during a failed query, nonrecoverable timeout/root-list failure and failure when all candidates are retired.
+`git diff --check` passed; Java production/test and benchmark sources still match `60b7a82`.
+
+Actual independent audit with JDK 27, outside memory collection:
+`python3 examples/fx-lab/scripts/scaling_audit.py --bin "$PWD/examples/fx-lab/build/install/fx-lab/bin/fx-lab" --nodes 100 --out /tmp/issue22-window-fix-audit.json`
+passed: [103 accessibles / 205 explicit registrations, XWayland](data/issue-22/window-recovery-audit/n100.json).
+The disappearing-window race itself is covered deterministically; no real desktop window was closed for this test.
+Prior complete memory campaigns and Java checks remain applicable; this change only makes audit discovery resilient.
