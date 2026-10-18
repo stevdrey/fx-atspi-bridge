@@ -6,16 +6,29 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+import socket
 import unittest
 from unittest.mock import patch
 
 import scaling_audit as audit
 import scaling_collection as sc
+import scaling_backend as sb
 import scaling_diag as sd
-from test_scaling_diag import collection
+from test_scaling_diag import collection, backend_fixture
 
 
 class CollectionTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        endpoint = str(Path(tmp.name)/'display')
+        sock = socket.socket(socket.AF_UNIX)
+        self.addCleanup(sock.close)
+        sock.bind(endpoint)
+        env = patch.dict(os.environ, {'DISPLAY': endpoint, 'WAYLAND_DISPLAY': '', 'XDG_SESSION_TYPE': 'x11'})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_harness_covers_sources_launcher_and_defaults_but_excludes_bridge(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -61,6 +74,7 @@ class CollectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             key = 'scaling-n100-plain-r4'
+            sb.initialize(root)
             self.assertEqual(sc.prepare(root, key), 'run')
             for name in sc.names(key):
                 (root/(name+'.json')).write_text(name)
@@ -77,14 +91,17 @@ class CollectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             key = 'scaling-n100-nmt-r1'
+            sb.initialize(root)
             sc.prepare(root, key)
             for name in sc.names(key):
                 (root/(name+'.json')).write_text(name)
+                (root/name).mkdir()
+                backend_fixture(root, name)
                 sc.record(root, key, name, sc.time.time_ns())
             sc.finish(root, key)
             self.assertEqual(sc.prepare(root, key), 'skip')
             (root/(sc.names(key)[0]+'.json')).write_text('changed')
-            with self.assertRaisesRegex(ValueError, 'receipt'):
+            with self.assertRaisesRegex(ValueError, 'result'):
                 sc.prepare(root, key)
 
     def test_missing_receipt_cross_session_and_reversed_chronology_rejected(self):

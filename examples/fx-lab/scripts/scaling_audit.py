@@ -26,6 +26,61 @@ def preflight():
         raise ValueError('xprop required for X11/XWayland audit')
 
 
+class Deadline:
+    """One monotonic budget across an entire scan, not one budget per remote application/window."""
+    def __init__(self, seconds, alive=lambda: True):
+        self.end = time.monotonic()+seconds
+        self.alive = alive
+
+    def remaining(self):
+        if not self.alive():
+            raise RuntimeError('benchmark process exited')
+        remaining = self.end-time.monotonic()
+        if remaining < .001:
+            raise TimeoutError('audit deadline expired')
+        return remaining
+
+    def timeout_ms(self):
+        return min(5000, int(self.remaining()*1000))
+
+
+def discover_provider(call, proc, variant, remote_error):
+    budget = Deadline(60, lambda: proc.poll() is None)
+    def bounded(*args):
+        result = call(*args, timeout_ms=budget.timeout_ms())
+        budget.remaining()
+        return result
+    while True:
+        apps = bounded('org.a11y.atspi.Registry', '/org/a11y/atspi/accessible/root',
+                       'org.a11y.atspi.Accessible', 'GetChildren')[0]
+        if len(apps) > 256:
+            raise ValueError('too many desktop apps')
+        for candidate, _ in apps:
+            budget.remaining()
+            try:
+                pid = bounded('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                              'GetConnectionUnixProcessID', variant('(s)', (candidate,)))[0]
+                if pid == proc.pid:
+                    toolkit = bounded(candidate, '/org/a11y/atspi/accessible/root',
+                                      'org.freedesktop.DBus.Properties', 'Get',
+                                      variant('(ss)', ('org.a11y.atspi.Application', 'ToolkitName')))[0]
+                    if toolkit == 'JavaFX experimental AT-SPI bridge':
+                        return candidate
+            except remote_error:
+                continue
+        time.sleep(min(.1, budget.remaining()))
+
+
+def stop_process(proc):
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 def audit(bin_path, nodes):
     import gi
     gi.require_version('Gio', '2.0')
@@ -35,42 +90,21 @@ def audit(bin_path, nodes):
                                 None, None, 0, 5000, None).unpack()[0]
     bus = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
                                                   Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
-    def call(name, path, interface, method, params=None):
-        return bus.call_sync(name, path, interface, method, params, None, 0, 5000, None).unpack()
+    def call(name, path, interface, method, params=None, *, timeout_ms=5000):
+        return bus.call_sync(name, path, interface, method, params, None, 0, timeout_ms, None).unpack()
     with tempfile.TemporaryDirectory(prefix='atspi-scaling-audit-') as tmp:
         # A separate JVM; its measurements are discarded, never mixed into a campaign.
         with open(Path(tmp)/'app.log', 'w') as log:
-            proc = subprocess.Popen([str(bin_path), '--bench', '--bridge=on', f'--nodes={nodes}', '--dirty=10',
-                                     '--warmup=50', '--samples=200', '--idle-seconds=10', '--structural=0',
-                                     '--install-churn=0', f'--limits={Path(__file__).with_name("baseline.conf").resolve()}',
-                                     f'--out={tmp}/bench.json'], stdout=log, stderr=log)
             try:
-                deadline = time.monotonic()+60
-                name = None
-                while time.monotonic() < deadline and proc.poll() is None:
-                    apps = call('org.a11y.atspi.Registry', '/org/a11y/atspi/accessible/root',
-                                'org.a11y.atspi.Accessible', 'GetChildren')[0]
-                    if len(apps) > 256:
-                        raise ValueError('too many desktop apps')
-                    for candidate, _ in apps:
-                        try:
-                            pid = call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
-                                       'GetConnectionUnixProcessID', GLib.Variant('(s)', (candidate,)))[0]
-                            if pid == proc.pid:
-                                # GTK may publish its own provider in the same JavaFX process.
-                                toolkit = call(candidate, '/org/a11y/atspi/accessible/root',
-                                               'org.freedesktop.DBus.Properties', 'Get',
-                                               GLib.Variant('(ss)', ('org.a11y.atspi.Application', 'ToolkitName')))[0]
-                                if toolkit == 'JavaFX experimental AT-SPI bridge':
-                                    name = candidate
-                                    break
-                        except GLib.Error:
-                            continue
-                    if name:
-                        break
-                    time.sleep(.1)
-                if not name:
-                    raise ValueError('benchmark provider not found')
+                proc = subprocess.Popen([str(bin_path), '--bench', '--bridge=on', f'--nodes={nodes}', '--dirty=10',
+                                         '--warmup=50', '--samples=200', '--idle-seconds=10', '--structural=0',
+                                         '--install-churn=0', f'--limits={Path(__file__).with_name("baseline.conf").resolve()}',
+                                         f'--out={tmp}/bench.json'], stdout=log, stderr=log)
+            except BaseException:
+                bus.close_sync(None)
+                raise
+            try:
+                name = discover_provider(call, proc, GLib.Variant, GLib.Error)
                 items = call(name, '/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'GetItems')[0]
                 if len(items) != nodes+3:
                     raise ValueError('wrong exported tree size')
@@ -104,28 +138,28 @@ def audit(bin_path, nodes):
                     raise ValueError('audit JVM failed')
                 return result
             finally:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=5)
-                bus.close_sync(None)
+                try:
+                    stop_process(proc)
+                finally:
+                    bus.close_sync(None)
 
 
 def detect_backend(pid):
+    budget = Deadline(5, lambda: Path(f'/proc/{pid}').exists())
     mappings = Path(f'/proc/{pid}/maps').read_text()
+    budget.remaining()
     if 'libglasswayland' in mappings:
         return 'native Wayland (libglasswayland mapped)'
     # Match the JVM's window PID, rather than inferring the backend from the desktop session.
-    root = subprocess.run(['xprop', '-root', '_NET_CLIENT_LIST'], capture_output=True, text=True, timeout=5, check=True)
+    root = subprocess.run(['xprop', '-root', '_NET_CLIENT_LIST'], capture_output=True, text=True, timeout=min(5, budget.remaining()), check=True)
     windows = re.findall(r'0x[0-9a-f]+', root.stdout)
     if len(windows) > 256:
         raise ValueError('too many X windows')
     for window in windows:
+        budget.remaining()
         out = subprocess.run(['xprop', '-id', window, '_NET_WM_PID'], capture_output=True, text=True,
-                             timeout=5, check=True).stdout
+                             timeout=min(5, budget.remaining()), check=True).stdout
+        budget.remaining()
         if re.search(r'=\s*'+str(pid)+r'\s*$', out):
             return 'XWayland (X11 window PID matched)' if os.environ.get('XDG_SESSION_TYPE') == 'wayland' else 'X11 (window PID matched)'
     raise ValueError('JavaFX backend not established')

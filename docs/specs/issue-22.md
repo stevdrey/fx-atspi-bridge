@@ -96,3 +96,33 @@ roles/interfaces, actions/text Unicode, privacy, events and stale references. Ru
 
 PR1: harness + measured evidence + decision, Refs #22. PR2: narrow production optimization with same-harness comparison,
 regression evidence and Closes #22 only when criteria pass. Preserve unrelated local changes and #17 evidence.
+
+## Third Codex review: audit bounds and display/backend integrity
+
+Discovery has one monotonic 60-second budget. Before each app, RPC and poll delay, check remaining time and JVM
+liveness; cap every RPC at min(5 seconds, remaining). Deadline/process-exit exceptions escape the recoverable
+remote-error loop. Backend window discovery uses one five-second budget across all xprop calls, not per window.
+Cleanup retains terminate/wait-five/kill/wait-five behavior and closes the bus even if cleanup fails.
+
+Keep the existing environment/harness fingerprints. Add versioned backend-contract.txt with either bound-display
+(new collections) or explicitly qualified legacy-pmap provenance. The bound-display digest includes DISPLAY,
+WAYLAND_DISPLAY, GDK_BACKEND, XDG_SESSION_TYPE/ID/RUNTIME_DIR, session-bus address, and device/inode identity of
+local display sockets. Persist only the digest. Refuse remote/unidentifiable or missing sockets, changed displays,
+changed backend selectors, and missing legacy binding before prepare/archive/resume/repair mutations. Check again
+before each JVM, recording its result, and completing each receipt. New pair receipts use version 2, binding the
+display digest and backend; legacy version-1 receipts remain unchanged and cannot authorize resuming.
+
+Every cell has backend/NAME.json with JSON digest and warmup/idle pmap hashes, library basenames and Glass backend.
+Validate complete pmap artifacts before extraction; require both checkpoints, one backend across cells/pairs, and
+agreement with independent audits. Export these sanitized proofs and the backend contract. Mixed legacy/bound
+contracts, different bound displays, and absent/ambiguous/inconsistent proofs fail comparison.
+
+Retrospective qualification requires all original artifacts plus the originally recorded JavaFX 27 graphics jar.
+Verify its hash and GTK loader's GDK_BACKEND=x11 marker; qualify only uniform libglass.so + libglassgtk3.so maps.
+Record retrospective provenance without inventing historical socket/display identity. Keep original JSON, snapshots,
+receipts and numerical metrics intact. If a pair cannot be qualified, rerun the complete pair; environment drift
+requires a new campaign. New native-Wayland proofs require matching libglasswayland maps and independent audit;
+no real native-Wayland qualification is implied by synthetic tests.
+
+The repair's embedded Python receives and invokes the exact java_bin selected by JAVA_HOME/PATH for the launcher,
+JDK validation and fingerprint. A different java earlier on PATH must not reject a valid selected JDK.

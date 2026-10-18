@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 
 import memory_diag as md
 import scaling_collection as sc
+import scaling_backend as sb
 
 CP = 'afterIdleGc'
 MALLOC_FIELDS = ('system', 'free', 'inUse', 'mmap', 'totalInUse', 'totalHeld')
@@ -158,6 +159,9 @@ def records(path):
         if not audit.get('introspectionChecked') or not audit.get('backend'):
             raise ValueError('incomplete independent audit')
         audits[nodes] = audit
+    names = [name for runs in cells.values() for name, _ in runs]
+    backend_contract = sb.validate_collection(path, names, next(iter(audits.values()))['backend'])
+    fingerprint += (backend_contract,)
     if len({a['backend'] for a in audits.values()}) != 1:
         raise ValueError('mixed JavaFX backends')
     for (kind, nodes, bridge, variant), runs in cells.items():
@@ -209,7 +213,7 @@ def summary(path, before=None):
     out = ['# Issue 22 — steady-state scaling', '',
            f'Profile: {profile}. Checkpoint: `{CP}`. Units: bytes. Values: mean ± sample SD; median (min–max).',
            'Paired deltas are bridge on − off within size, variant and repetition. NMT and plain are separate JVMs.',
-           'Harness identity and completed chronological pair receipts are validated; see harness.txt, pairs/ and chronology-provenance.txt when present.', '',
+           'Per-cell Glass proofs, compatible backend/display contracts, harness identity and completed chronological pair receipts are validated; see harness.txt, pairs/ and chronology-provenance.txt when present.', '',
            '## Independent counts', '', '| Buttons | Accessibles | Explicit registrations incl. Cache | Registrations/accessible excluding Cache | Backend |',
            '| ---: | ---: | ---: | ---: | --- |']
     for n, a in sorted(audits.items()):
@@ -277,6 +281,8 @@ def export(source, dest):
     dest.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source/'audit', dest/'audit')
     shutil.copytree(source/'pairs', dest/'pairs')
+    shutil.copytree(source/'backend', dest/'backend')
+    shutil.copyfile(source/'backend-contract.txt', dest/'backend-contract.txt')
     shutil.copyfile(source/'harness.txt', dest/'harness.txt')
     env = (source/'environment.txt').read_text()
     if 'scaling_artifacts=afterIdleGc-only' not in env.split('\n'):
