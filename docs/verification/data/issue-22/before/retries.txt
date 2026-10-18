@@ -1,1 +1,0 @@
-scaling-n1000-on-nmt-r2 attempt=1 exit=3 bench invalid: a measured pulse took 1013.482283 ms; display throttled or process stalled during the measured phase

@@ -10,7 +10,7 @@ import time
 import uuid
 
 import scaling_backend as sb
-# One SHA-256 helper; the retained original-pair repair script also calls scaling_collection.digest.
+# One SHA-256 helper; the original-pair repair source script also calls scaling_collection.digest.
 from scaling_backend import digest
 
 PAIR = re.compile(r'scaling-n(100|1000|10000)-(plain|nmt)-r([1-5])')

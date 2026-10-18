@@ -32,3 +32,6 @@ replay_pid*
 !gradle/wrapper/gradle-wrapper.jar
 
 __pycache__/
+
+# Issue 22 generated benchmark/QA output; retain summaries and source instead (policy #39).
+/docs/verification/data/issue-22/

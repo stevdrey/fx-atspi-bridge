@@ -1,8 +1,0 @@
-Original collection qualification: measured revision 4682dab27c59f1fa7cf3ed19e1353b3a16ab0093
-Chronology reconstructed from original raw afterWarmupGc artifact and result JSON mtimes,
-checked against all recorded resume timestamps; startNs is first warmup snapshot, not process start.
-Harness jar hash matches original environment; tracked sources/build/wrapper match measured Git revision.
-Launcher identity reconstructed from unchanged Gradle configuration/wrapper and installed output.
-No original launcher hash was captured at campaign start. New collections capture it before launch.
-Missing receipts requiring both modes to be rerun: scaling-n100-plain-r4
-Both modes of scaling-n100-plain-r4 rerun together; original modes preserved in interrupted/.

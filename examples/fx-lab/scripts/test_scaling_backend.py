@@ -17,8 +17,6 @@ import scaling_diag as sd
 from test_scaling_diag import collection, backend_fixture, BACKEND_PMAP
 
 REPAIR = Path(__file__).with_name('repair-original-pair.sh')
-if not REPAIR.exists():
-    REPAIR = Path(__file__).resolve().parents[3]/'docs/verification/data/issue-22/repair-original-pair.sh'
 
 
 class DisplayBackendTest(unittest.TestCase):

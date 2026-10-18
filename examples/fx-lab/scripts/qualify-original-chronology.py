@@ -2,7 +2,7 @@
 """One-time qualification of Issue 22's original raw collection, before pair receipts existed.
 
 Run before copying raw artifacts (mtime evidence must be original):
-  PYTHONPATH=examples/fx-lab/scripts python3 PATH/qualify-original-chronology.py RAW ROOT
+  python3 examples/fx-lab/scripts/qualify-original-chronology.py LOCAL_RAW ROOT
 This does not qualify a split pair: leave its receipt absent and rerun BOTH modes.
 The installed launcher is reconstructed from the unchanged tracked Gradle application
 configuration/wrapper; its hash was not recorded at the original collection start.

@@ -38,7 +38,7 @@ fx-lab.jar and the complete generated launcher (including default JVM options); 
 excluded. Comparisons reject either fingerprint mismatch or missing harness identity. Resume also checks
 revision/profile/plan and both fingerprints.
 
-A pair receipt is committed only after both modes complete in alternating order in one uninterrupted session.
+A local pair receipt is finalized only after both modes complete in alternating order in one uninterrupted session.
 It binds the result JSON hashes, timestamps and session identity. Resume preserves completed pairs; without a
 receipt it archives both halves (even if one or both JSONs exist) and repeats the entire pair. Analysis rejects
 missing receipts, reordered/overlapping timestamps, different sessions or changed result hashes. For the original
@@ -49,8 +49,10 @@ The collector, resume and original-pair repair share scaling-environment.sh. Bef
 recompute the full JDK/JavaFX/native packages/kernel/CPU/session/options/workload/limits fingerprint and compare
 against the unique recorded value. A mismatch or missing input fails before mutating the original collection.
 Preflight imports Python gi/Gio/GLib and requires xprop when DISPLAY permits X11/XWayland before collecting any cells.
-Raw artifacts stay outside the repo. Export validates the full collection first and preserves only the checkpoint's
-malloc/smaps/NMT snapshots (sanitized), run JSON, audit counts, environment, harness manifest, pair receipts and retries; compact exports remain analyzable.
+Generated artifacts stay outside the tracked tree, following policy issue #39. Export validates the full collection
+first and can retain sanitized checkpoint snapshots/JSON/audits/manifests/receipts in a local directory. These local
+exports remain analyzable but are not committed. Commit concise authored methodology/results, not generated output.
+A summary alone cannot reconstruct samples, uncertainty or artifact validation; original local data or new runs are needed.
 
 ## Limits and failure modes
 
@@ -167,4 +169,17 @@ Clients and analysis: backend detection uses the audit JVM's poll(), because an 
 /proc/<pid>. The regression client launches the selected Java (--java, default $JAVA_HOME/bin/java, else PATH java),
 requires specification 27, records its runtime version, and bounds the libatspi traversal and the following
 libatspi/Gio calls with one shared 30-second budget. Paired analysis rejects cells whose metric sets differ instead of
-treating a missing metric as zero. Retained summaries are unchanged.
+treating a missing metric as zero. The reported numerical conclusions are unchanged.
+
+## P3 follow-up: summarized evidence only
+
+Address the PR #37 review comment "keep raw benchmark evidence out of Git" and link policy
+https://github.com/stevdrey/fx-atspi-bridge/issues/39. Remove generated Issue-22 output from both PR trees, including
+JSON, snapshots, receipts, manifests, desktop results and bulk summaries. Preserve originals locally without
+publishing a separate evidence-only PR. Keep authored aggregate results with n/mean/SD/median/range, per-accessible
+costs, counts, exact measured SHAs/environment, commands, invalid/interrupted attempts, design decision and limitations.
+The candidate report preserves the independent comparison and ownership evidence; no measured values change.
+Move qualification/repair source to examples/fx-lab/scripts and make tests depend on those source paths. Align the
+moved repair's start timestamp with the collector's existing CLOCK_BOOTTIME receipt contract. No production Java
+or benchmark workload changes. Recheck Python, shell syntax, local data/summary equality, links and CI. Do not
+rewrite measured history or touch already merged #17 evidence. Repository-wide guidance changes belong to #39.

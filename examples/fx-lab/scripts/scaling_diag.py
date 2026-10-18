@@ -4,6 +4,7 @@
 scaling_diag.py DATA [--before BASELINE] [--export DESTINATION]
 Raw collections are validated with memory_diag; exported collections retain only the
 three afterIdleGc artifacts used here, JSON, audit counts and sanitized environment.
+Exports are local generated output, not files to commit (repository policy follow-up #39).
 """
 import argparse
 import collections
@@ -301,7 +302,7 @@ def export(source, dest):
         (dest/path.stem).mkdir()
         kinds = ('malloc', 'smaps_rollup', 'nmt') if '-nmt-' in path.stem else ('malloc', 'smaps_rollup')
         for kind in kinds:
-            # Parse/re-emit to omit JVM pid headers and memory addresses from committed snapshots.
+            # Parse/re-emit to omit JVM pid headers and memory addresses from local exported snapshots.
             raw = (source/path.stem/f'{CP}.{kind}.txt').read_text()
             if kind == 'malloc':
                 raw = ET.tostring(ET.fromstring(raw[raw.index('<malloc'):]), encoding='unicode')+'\n'

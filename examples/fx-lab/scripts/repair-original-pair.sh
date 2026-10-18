@@ -49,7 +49,7 @@ echo "pair_repair_revision=$(git -C "$root" rev-parse HEAD)" >> "$out/environmen
 for bridge in on off; do
   name="scaling-n100-${bridge}-plain-r4"
   python3 "$scripts/scaling_backend.py" require-display "$out" >/dev/null
-  start="$(date +%s%N)"
+  start="$(PYTHONPATH="$scripts" python3 -c 'import scaling_collection; print(scaling_collection.clock_ns())')"
   run_cell 2 "$name" "$out" timeout -k 30 1200 "$bin" --bench --bridge="$bridge" --nodes=100 --dirty=10 \
     --warmup=50 --samples=200 --idle-seconds=10 --structural=0 --install-churn=0 --limits="$scripts/baseline.conf" \
     --diagnostics="$out/$name" --out="$out/$name.json"
