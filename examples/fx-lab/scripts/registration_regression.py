@@ -14,12 +14,46 @@ import tempfile
 import threading
 import time
 
-import gi
-gi.require_version('Atspi', '2.0')
-from gi.repository import Atspi, Gio, GLib
+from scaling_audit import Deadline, discover_provider, stop_process
+
+
+def wait(probe, alive=lambda: True):
+    budget = Deadline(30, alive)
+    while True:
+        budget.remaining()
+        value = probe(budget)
+        budget.remaining()
+        if value:
+            return value
+        time.sleep(min(.1, budget.remaining()))
+
+
+def discover_bridge(call, app, variant, remote_error):
+    return discover_provider(call, app, variant, remote_error, seconds=30)
+
+
+def find_application(desktop, pid, budget, atspi):
+    def bounded(operation, *args):
+        timeout = budget.timeout_ms()
+        atspi.set_timeout(timeout, timeout)
+        try:
+            value = operation(*args)
+            budget.remaining()
+            return value
+        finally:
+            atspi.set_timeout(5000, 5000)
+    for i in range(min(bounded(desktop.get_child_count), 256)):
+        budget.remaining()
+        candidate = bounded(desktop.get_child_at_index, i)
+        if bounded(candidate.get_process_id) == pid and bounded(candidate.get_name) == 'Config [safe]':
+            return candidate
 
 
 def run(root, jar, fx_path):
+    import gi
+    gi.require_version('Atspi', '2.0')
+    from gi.repository import Atspi, Gio, GLib
+
     checks = {}
     def check(name, condition):
         checks[name] = bool(condition)
@@ -30,8 +64,13 @@ def run(root, jar, fx_path):
                                None, None, 0, 5000, None).unpack()[0]
     bus = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
                                                  Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
-    def call(name, path, iface, method, params=None):
-        return bus.call_sync(name, path, iface, method, params, None, 0, 5000, None).unpack()
+    def call(name, path, iface, method, params=None, *, timeout_ms=5000, budget=None):
+        if budget is not None:
+            timeout_ms = budget.timeout_ms()
+        result = bus.call_sync(name, path, iface, method, params, None, 0, timeout_ms, None).unpack()
+        if budget is not None:
+            budget.remaining()
+        return result
     app_root = '/org/a11y/atspi/accessible/root'
     cache_path = '/org/a11y/atspi/cache'
     prefix = 'org.a11y.atspi.'
@@ -59,30 +98,11 @@ def run(root, jar, fx_path):
                     if value.startswith(expected):
                         return value
                 raise AssertionError('fixture response timeout')
-            def wait(probe):
-                deadline = time.monotonic()+30
-                while time.monotonic() < deadline:
-                    value = probe()
-                    if value:
-                        return value
-                    time.sleep(.1)
-                raise AssertionError('discovery timeout')
             try:
                 pid = int(line('PID=').split('=')[1])
-                def find_bridge():
-                    applications = call('org.a11y.atspi.Registry', app_root, prefix+'Accessible', 'GetChildren')[0]
-                    if len(applications) > 256:
-                        raise AssertionError('too many desktop applications')
-                    for name, _ in applications:
-                        try:
-                            owner = call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
-                                         'GetConnectionUnixProcessID', GLib.Variant('(s)', (name,)))[0]
-                            if owner == pid and call(name, app_root, 'org.freedesktop.DBus.Properties', 'Get',
-                               GLib.Variant('(ss)', (prefix+'Application', 'ToolkitName')))[0] == 'JavaFX experimental AT-SPI bridge':
-                                return name
-                        except GLib.Error:
-                            continue
-                name = wait(find_bridge)
+                if pid != app.pid:
+                    raise AssertionError('fixture PID mismatch')
+                name = discover_bridge(call, app, GLib.Variant, GLib.Error)
                 def items():
                     result = call(name, cache_path, prefix+'Cache', 'GetItems')[0]
                     if len(result) > 50:
@@ -98,12 +118,8 @@ def run(root, jar, fx_path):
                 Atspi.init()
                 Atspi.set_timeout(5000, 5000)
                 desktop = Atspi.get_desktop(0)
-                def find_application():
-                    for i in range(min(desktop.get_child_count(), 256)):
-                        candidate = desktop.get_child_at_index(i)
-                        if candidate.get_process_id() == pid and candidate.get_name() == 'Config [safe]':
-                            return candidate
-                application = wait(find_application)
+                application = wait(lambda budget: find_application(desktop, pid, budget, Atspi),
+                                   lambda: app.poll() is None)
                 pending, found = [application], {}
                 for _ in range(50):
                     if not pending:
@@ -135,19 +151,16 @@ def run(root, jar, fx_path):
                 check('replacement_introspection_matches_policy', prefix+'Text' in xml and prefix+'EditableText' not in xml)
                 app.stdin.write('exit\n'); app.stdin.flush(); line('CLOSED')
                 check('fixture_exit', app.wait(timeout=15) == 0)
-                check('provider_removed', wait(lambda: name not in [n for n, _ in call('org.a11y.atspi.Registry', app_root,
-                                                                                     prefix+'Accessible', 'GetChildren')[0]]))
+                check('provider_removed', wait(lambda budget: name not in [n for n, _ in call('org.a11y.atspi.Registry', app_root,
+                                                                                     prefix+'Accessible', 'GetChildren', budget=budget)[0]]))
                 stderr.flush()
                 check('logs_safe', not any(s in (Path(temp)/'stderr.log').read_text() for s in ('PASSWORD_ONLY', 'SECRETMARKER')))
                 return {'result': 'passed', 'checks': checks, 'bridgeJarSha256': hashlib.sha256(jar.read_bytes()).hexdigest()}
             finally:
-                if app.poll() is None:
-                    app.terminate()
-                    try:
-                        app.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        app.kill(); app.wait(timeout=5)
-                bus.close_sync(None)
+                try:
+                    stop_process(app)
+                finally:
+                    bus.close_sync(None)
 
 
 if __name__ == '__main__':

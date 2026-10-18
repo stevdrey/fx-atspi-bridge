@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
 # Shared, side-effect-free fingerprint contract for scaling collection and original-pair repair.
 # Keep the byte format compatible with the original campaign fingerprint.
+scaling_native_packages() {
+  local packages package
+  packages="$(rpm -q glibc glib2 at-spi2-core 2>/dev/null)" || {
+    echo 'Refusing scaling collection: complete RPM versions for glibc, glib2 and at-spi2-core are required.' >&2
+    return 1
+  }
+  # A successful command with empty, partial or malformed output is not version evidence either.
+  if [ -z "$packages" ] || printf '%s\n' "$packages" | grep -qEv '^(glibc|glib2|at-spi2-core)-[0-9][^[:space:]]*$'; then
+    echo 'Refusing scaling collection: invalid native RPM version metadata.' >&2
+    return 1
+  fi
+  for package in glibc glib2 at-spi2-core; do
+    if ! printf '%s\n' "$packages" | grep -qE "^$package-[0-9]"; then
+      echo 'Refusing scaling collection: incomplete native RPM version metadata.' >&2
+      return 1
+    fi
+  done
+  # Preserve the original successful RPM output byte-for-byte, including multilib ordering.
+  printf '%s\n' "$packages"
+}
+
 scaling_environment_inputs() {
   local root="$1" limits="$2" java_bin="$3" warmup="$4" samples="$5" idle_seconds="$6" opts_var
   "$java_bin" -version 2>&1 || return 1
   uname -srm || return 1
-  rpm -q glibc glib2 at-spi2-core 2>/dev/null || true
+  scaling_native_packages || return 1
   nproc || return 1
   grep -m1 'model name' /proc/cpuinfo || return 1
   echo "session=${XDG_SESSION_TYPE:-unknown} workload=$warmup,$samples,$idle_seconds"

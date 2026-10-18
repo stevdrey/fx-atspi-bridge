@@ -44,8 +44,8 @@ class Deadline:
         return min(5000, int(self.remaining()*1000))
 
 
-def discover_provider(call, proc, variant, remote_error):
-    budget = Deadline(60, lambda: proc.poll() is None)
+def discover_provider(call, proc, variant, remote_error, *, seconds=60):
+    budget = Deadline(seconds, lambda: proc.poll() is None)
     def bounded(*args):
         result = call(*args, timeout_ms=budget.timeout_ms())
         budget.remaining()
