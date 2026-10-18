@@ -227,9 +227,11 @@ class ScalingTest(unittest.TestCase):
             root, dest = Path(tmp)/'source', Path(tmp)/'export'
             collection(root)
             (root/'private.log').write_text('secret')
+            (root/'full-environment-recheck.txt').write_text('post-review fingerprint check')
             sd.export(root, dest)
             self.assertEqual(sd.records(root), sd.records(dest))
             self.assertFalse((dest/'private.log').exists())
+            self.assertEqual((dest/'full-environment-recheck.txt').read_text(), 'post-review fingerprint check')
             self.assertFalse((dest/'scaling-n100-off-nmt-r1'/'afterIdleGc.nmt.txt').read_text().endswith('\n\n'))
             self.assertNotIn('42000000', (dest/'scaling-n100-off-plain-r1'/'afterIdleGc.smaps_rollup.txt').read_text())
 

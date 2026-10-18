@@ -282,7 +282,7 @@ def export(source, dest):
     if 'scaling_artifacts=afterIdleGc-only' not in env.split('\n'):
         env += '\nscaling_artifacts=afterIdleGc-only\n'
     (dest/'environment.txt').write_text(env)
-    for name in ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt'):
+    for name in ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt', 'full-environment-recheck.txt'):
         if (source/name).exists():
             shutil.copyfile(source/name, dest/name)
     for path in source.glob('*.json'):

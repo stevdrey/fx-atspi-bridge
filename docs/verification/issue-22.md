@@ -190,4 +190,6 @@ corrected analysis. The previous cross-campaign paired intervals and differences
 
 Executed after this review: 160 Python tests, no skips; bash syntax; original-fingerprint compatibility; strict retained
 reference reanalysis. Java/desktop evidence remains applicable because production, Java benchmark, snapshot sequence
-and workload are unchanged. The corrected collector receives an additional scaling-smoke check before publication.
+and workload are unchanged. The corrected collector passed `/tmp/issue22-review2-smoke scaling-smoke`: four cells, two completed pair receipts
+and the independent audit. Its environment fingerprint matches the earlier smoke collection. The real repair entry
+point also rejected a deliberately incompatible recorded environment before pair preparation or output mutation.
