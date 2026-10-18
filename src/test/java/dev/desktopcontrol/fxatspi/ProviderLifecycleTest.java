@@ -199,7 +199,7 @@ class ProviderLifecycleTest {
     }
 
     @Test void startupFailureAfterPartialExportsReleasesEveryDefinition() throws Exception {
-        // GDBus rejects this internal path after root and a valid button have already been registered.
+        // The path is rejected in Java, without a GLib CRITICAL, after root and a valid button have been registered.
         var provider = provider(buttons("button1", "invalid-id"), ffi -> address);
         provider.start();
         awaitTermination(provider);
@@ -208,6 +208,41 @@ class ProviderLifecycleTest {
         assertEquals(provider.exportsAcquired(), provider.exportsReleased());
         assertEquals(2, provider.definitionsAcquired());
         assertEquals(provider.definitionsAcquired(), provider.definitionsReleased());
+    }
+
+    @Test void inPlaceCapabilityChangeReexportsWithTheNewSchema() throws Exception {
+        var current = new AtomicReference<>(field(Set.of(Capability.TEXT)));
+        var provider = new AtSpiProvider(statuses::add, current::get, new ActionExecutor(new TargetRegistry()), ffi -> address, false, Runnable::run);
+        providers.add(provider);
+        provider.start();
+        await(provider, State.RUNNING);
+        assertEquals(3, provider.definitionsAcquired(), "application, read-only text and cache schemas");
+        assertFalse(output(call(provider, "text1", "org.freedesktop.DBus.Introspectable.Introspect")).contains("EditableText"));
+        current.set(field(Set.of(Capability.TEXT, Capability.EDITABLE_TEXT))); // same id becomes writable
+        provider.refresh();
+        // Wait on the acquire side: it follows both the release and the definition parse on the provider thread.
+        awaitTrue(() -> provider.exportsAcquired() == 4, "the reshaped field must be re-exported");
+        assertEquals(1, provider.exportsReleased());
+        assertEquals(4, provider.definitionsAcquired(), "the editable schema is parsed once");
+        assertTrue(output(call(provider, "text1", "org.freedesktop.DBus.Introspectable.Introspect")).contains("EditableText"));
+        assertTrue(output(call(provider, "text1", "org.a11y.atspi.Accessible.GetInterfaces")).contains("EditableText"));
+        current.set(field(Set.of(Capability.TEXT)));
+        provider.refresh();
+        awaitTrue(() -> provider.exportsAcquired() == 5, "the field must return to read-only");
+        assertEquals(2, provider.exportsReleased());
+        assertEquals(4, provider.definitionsAcquired(), "returning reuses the read-only schema");
+        assertFalse(output(call(provider, "text1", "org.freedesktop.DBus.Introspectable.Introspect")).contains("EditableText"));
+        provider.stop();
+        awaitTermination(provider);
+        assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+        assertEquals(provider.definitionsAcquired(), provider.definitionsReleased());
+    }
+
+    private static Snapshot field(Set<Capability> capabilities) {
+        var nodes = new LinkedHashMap<String, AccessibleNode>();
+        nodes.put(Snapshot.ROOT_ID, node(Snapshot.ROOT_ID, "app", "", List.of("text1"), Set.of()));
+        nodes.put("text1", node("text1", "text", Snapshot.ROOT_ID, List.of(), capabilities));
+        return new Snapshot(nodes);
     }
 
     @Test void publishedChangesAreReconciledByTheirTouchedIdsAndMergeUntilConsumed() throws Exception {

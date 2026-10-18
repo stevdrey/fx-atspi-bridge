@@ -25,8 +25,8 @@ import java.util.Map;
 
 /**
  * The AT-SPI changes between two snapshots, in emission order: every added object first, so a client already knows
- * an object when a parent announces it as a child; then property, state, text and child changes per object; every
- * removed object last. Pure: no D-Bus, no JavaFX.
+ * an object when a parent announces it as a child; then interface, property, state, text and child changes per object;
+ * every removed object last. Pure: no D-Bus, no JavaFX.
  */
 public final class SnapshotDiff {
     private SnapshotDiff() {}
@@ -35,6 +35,8 @@ public final class SnapshotDiff {
     public sealed interface Change {}
     public record Added(String id) implements Change {}
     public record Removed(String id) implements Change {}
+    /** An existing object whose capabilities, and therefore exported interfaces, changed. */
+    public record Reshaped(String id) implements Change {}
     public record State(String id, String state, boolean value) implements Change {}
     public record Name(String id, String name) implements Change {}
     public record TextDeleted(String id, String text) implements Change {}
@@ -57,7 +59,10 @@ public final class SnapshotDiff {
             if (item == null) { if (old != null) removed.add(new Removed(id)); continue; }
             if (old == null) added.add(new Added(id));
             else if (old.equals(item)) continue;
-            else properties(old, item, changed);
+            else {
+                if (!old.capabilities().equals(item.capabilities())) changed.add(new Reshaped(id));
+                properties(old, item, changed);
+            }
             children(id, old == null ? List.of() : old.children(), item.children(), old == null, changed);
         }
         added.addAll(changed);

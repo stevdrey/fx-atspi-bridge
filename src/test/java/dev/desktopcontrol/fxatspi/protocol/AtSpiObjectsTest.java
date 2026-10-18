@@ -17,6 +17,7 @@ package dev.desktopcontrol.fxatspi.protocol;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +25,7 @@ import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,9 +63,10 @@ class AtSpiObjectsTest {
         assertTrue(AtSpiObjects.cacheXml().contains(P + "Cache"));
     }
 
-    @Test void nativeSchemaPoolKeysAreBoundedAndContainNoPublishedValues() {
+    @Test void schemaIndexesIdentifyExactlyOneSchemaAndIgnorePublishedValues() {
         var schemas = new HashSet<String>();
         schemas.add(AtSpiObjects.cacheXml());
+        var byIndex = new HashMap<Integer, String>();
         for (var id : List.of(Snapshot.ROOT_ID, "leaf")) {
             for (var mask = 0; mask < (1 << Capability.values().length); mask++) {
                 var capabilities = new HashSet<Capability>();
@@ -73,10 +76,15 @@ class AtSpiObjectsTest {
                 var other = new AccessibleNode(otherId, "private name", Role.TEXT_AREA, "private text", true, false, false, true,
                         true, 1, "different-parent", List.of("child"), capabilities);
                 assertEquals(AtSpiObjects.xml(base), AtSpiObjects.xml(other), "values never alter a shared schema");
+                assertEquals(AtSpiObjects.schemaIndex(base), AtSpiObjects.schemaIndex(other), "values never alter a schema index");
+                var index = AtSpiObjects.schemaIndex(base);
+                assertTrue(index >= 0 && index < AtSpiObjects.CACHE_SCHEMA, "accessible schemas never use the Cache slot");
+                assertNull(byIndex.put(index, AtSpiObjects.xml(base)), "each index names one capability/root combination");
                 schemas.add(AtSpiObjects.xml(base));
             }
         }
-        assertEquals(17, schemas.size(), "update the provider pool bound when the protocol schema changes");
+        assertEquals(AtSpiObjects.SCHEMA_COUNT, schemas.size(), "one distinct schema per index, plus Cache");
+        assertEquals(AtSpiObjects.CACHE_SCHEMA, byIndex.size());
     }
 
     @Test void stateBitsMatchTheDocumentedMapping() {

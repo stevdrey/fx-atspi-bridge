@@ -12,8 +12,9 @@ Measured baseline production is `60b7a82`; original collection harness is `4682d
 100-button plain pair repaired together using unchanged Java/source/jar inputs (see baseline chronology provenance).
 Later merges add collection validation/docs only; production and Java benchmark remain identical to the measured candidate.
 
-A provider-confined HashMap shares GDBusNodeInfo by internally generated canonical XML, with a strict bound of 17
-current schemas. It retains one owning native reference per schema until provider disposal. Per-object registrations,
+A provider-confined array shares GDBusNodeInfo by schema index (root flag plus capability bits, and Cache), sized
+from the protocol at 17 current schemas. (The measured candidate keyed a 17-entry HashMap by canonical XML; see
+[Review follow-up](#review-follow-up).) It retains one owning native reference per schema until provider disposal. Per-object registrations,
 callbacks, public API, paths, interfaces, actions, text, privacy and events retain their existing behavior.
 
 | Resource | Native owner/lifetime | Release |
@@ -22,11 +23,12 @@ callbacks, public API, paths, interfaces, actions, text, privacy and events reta
 | Interface info | GIO also retains references for each successful registration | Existing unregister and connection teardown |
 | Registration IDs | Individual export, including partial-registration failure | Existing per-object disposal |
 | Vtable/upcall stubs/arena | Provider lifetime, unchanged | After native teardown |
-| Canonical XML/map | Provider thread only; no names, text, IDs or FX objects; maximum 17 entries | Clear after native definition releases |
+| Schema-index array | Provider thread only; indexes derive from capabilities and the root flag, never from values; 17 slots | Cleared after native definition releases |
 
-Insertion failure detaches any inserted entry and unrefs the newly parsed definition. Acquired/released definition
+Storing a definition cannot fail after parsing, so no detach path is needed. Acquired/released definition
 counters are separate from export counters. Removing the last current user retains bounded metadata for later reuse.
-The source/test change does not add bindings, preview features or dependencies.
+The source/test change adds one GLib binding (`g_variant_is_object_path`, review follow-up) and no preview features
+or dependencies.
 
 ## Comparable campaigns and provenance
 
@@ -56,6 +58,9 @@ measurement report; these candidate tables preserve the aggregate conclusions af
 | 100 | 5 | 6.382 ± 5.465; 4.567; [2.321, 15.985] | 3.646 ± 1.271; 4.011; [2.300, 5.028] | 19.178 ± 21.502; 32.096; [-9.585, 36.422] |
 | 1,000 | 5 | 5.850 ± 14.845; 16.109; [-10.418, 17.018] | 3.113 ± 0.386; 3.266; [2.424, 3.333] | 17.295 ± 8.925; 20.124; [7.492, 28.426] |
 | 10,000 | 5 | 11.998 ± 9.252; 10.964; [0.045, 26.027] | 11.998 ± 1.208; 12.224; [10.733, 13.730] | 37.420 ± 172.449; 84.242; [-252.039, 172.933] |
+
+The two 10,000-button means are the same because the direct-mmap on−off delta averages exactly 0.000 MB there
+(± 9.677; one +13.685 and one −13.685 MB observation; see the supplementary mmap row). The spreads differ per pair.
 
 | Buttons | Exported accessibles | Explicit registrations incl. Cache | Arena bytes/accessible | Arena + mmap bytes/accessible |
 | ---: | ---: | ---: | ---: | ---: |
@@ -170,11 +175,12 @@ Run smoke first; do not overlap desktop workloads. Historical executed verificat
 | JDK 27 `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` at `9dbc5fb` | 190 Java tests; zero skips/errors/failures |
 | Candidate smoke/full campaigns | Four smoke cells, then 60 full cells and three independent audits; interrupted NMT pair rerun together |
 | Original raw/compact analysis | All parsed metrics/audits/profile/fingerprints equal; independent gate above passed |
-| Native lifecycle/protocol tests | Shared users; last-user reuse; capability transitions; 25 close/restart cycles; partial registration failure; populated-pool bus loss; all 17 schemas with varied IDs/values |
+| Native lifecycle/protocol tests | Shared users; last-user reuse; capability transitions, including in-place re-export; 25 close/restart cycles; partial registration failure; populated-pool bus loss; all 17 schemas with varied IDs/values |
 | Independent libatspi/Gio configuration/event client | 16 checks passed |
 | Independent `registration_regression.py` | 17 Unicode/action/privacy/stale-reference/disposal checks passed against the recorded candidate jar |
 
-The deliberate partial-registration failure produced the expected GLib critical diagnostic and balanced cleanup.
+The deliberate partial-registration failure is now rejected in Java before GDBus (no GLib critical; the lifecycle
+suite passes under `G_DEBUG=fatal-criticals`) and cleanup stays balanced. Originally it produced a GLib critical.
 Production/benchmark Java and Java tests still match measured `9dbc5fb`; later tooling/docs changes do not replace the
 measured experiment. No Orca/full-screen-reader, physical input, other ABI or native-Wayland qualification is claimed.
 Reverting the isolated provider/test change restores per-object definitions without an API migration.
@@ -205,3 +211,27 @@ shared-definition candidate section. Removing only that candidate section reprod
 measurement, acceptance criterion, ownership contract or P3 retention rule was lost. The resolved merge tree was
 identical to the previous candidate tree before this status note. Production Java, tests, benchmark and Python
 tooling are unchanged; existing passing checks remain applicable. Fresh merge CI is reported on PR #38.
+
+## Review follow-up
+
+A high-effort code review of PR #38 led to three source changes after the measured candidate `9dbc5fb`:
+
+- **Derived schema index.** `AtSpiObjects.schemaIndex` (capability bits plus a root bit) indexes an array of
+  `AtSpiObjects.SCHEMA_COUNT` slots, with Cache in the last slot. The bound follows `Capability`, so it can no longer
+  be exceeded and fail the provider. XML is built only the first time a schema is parsed, and a key cannot contain
+  application values. The HashMap insertion-failure path is gone.
+- **In-place interface changes.** `SnapshotDiff.Reshaped` reports an existing id whose capabilities changed (for
+  example a field becoming writable, or truncated text turning it read-only). The provider unregisters and
+  re-registers that path with the new shared definition, then emits `AddAccessible` so the client cache gets the new
+  interfaces. Before this, the object kept the interfaces it was first exported with.
+- **Object-path validation.** `Ffm` checks paths with `g_variant_is_object_path` before
+  `g_dbus_connection_register_object` and `g_dbus_connection_emit_signal`. An invalid path fails in Java with a
+  value-free message instead of a GLib critical, which is fatal under `G_DEBUG=fatal-criticals` and unchecked
+  under `G_DISABLE_CHECKS`.
+
+Native ownership is unchanged: one parsed reference per schema per provider, released after unregistration and
+connection close. Registrations stay per object. The memory measurements above still apply to the measured
+`9dbc5fb` and were not repeated. Validation: targeted
+`AtSpiObjectsTest`/`SnapshotDiffTest`/`ProviderLifecycleTest`/`SceneObserverTest` (69 tests, no skips),
+`ProviderLifecycleTest` under `G_DEBUG=fatal-criticals` (29 tests), and the full
+`./gradlew check generatePomFileForMavenJavaPublication` (192 Java tests, zero failures/skips/errors).

@@ -33,6 +33,10 @@ public final class AtSpiObjects {
     public static final String ROOT_PATH = "/org/a11y/atspi/accessible/root";
     public static final String CACHE_ID = "cache";
     public static final String DESCRIPTION = "Experimental JavaFX AT-SPI provider";
+    /** Distinct introspection schemas: root/non-root for every capability combination, plus Cache. */
+    public static final int SCHEMA_COUNT = 2 * (1 << Capability.values().length) + 1;
+    /** Schema index of {@link #cacheXml()}. */
+    public static final int CACHE_SCHEMA = SCHEMA_COUNT - 1;
 
     private AtSpiObjects() {}
 
@@ -108,6 +112,16 @@ public final class AtSpiObjects {
                 + methodXml("GetItems", "", "a((so)(so)(so)iiassusau)")
                 + "<signal name='AddAccessible'><arg type='((so)(so)(so)iiassusau)'/></signal>"
                 + "<signal name='RemoveAccessible'><arg type='(so)'/></signal></interface></node>";
+    }
+
+    /**
+     * Index in {@code [0, CACHE_SCHEMA)} of the schema {@link #xml} produces for {@code node}: its capability bits,
+     * plus one more bit for the root. Nodes with the same index have identical XML; no application value enters it.
+     */
+    public static int schemaIndex(AccessibleNode node) {
+        var index = 0;
+        for (var capability : node.capabilities()) index |= 1 << capability.ordinal();
+        return node.id().equals(Snapshot.ROOT_ID) ? index | 1 << Capability.values().length : index;
     }
 
     /** Introspection XML for the accessible object of {@code node}; interfaces follow its capabilities. */

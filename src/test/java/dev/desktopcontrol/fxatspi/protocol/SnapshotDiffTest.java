@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
@@ -28,6 +29,7 @@ import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Name;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Removed;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Reshaped;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.State;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextDeleted;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextInserted;
@@ -96,5 +98,16 @@ class SnapshotDiffTest {
         assertEquals(List.<Change>of(new State("f", "enabled", false), new State("f", "sensitive", false), new State("f", "focused", true),
                 new State("f", "showing", false), new State("f", "visible", false), new Name("f", "new"), new TextDeleted("f", "ab"),
                 new TextInserted("f", "c🧪"), new Caret("f", 2)), SnapshotDiff.diff(tree(old), tree(now), List.of("f")));
+    }
+
+    @Test void inPlaceCapabilityChangesReshapeAfterAdditionsAndBeforeRemovals() {
+        var readOnly = new AccessibleNode("f", "f", Role.ENTRY, "ab", false, true, true, false, true, 0, "p", List.of(), Set.of(Capability.TEXT));
+        var editable = new AccessibleNode("f", "f", Role.ENTRY, "ab", true, true, true, false, true, 0, "p", List.of(),
+                Set.of(Capability.TEXT, Capability.EDITABLE_TEXT));
+        var before = tree(node("p", "root", List.of("f", "gone")), readOnly, node("gone", "p", List.of()));
+        var after = tree(node("p", "root", List.of("f", "new")), editable, node("new", "p", List.of()));
+        assertEquals(List.<Change>of(new Added("new"), new ChildRemoved("p", 1, "gone"), new ChildAdded("p", 1, "new"), new Reshaped("f"),
+                new Removed("gone")), SnapshotDiff.diff(before, after, List.of("p", "f", "new", "gone")));
+        assertTrue(SnapshotDiff.diff(tree(editable), tree(editable), List.of("f")).isEmpty());
     }
 }

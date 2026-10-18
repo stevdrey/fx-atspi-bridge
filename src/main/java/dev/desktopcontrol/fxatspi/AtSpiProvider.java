@@ -27,6 +27,7 @@ import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Name;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Removed;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Reshaped;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextDeleted;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.TextInserted;
 import javafx.application.Platform;
@@ -41,7 +42,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -59,6 +59,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
+import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_SCHEMA;
+import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.SCHEMA_COUNT;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.DESCRIPTION;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.PREFIX;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.ROOT_PATH;
@@ -127,12 +129,11 @@ final class AtSpiProvider {
     private final AtomicLong deadlineSourcesAcquired = new AtomicLong(), deadlineSourcesReleased = new AtomicLong();
     private record Export(List<Integer> registrations) {}
     /**
-     * Provider-confined canonical XML from AtSpiObjects only. Three capability bits, root/non-root and
-     * Cache give at most 17 schemas. Keys contain no names, text, IDs or other application values.
-     * Definitions survive individual removals and remain owned until all exports and the connection close.
+     * Provider-confined parsed definitions indexed by {@link AtSpiObjects#schemaIndex}, so the bound follows the
+     * protocol and no application value can become a key. Definitions survive individual removals and remain owned
+     * until all exports and the connection close.
      */
-    private static final int MAX_INTROSPECTION_SCHEMAS = 17;
-    private final Map<String, MemorySegment> introspection = new HashMap<>();
+    private final MemorySegment[] introspection = new MemorySegment[SCHEMA_COUNT];
     private final AtomicLong definitionsAcquired = new AtomicLong(), definitionsReleased = new AtomicLong();
     private final Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
@@ -450,11 +451,15 @@ final class AtSpiProvider {
         }
         // GDBus holds interface references while registered. Release our node-info references only after
         // unregistering and closing the connection, before the FFM arena and its upcalls can be disposed.
-        for (var info : introspection.values()) guarded(() -> {
-            ffi.nodeInfoUnref(info);
-            definitionsReleased.incrementAndGet();
-        });
-        introspection.clear();
+        for (int i = 0; i < introspection.length; i++) {
+            var info = introspection[i];
+            if (info == null) continue;
+            introspection[i] = null;
+            guarded(() -> {
+                ffi.nodeInfoUnref(info);
+                definitionsReleased.incrementAndGet();
+            });
+        }
         if (pushed) guarded(() -> ffi.popThreadDefault(context));
         if (context.address() != 0) guarded(() -> ffi.mainContextUnref(context));
     }
@@ -534,7 +539,7 @@ final class AtSpiProvider {
         } finally { nativeApi.unref(session); }
     }
     private void export(String id) {
-        var info = definition(xml(id));
+        var info = definition(id);
         exportsAcquired.incrementAndGet();
         var registrations = new ArrayList<Integer>();
         exports.put(id,new Export(registrations));
@@ -545,21 +550,13 @@ final class AtSpiProvider {
         }
     }
     /** One owning native reference per schema, regardless of how many registered objects use it. */
-    private MemorySegment definition(String xml) {
-        var existing = introspection.get(xml);
+    private MemorySegment definition(String id) {
+        var index = id.equals(CACHE_ID) ? CACHE_SCHEMA : AtSpiObjects.schemaIndex(snapshot.get().get(id));
+        var existing = introspection[index];
         if (existing != null) return existing;
-        if (introspection.size() >= MAX_INTROSPECTION_SCHEMAS) throw new IllegalStateException("Too many introspection schemas");
-        var parsed = ffi.nodeInfoFromXml(xml);
+        var parsed = ffi.nodeInfoFromXml(xml(id)); // XML is built only for a schema not parsed yet
         definitionsAcquired.incrementAndGet();
-        try {
-            introspection.put(xml, parsed);
-        } catch (RuntimeException | Error failure) {
-            // HashMap may have inserted before a failed resize. Detach before releasing exactly once.
-            introspection.remove(xml);
-            ffi.nodeInfoUnref(parsed);
-            definitionsReleased.incrementAndGet();
-            throw failure;
-        }
+        introspection[index] = parsed;
         return parsed;
     }
     /**
@@ -610,6 +607,13 @@ final class AtSpiProvider {
                 case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
                 case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
                 case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
+                case Reshaped(var id) -> {
+                    // Same path, new interfaces: GDBus refuses a second Accessible registration, so unregister first.
+                    // Calls dispatch on this thread, so none can arrive between the two steps.
+                    unexport(id);
+                    export(id);
+                    signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+                }
                 case Removed(var id) -> { signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
             }
         }
