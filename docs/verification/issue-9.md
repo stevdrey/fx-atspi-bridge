@@ -13,15 +13,15 @@ Wayland; the fixture's actual backend is **XWayland**, established by matching i
 One monitor and real JavaFX output scale **2.0 × 2.0** were tested; logical coordinates are not
 multiplied by this scale. No desktop preferences were changed.
 
-The production baseline is `5dc4c68148ce7cfaaae20a9a6083e1297c6d3a12`; the clean measured implementation
-is `3f10ab7c2c5e3f6b9d922c936f43417524139cc7`. Subsequent changes affect documentation and the
-deterministic window-peer remapping test only; production/benchmark bytecode is unchanged.
-The desktop/test bridge JAR matches the measured JAR:
+The original production baseline is `5dc4c68148ce7cfaaae20a9a6083e1297c6d3a12`; the clean measured implementation
+is `3f10ab7c2c5e3f6b9d922c936f43417524139cc7`. Through `09c84aa`, later changes affect only
+documentation and the deterministic window-peer remapping test; production/benchmark bytecode is unchanged.
+The original desktop/test bridge JAR matches that measured JAR:
 `40ad5bbfe83ce5f2217f2e81cfbe1fb4ff2c12989c04b1c2077f9559fa2aa26d`.
 Raw local datasets/logs are under `/tmp/fx-atspi-issue9-*`; generated bulk output is not committed.
 These local files are not a permanent hosted archive. The summaries below do not reconstruct all raw samples.
 
-## Commands and outcomes
+## Original implementation checks
 
 Commands run from the repository root, except the baseline runner in its clean managed checkout.
 
@@ -49,7 +49,8 @@ The first GitHub Actions build on `374fa99` failed only the new native restore-a
 ignore/override restore requests; Xvfb has no WM to acknowledge them. The test now exercises public
 hide/setIconified/show peer remapping in one batch, checks restored geometry and retained identity, and runs
 under both environments. No additional skip or weaker workflow/toolkit guard is used. The local command above
-still executes all 205 cases. This test does not claim that a WM must honor an application's restore request.
+executed all 205 cases at `09c84aa`; the follow-up below adds one regression case. This test does not claim that
+a WM must honor an application's restore request.
 
 ## Behavior and ownership evidence
 
@@ -115,8 +116,8 @@ The 1,000-node p99 range increased from 23.89–27.19 to 19.91–31.71 ms: the m
 29-ms provisional budget. At 10,000 nodes, one valid bridge-on run had p99 **247.00 ms**, with a maximum pulse
 of **274.99 ms**; the other four p99 values were 23.89–31.42 ms. The 10,000-node historical p99 budget is
 307 ms, but the current before collection's p99 maximum was 41.05 ms. No valid outlier was excluded, and the
-cause of this tail change was not established. The PR remains a draft with this performance reservation rather
-than claiming regression-free responsiveness.
+cause of this tail change was not established at that checkpoint. The PR was retained as a draft with this
+performance reservation. The follow-up below preserves these observations and investigates reproduced stalls.
 
 Idle CPU is percent of one core; voluntary context switches are a process-wide proxy, not provider-only/kernel
 wakeups. Heap/RSS snapshots are observations. Deterministic disposal is supported by the subscription/native
@@ -125,11 +126,147 @@ profile. Local comparison tables/JSON and SHA-256 manifests are in `/tmp/fx-atsp
 XML and the matching bridge hash are retained in `/tmp/fx-atspi-issue9-verification`.
 
 
+## PR #40 latency investigation and correction
+
+The earlier valid outliers remain above. Diagnostic runs used temporary bounded numeric logging of slow pulses
+and flushes in a separate checkout, and JFR `settings=profile` plus GC/safepoint logs. They are **diagnostic only**:
+profiling/logging overhead and the diagnostic workloads exclude them from budget qualification. Their source patch,
+recordings and logs are local in `/tmp/fx-atspi-issue9-latency-profile`; full JFR recordings can contain environment
+and process metadata and are not published.
+Benchmark latency begins after the synthetic mutation callback and ends after the next pulse. It includes deferred
+observer/layout work and render backpressure; it is not isolated observer-flush time or time spent inside the mutation.
+
+At 10,000 nodes the variable-width label rollover near `r99` → `r100` reproduced long pulses in both modes:
+211.90 ms with the bridge off, and 189.53 ms in the instrumented bridge-on JFR run. In the latter interval the FX
+thread parked for **171.27 ms** in `PaintCollector.waitForRenderingToComplete` / `CountDownLatch.await`, while
+native render-thread samples at three points in the interval were in Prism ES2 `GLContext.nTexSubImage2D1` /
+texture upload. No GC pause overlapped it. A separate bridge-on trace reached 293.43 ms with no observer flush above
+5 ms during its measured phase. Initial installation
+and the first large layout change did have large flushes; they occurred during setup/warmup and are not hidden as
+steady-state measurements. Ordinary FX CPU samples were dominated by `FlowPane` layout/control size calculations.
+
+These observations identify a reproduced render wait, not the precise cause of the earlier **unprofiled** 247-ms
+p99. They do not establish a bridge-caused GPU stall or a causal speedup between two diagnostic runs. A session
+`glxinfo -B` query reported accelerated AMD Radeon/radeonsi, Mesa 26.2.4, 512 MiB dedicated video memory; it is a
+session GLX observation, not a renderer string obtained from every measured JVM. No application, driver, desktop
+preference or rendering pipeline was changed to obtain a passing result.
+
+JFR also sampled JavaFX global-transform properties and cached transforms allocated by the geometry 2D check.
+`7b7dc51` avoids creating these per-node properties in the common case: it tests the already-observed local
+transform and memoizes ancestor dimensionality during that flush. The existing global check remains for a 3D
+chain that could cancel to 2D. The cache is cleared with the other FX caches; subscriptions, identity, native
+ownership, query behavior, and benchmark source/workload are unchanged. An added regression case exercises
+2D → ancestor 3D → cancelling child transform → restored 2D across distinct observer batches.
+
+After the correction, the full JDK-27 check/POM/example command passed **206 Java tests, zero failures/errors/skips**;
+the Python suite passed all **208 tests**. A fresh independent client run in
+`/tmp/fx-atspi-issue9-desktop-latency-fix` passed **13 geometry cases / 20 bounds events**, XWayland, one monitor,
+actual scale 2.0 × 2.0. This includes transformed/clipped geometry and disposal scenarios, alongside the FX/native
+suite's modal reads, privacy and resource checks.
+
+### Fresh clean-revision comparison
+
+Re-measured `09c84aa3ef8611fe2d36828fa8f975d586949a46` →
+`7b7dc51d49b4f76175027ac3f25cbe3023876b8b`, in that order on the same desktop session. Each collection used the
+unchanged `dispatch` profile: 100/1,000/10,000 nodes, dirty 10, five paired off/on repetitions, 50 warmup mutations,
+200 measured samples and 10 seconds idle per run; no structural/install churn. Both tracked checkouts were clean.
+No agent-initiated compilation or other graphical QA overlapped the measured runs; the host/GPU were still shared,
+with no CPU affinity/governor, rendering-load isolation or randomized ordering. This is not a causal latency-speedup
+experiment or the full #15 qualification.
+
+| Command | Outcome |
+|---|---|
+| `examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-latency-before dispatch` | Passed: 30 valid runs, no retries |
+| `examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-latency-after dispatch` | Passed: 30 valid runs, no retries |
+| `python3 examples/fx-lab/scripts/budgets.py /tmp/fx-atspi-issue9-latency-before` (and `...-after`) | Passed: collection-validity guards; distinct from the historical budget gate |
+| Compare every after bridge-on run against the unchanged SC-01 dirty-10 budgets in the Spec Context | **Failed:** `n1000-d10-on-r5.json` p99 **33.476954 ms > 29 ms** |
+
+All three BenchApp class hashes and the JavaFX JAR hashes match between collections. The example JAR is also
+unchanged. The corrected library JAR matches the full-test and external-client artifact byte-for-byte:
+`e7577bfd963c869fc6e3535692a7bf57886ed9e1bc8e6d0440f1dca15615c05a`.
+There are no valid-run exclusions, reruns for a better value, relaxed thresholds or changes to the warmup/workload.
+
+The following values are **before → after**, medians over five runs, with full ranges in parentheses.
+
+| Nodes | Bridge | FX p50 ms | FX p99 ms (range) | Allocated KiB/sample |
+|---:|---|---|---|---|
+| 100 | off | 16.32 → 16.44 | 17.66 (17.63–22.80) → 26.52 (16.77–33.23) | 80.79 → 80.18 |
+| 100 | on | 16.38 → 16.42 | 17.39 (17.08–33.14) → 27.27 (17.00–33.34) | 104.38 → 103.71 |
+| 1,000 | off | 16.39 → 16.43 | 23.95 (19.62–33.29) → 25.44 (18.23–33.50) | 177.85 → 178.24 |
+| 1,000 | on | 16.45 → 16.43 | 28.38 (20.59–33.33) → 19.84 (18.12–33.48) | 202.57 → 201.97 |
+| 10,000 | off | 16.68 → 16.47 | 32.35 (24.26–199.40) → 30.66 (29.12–33.60) | 851.25 → 849.74 |
+| 10,000 | on | 18.24 → 18.58 | 28.70 (26.18–220.29) → 32.93 (32.43–38.38) | 874.08 → 873.82 |
+
+| Nodes | Bridge | Idle CPU % (range) | Voluntary switches/s | Heap after GC MiB | RSS MiB |
+|---:|---|---|---|---|---|
+| 100 | off | 0.80 (0.70–2.60) → 0.80 (0.70–0.90) | 99.70 → 94.10 | 9.09 → 9.00 | 226.75 → 234.28 |
+| 100 | on | 0.80 (0.70–0.80) → 0.80 (0.70–1.00) | 93.10 → 93.70 | 9.87 → 9.84 | 252.89 → 253.66 |
+| 1,000 | off | 0.90 (0.80–3.90) → 1.10 (0.80–1.20) | 112.30 → 112.20 | 23.35 → 23.34 | 290.76 → 292.83 |
+| 1,000 | on | 0.80 (0.80–0.80) → 1.10 (1.00–1.10) | 112.80 → 112.60 | 25.80 → 25.57 | 303.08 → 306.63 |
+| 10,000 | off | 1.10 (1.00–1.20) → 1.00 (0.90–1.10) | 113.50 → 114.50 | 165.96 → 165.98 | 705.29 → 707.52 |
+| 10,000 | on | 1.00 (0.70–1.10) → 1.00 (0.90–1.00) | 107.40 → 113.40 | 184.10 → 181.65 | 800.25 → 773.54 |
+
+| Nodes | Bridge | Maximum pulse ms (range over runs), before → after |
+|---:|---|---|
+| 100 | off | 21.73 (18.69–27.91) → 27.55 (17.27–34.22) |
+| 100 | on | 18.86 (18.54–33.27) → 32.84 (22.76–33.38) |
+| 1,000 | off | 66.89 (62.45–84.81) → 70.41 (57.85–76.45) |
+| 1,000 | on | 64.97 (63.13–88.38) → 61.89 (60.00–62.87) |
+| 10,000 | off | 196.80 (183.71–237.96) → 189.18 (166.99–211.35) |
+| 10,000 | on | 178.62 (175.49–269.04) → 180.74 (172.81–201.96) |
+
+The 10,000-node bridge-on heap median decreased by **2.45 MiB**; RSS decreased by 26.71 MiB, which is not a
+native-allocation attribution. Allocation medians changed by only 0.67 / 0.60 / 0.26 KiB per sample at
+100 / 1,000 / 10,000 nodes. These observations support retaining the smaller geometry allocation path, but do not
+establish that it eliminated render stalls. Large maximum pulses still occur. A fresh before run reached p99
+220.29 ms with the bridge on and 199.40 ms with it off; the new after p99 values at 10,000 nodes were 32.43–38.38 ms.
+
+Worst **after bridge-on** value across all five runs, compared with the existing provisional budget:
+
+| Nodes | p99 ms / budget | Alloc KiB/sample / budget | Idle CPU % / budget | RSS MiB / budget |
+|---:|---|---|---|---|
+| 100 | 33.34 / 41 — passed | 103.81 / 116 | 1.00 / 8 | 259.02 / 327 |
+| 1,000 | **33.48 / 29 — failed** | 209.20 / 299 | 1.10 / 14 | 313.45 / 434 |
+| 10,000 | 38.38 / 307 — passed | 874.28 / 8,844 | 1.00 / 137 | 784.01 / 1,590 |
+
+Allocation, idle CPU and RSS passed in every bridge-on run. The one failed p99 cell keeps the overall performance
+gate **failed**, even though the 1,000-node p99 median decreased from 28.38 to 19.84 ms. Bridge-off after runs also
+reached p99 33.50 ms at that size; they have no derived SC-01 budget and are retained as controls.
+
+### Investigation of the remaining 1,000-node tail
+
+After collection finished, a separate diagnostic on the corrected source used 1,000 samples, the same 50-mutation
+warmup, no idle/churn, JFR with a 1-ms park threshold and 2-ms execution/native sampling, plus temporary numeric
+pulse/FX-CPU/flush logging. Environment/system-process JFR events were disabled. It is not budget evidence and does
+not replace the failed valid run. Data, configuration and the exact temporary patch are in
+`/tmp/fx-atspi-issue9-latency-profile/fixed-1k-on*`, `latency.jfc` and `instrumentation-1k.patch`.
+
+| Diagnostic round | Pulse elapsed ms | FX CPU ms | PaintCollector wait overlapping pulse ms | Render samples | Overlapping GC pauses |
+|---:|---:|---:|---:|---|---|
+| 101 | 61.27 | 2.26 | 52.23 | ES2 texture upload/draw | None |
+| 959 | 31.25 | 1.62 | 19.36 | X11 swap-buffers / texture upload | None |
+| 1001 | 64.95 | 1.46 | 55.78 | ES2 texture upload/draw | None |
+
+No observer flush logged above the 0.5-ms diagnostic threshold overlapped these intervals, and no sampled FX stack
+in them was in `SceneObserver.flush`. This identifies reproduced waits for JavaFX rendering, including one pulse
+above 29 ms, while FX CPU work remained small. It does **not** retrospectively prove the call stacks of the unprofiled
+33.476954-ms p99 run. The diagnostic run's own p99 was 19.37 ms; it is not substituted for the failed dispatch cell.
+The evidence does not establish another bridge CPU bottleneck to fix, and no source-only change has demonstrated
+compliance with the pulse-latency budget on this session. Rendering/desktop qualification remains open under #15.
+
+The PR was converted back to **draft** after the new valid budget failure. Build and CodeQL on production/test
+commit `7b7dc51` passed ([build](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/39297923115),
+[CodeQL](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/39297919436)); passing CI does not override the failed
+performance gate. Latest source tests are 206 Java / 208 Python, all passing without skips. Local comparison tables,
+per-run budget checks and a SHA-256 manifest are in `/tmp/fx-atspi-issue9-latency-comparison`; JUnit XML and the matching
+JAR hash are in `/tmp/fx-atspi-issue9-verification/junit-latency-fix`. Temporary diagnostic changes were removed from
+the measurement checkout after recording. Unrelated local issue-1/issue-16 changes remain outside this PR.
+
 ## Limits
 
 Native Wayland, multiple/mixed-scale monitors, other desktops/distributions and per-pixel/occlusion behavior are not
-qualified. Curved/rotated clips use rectangular approximations. Custom scene cameras and 3D bounds/transforms are
-unavailable; frames retain their independently known window geometry. Hidden/minimized nodes return unavailable
+qualified. Curved/rotated clips use rectangular approximations. Custom scene cameras, 3D bounds and non-2D combined
+transforms are unavailable; frames retain their independently known window geometry. Hidden/minimized nodes return unavailable
 bounds, and fully clipped nodes return empty rectangles. Geometry does not prove pointer hit-testability.
 
 Existing GLib negative-symbol/signal tests can intentionally print a `no-such-signal` diagnostic; it is not a new

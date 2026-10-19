@@ -175,10 +175,11 @@ the installed JavaFX backend provides; native Wayland and mixed-scale/multi-moni
 qualification. Invalid/non-finite or unrepresentable data is unavailable, never replaced by `(0,0)` or saturated.
 
 Controls and layout regions use their external layout box, independent of skin/content bounds and effects; other
-nodes use their local visual bounds. Bounds are axis-aligned rectangles after 2D transforms, intersected with the bounding rectangles of node/ancestor
-clips and the scene viewport. Curved or rotated clips are rectangular approximations. Ordinary parent bounds do
-not clip children unless a clip is set. Three-dimensional bounds/transforms and custom scene cameras are unsupported. Bounds do not establish
-occlusion, per-pixel visibility or pointer hit-testability. Edges are rounded outward to signed integers, empty
+nodes use their local visual bounds. Bounds are axis-aligned rectangles after 2D transforms, intersected with
+the bounding rectangles of node/ancestor clips and the scene viewport. Curved or rotated clips are rectangular
+approximations. Ordinary parent bounds do not clip children unless a clip is set. Three-dimensional bounds,
+non-2D combined transforms and custom scene cameras are unsupported. Bounds do not establish occlusion,
+per-pixel visibility or pointer hit-testability. Edges are rounded outward to signed integers, empty
 dimensions remain empty, and `Contains` excludes right/bottom edges. `GetSize` uses WINDOW; different origins can
 produce a one-unit rounding difference in other systems.
 

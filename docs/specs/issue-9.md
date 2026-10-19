@@ -14,7 +14,7 @@ invariants. Preserve unrelated local issue-1/issue-16 documentation.
 Implement read-only Component geometry in SCREEN (0), WINDOW (1), PARENT (2).
 Respect rectangular bounds of node/ancestor clips and the scene viewport.
 No pointer injection, screenshots, per-pixel picking, occlusion inference, focus,
-scroll or geometry mutations. Three-dimensional bounds/transforms and custom
+scroll or geometry mutations. Three-dimensional bounds, non-2D combined transforms and custom
 scene cameras are unsupported.
 
 ## Contracts and design
