@@ -152,13 +152,16 @@ The bridge does not inject accessibility into another running JVM. Each applicat
 
 `GetExtents`, `GetPosition`, `GetSize` and `Contains` read the latest immutable geometry snapshot. All JavaFX reads
 and subscriptions belong to the FX thread; queries never wait for layout or application handlers. Layout-driven
-changes become visible after JavaFX performs layout and the observer publishes them. `BoundsChanged` reports
-changed valid SCREEN rectangles once per node per provider publication. Other Component methods, including focus,
-point lookup, scrolling and geometry setters, return `org.freedesktop.DBus.Error.NotSupported` without effects.
+changes become visible after JavaFX performs layout and the observer publishes them. `BoundsChanged` carries the
+valid SCREEN rectangle once per node per provider publication: a frame reports a move or resize, and other nodes
+report changes in their WINDOW bounds, so moving a window emits one event and re-projects only its frame.
+`GetLayer` (window layer for frames, widget layer otherwise), `GetMDIZOrder` (-1) and `GetAlpha` (1.0) are constants.
+Other Component methods, including focus, point lookup, scrolling and geometry setters, return
+`org.freedesktop.DBus.Error.NotSupported` without effects.
 
 | Coordinate type | Contract |
 |---|---|
-| SCREEN (0) | JavaFX screen coordinates from `localToScreen`; window frames use public window coordinates |
+| SCREEN (0) | The unrounded WINDOW extent plus the frame's public window `x/y`, rounded outward once at query time |
 | WINDOW (1) | Relative to the top-level window, including `Scene.x/y`; frame origin is `(0,0)` with the window's dimensions |
 | PARENT (2) | Relative to the accessible parent's bounding origin before inherited clipping, with WINDOW axes; a scene root uses the window origin |
 
@@ -166,8 +169,9 @@ The application root has no Component interface. Frames cannot answer PARENT bec
 no geometric origin. Availability is independent between coordinate types. Unknown uint32 coordinate types return
 `InvalidArgs`; unavailable extents/positions/sizes and unsupported coordinate frames return `NotSupported`.
 Hidden or minimized nodes have unavailable geometry and `Contains` is false. Completely clipped nodes have known
-empty rectangles. Excluded nodes remain absent. Sensitive/password controls expose only their external geometry,
-without adding text/caret interfaces or observing skin nodes.
+empty rectangles. Excluded nodes remain absent. Password fields expose only their external layout box,
+without adding text/caret interfaces or observing skin nodes. Other sensitive nodes publish the box of their nearest
+non-sensitive observed container (or the scene viewport), because their own size may follow protected content.
 
 Units are **JavaFX logical coordinates**, not physical screenshot pixels. The bridge does not multiply by
 `outputScaleX/Y`, invent a global origin, or infer the backend from the session type. SCREEN is limited by what

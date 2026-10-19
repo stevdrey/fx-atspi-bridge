@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Geometry.Extent;
+import dev.desktopcontrol.fxatspi.model.Geometry.Origin;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
@@ -47,8 +49,9 @@ class ComponentTest {
     private AtSpiProvider provider;
 
     private static AccessibleNode node(String id, Role role, Geometry geometry) {
-        return new AccessibleNode(id, id, role, "", false, true, true, false, false, 0,
-                id.equals("root") ? "" : "root", id.equals("root") ? List.of("frame", "field") : List.of(),
+        var ancestor = switch (id) { case "root" -> ""; case "frame" -> "root"; default -> "frame"; };
+        var children = switch (id) { case "root" -> List.of("frame"); case "frame" -> List.of("field"); default -> List.<String>of(); };
+        return new AccessibleNode(id, id, role, "", false, true, true, false, false, 0, ancestor, children,
                 id.equals("root") ? Set.of() : Set.of(Capability.COMPONENT), false, id.equals("field"), geometry);
     }
 
@@ -56,9 +59,11 @@ class ComponentTest {
         bus = PrivateBus.start();
         if (bus == null && "1".equals(System.getenv("REQUIRE_NATIVE_BUS"))) fail("Bus unavailable");
         Assumptions.assumeTrue(bus != null, "Bus unavailable");
-        var geometry = new Geometry(new Rect(-10, 20, 30, 40), new Rect(5, 6, 30, 40), new Rect(1, 2, 30, 40));
+        // SCREEN is derived from the frame origin at query time: (5, 6) + (-15, 14) = (-10, 20).
+        var geometry = new Geometry(new Rect(5, 6, 30, 40), new Rect(1, 2, 30, 40), new Extent(5, 6, 35, 46), null);
+        var frame = new Geometry(new Rect(0, 0, 200, 100), null, new Extent(0, 0, 200, 100), new Origin(-15, 14));
         var snapshot = new Snapshot(Map.of("root", node("root", Role.APPLICATION, Geometry.UNAVAILABLE),
-                "frame", node("frame", Role.FRAME, new Geometry(geometry.screen(), geometry.window(), null)),
+                "frame", node("frame", Role.FRAME, frame),
                 "field", node("field", Role.ENTRY, geometry)));
         provider = new AtSpiProvider(_ -> {}, () -> snapshot, new ActionExecutor(new TargetRegistry()), _ -> bus.address(), false,
                 _ -> { throw new AssertionError("A geometry read attempted to schedule FX work"); });
@@ -105,6 +110,11 @@ class ComponentTest {
         assertEquals("(false,)", component("Contains", "20", "20", "0"));
         assertEquals("(false,)", component("Contains", "-10", "60", "0"));
         assertEquals("(true,)", component("Contains", "1", "2", "2"));
+        assertEquals("((-15, 14, 200, 100),)", call("frame", "org.a11y.atspi.Component.GetExtents", "0"));
+        assertEquals("(uint32 3,)", component("GetLayer"));
+        assertEquals("(uint32 7,)", call("frame", "org.a11y.atspi.Component.GetLayer"));
+        assertEquals("(int16 -1,)", component("GetMDIZOrder"));
+        assertEquals("(1.0,)", component("GetAlpha"));
         var interfaces = call("field", "org.a11y.atspi.Accessible.GetInterfaces");
         assertTrue(interfaces.contains("Component"));
         assertFalse(interfaces.contains("Text"));
@@ -116,8 +126,7 @@ class ComponentTest {
             assertTrue(component("Contains", "0", "0", type).contains("org.freedesktop.DBus.Error.InvalidArgs"));
         }
         assertTrue(call("frame", "org.a11y.atspi.Component.GetExtents", "2").contains("org.freedesktop.DBus.Error.NotSupported"));
-        for (var method : List.of("GrabFocus", "GetLayer", "GetMDIZOrder", "GetAlpha"))
-            assertTrue(component(method).contains("org.freedesktop.DBus.Error.NotSupported"));
+        assertTrue(component("GrabFocus").contains("org.freedesktop.DBus.Error.NotSupported"));
         assertTrue(component("SetExtents", "0", "0", "10", "10", "1").contains("NotSupported"));
         assertTrue(component("SetPosition", "0", "0", "1").contains("NotSupported"));
         assertTrue(component("SetSize", "10", "10").contains("NotSupported"));

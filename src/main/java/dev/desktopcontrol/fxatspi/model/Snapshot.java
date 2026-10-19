@@ -39,4 +39,13 @@ public record Snapshot(Map<String, AccessibleNode> nodes, ActionLimits limits, S
     }
 
     public AccessibleNode get(String id) { return nodes.get(id); }
+
+    /** The frame that contains {@code node} (a frame is its own), or null; bounded by the node count. */
+    public AccessibleNode frameOf(AccessibleNode node) {
+        for (var steps = nodes.size(); node != null && steps >= 0; steps--) {
+            if (node.role() == Role.FRAME) return node;
+            node = nodes.get(node.ancestor());
+        }
+        return null;
+    }
 }

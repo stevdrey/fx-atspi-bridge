@@ -24,6 +24,7 @@ import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.BoundsChanged;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Caret;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildAdded;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.ChildRemoved;
@@ -607,7 +608,7 @@ final class AtSpiProvider {
                 case TextDeleted(var id, var text) -> event(id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
                 case TextInserted(var id, var text) -> event(id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
                 case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
-                case SnapshotDiff.BoundsChanged(var id, var bounds) -> event(id, "BoundsChanged",
+                case BoundsChanged(var id, var bounds) -> event(id, "BoundsChanged",
                         "('', 0, 0, <" + AtSpiObjects.rectangle(bounds) + ">, @a{sv} {})");
                 case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
                 case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
@@ -693,7 +694,7 @@ final class AtSpiProvider {
             var api = Ffm.string(iface);
             var item = snapshot.get().get(id);
             if (api.equals(PREFIX + "Component")) {
-                reply(invocation, component(item, name, args));
+                reply(invocation, component(snapshot.get(), item, name, args));
                 return;
             }
             if (api.endsWith("Action") && name.equals("DoAction")) {
@@ -735,9 +736,16 @@ final class AtSpiProvider {
         } catch (Throwable failure) { fail(invocation, failure); }
     }
     /** Snapshot-only reads: no admission, retained invocation, FX scheduling or application callback. */
-    private String component(AccessibleNode item, String method, MemorySegment args) {
+    private String component(Snapshot published, AccessibleNode item, String method, MemorySegment args) {
         if (item == null) throw Rejected.STALE;
         if (!item.has(Capability.COMPONENT)) throw Rejected.NOT_SUPPORTED;
+        // Constant answers: the AT-SPI window/widget layers, no MDI and opaque.
+        switch (method) {
+            case "GetLayer" -> { return "(uint32 " + (item.role() == Role.FRAME ? 7 : 3) + ",)"; }
+            case "GetMDIZOrder" -> { return "(int16 -1,)"; }
+            case "GetAlpha" -> { return "(1.0,)"; }
+            default -> {}
+        }
         var type = switch (method) {
             case "GetExtents", "GetPosition" -> ffi.unsignedInteger(args, 0);
             case "Contains" -> ffi.unsignedInteger(args, 2);
@@ -745,8 +753,8 @@ final class AtSpiProvider {
             default -> throw Rejected.NOT_SUPPORTED;
         };
         if (!Geometry.known(type)) throw new Rejected("Unknown coordinate type");
-        if (type == 2 && item.role() == Role.FRAME) throw Rejected.NOT_SUPPORTED;
-        var bounds = item.geometry().at(type);
+        var frame = published.frameOf(item);
+        var bounds = item.geometry().at(type, frame == null ? null : frame.geometry());
         if (method.equals("Contains")) {
             if (bounds == null && !item.geometry().equals(Geometry.UNAVAILABLE)) throw Rejected.NOT_SUPPORTED;
             return "(" + (bounds != null && bounds.contains(ffi.integer(args, 0), ffi.integer(args, 1))) + ",)";

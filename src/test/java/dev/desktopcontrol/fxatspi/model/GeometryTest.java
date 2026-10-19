@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.desktopcontrol.fxatspi.model.Geometry.Extent;
+import dev.desktopcontrol.fxatspi.model.Geometry.Origin;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import org.junit.jupiter.api.Test;
 
@@ -57,13 +59,26 @@ class GeometryTest {
 
     @Test void availabilityIsIndependentAndUnknownUnsignedValuesDoNotWrap() {
         var window = new Rect(0, 0, 10, 20);
-        var geometry = new Geometry(null, window, null);
-        assertNull(geometry.at(0));
-        assertEquals(window, geometry.at(1));
-        assertNull(geometry.at(2));
+        var geometry = new Geometry(window, null, new Extent(0, 0, 10, 20), null);
+        assertNull(geometry.at(0, null), "SCREEN needs a frame origin");
+        assertNull(geometry.at(0, geometry), "a node without an origin is no frame");
+        assertEquals(window, geometry.at(1, null));
+        assertNull(geometry.at(2, null));
         for (var type : new long[] {-1, 3, 0xffff_ffffL, 0x1_0000_0000L}) {
             assertFalse(Geometry.known(type));
-            assertThrows(IllegalArgumentException.class, () -> geometry.at(type));
+            assertThrows(IllegalArgumentException.class, () -> geometry.at(type, null));
         }
+    }
+
+    @Test void screenRoundsOnceAfterAddingTheFrameOrigin() {
+        var frame = new Geometry(new Rect(0, 0, 100, 50), null, new Extent(0, 0, 100, 50), new Origin(10.4, -20.6));
+        assertEquals(new Rect(10, -21, 101, 51), frame.screen(frame), "a frame uses its own origin");
+        var node = new Geometry(new Rect(1, 2, 3, 3), null, new Extent(1.3, 2.3, 3.4, 4.2), null);
+        // Rounding the WINDOW rect first would give (11, -19, 4, 4); one outward rounding gives the exact enclosure.
+        assertEquals(Rect.enclosing(11.7, -18.3, 13.8, -16.4), node.screen(frame));
+        assertEquals(node.screen(frame), node.at(0, frame));
+        assertNull(Geometry.UNAVAILABLE.screen(frame));
+        var far = new Geometry(null, null, null, new Origin(Integer.MAX_VALUE, 0));
+        assertNull(node.screen(far), "overflowing SCREEN bounds are unavailable, never clamped");
     }
 }

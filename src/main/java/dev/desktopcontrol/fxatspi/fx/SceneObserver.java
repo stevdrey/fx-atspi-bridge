@@ -19,6 +19,7 @@ import dev.desktopcontrol.fxatspi.BridgeOptions;
 import dev.desktopcontrol.fxatspi.BridgeOptions.ContentKind;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
 import dev.desktopcontrol.fxatspi.model.NodeStore;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
@@ -217,13 +218,14 @@ public final class SceneObserver {
             switch (target) {
                 case Window window -> {
                     inherited = window.showingProperty();
-                    own = window instanceof Stage stage ? new Observable[] {window.focusedProperty(), stage.titleProperty()}
-                            : new Observable[] {window.focusedProperty()};
+                    // Position and size affect only the frame: descendants are WINDOW-relative and SCREEN derives from
+                    // the frame at query time. Scene size/offset changes are inherited through observeScene.
+                    own = window instanceof Stage stage ? new Observable[] {window.focusedProperty(), stage.titleProperty(),
+                            window.xProperty(), window.yProperty(), window.widthProperty(), window.heightProperty()}
+                            : new Observable[] {window.focusedProperty(), window.xProperty(), window.yProperty(),
+                            window.widthProperty(), window.heightProperty()};
                     structure = window.sceneProperty();
-                    geometryInherited = window instanceof Stage stage ? new Observable[] {window.xProperty(), window.yProperty(),
-                            window.widthProperty(), window.heightProperty(), window.outputScaleXProperty(), window.outputScaleYProperty(), stage.iconifiedProperty()}
-                            : new Observable[] {window.xProperty(), window.yProperty(), window.widthProperty(), window.heightProperty(),
-                            window.outputScaleXProperty(), window.outputScaleYProperty()};
+                    if (window instanceof Stage stage) geometryInherited = new Observable[] {stage.iconifiedProperty()};
                 }
                 case Node node -> {
                     inherited = node.visibleProperty();
@@ -309,7 +311,6 @@ public final class SceneObserver {
                 }
                 case Window window -> {
                     window.getX(); window.getY(); window.getWidth(); window.getHeight();
-                    window.getOutputScaleX(); window.getOutputScaleY();
                     if (window instanceof Stage stage) stage.isIconified();
                     if (scene != null) { scene.getX(); scene.getY(); scene.getWidth(); scene.getHeight(); scene.getCamera(); }
                 }
@@ -434,7 +435,8 @@ public final class SceneObserver {
                     entry.readGeometry();
                     sensitive = sensitive(entry);
                     node = project(entry, sensitive);
-                    if (entry.target instanceof Node target) {
+                    // Descendants of a sensitive node publish a substitute box and never use this node's origin.
+                    if (entry.target instanceof Node target && !sensitive) {
                         var origin = geometry.origin(target);
                         var originChanged = entry.originInitialized && !Objects.equals(origin, entry.origin);
                         entry.origin = origin;
@@ -467,6 +469,13 @@ public final class SceneObserver {
                 entry.sensitive = sensitive;
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
+                if (!sensitive && previous != null && entry.target instanceof Node && !previous.geometry().equals(node.geometry())) {
+                    // Sensitive children publish this node's box as their own.
+                    for (var child : entry.children) {
+                        var descendant = observed.get(child);
+                        if (descendant != null && descendant.parent == entry && descendant.sensitive) markSubtree(descendant);
+                    }
+                }
             }
         } finally { showing.clear(); sensitivity.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
@@ -655,7 +664,10 @@ public final class SceneObserver {
                 yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
                         Snapshot.ROOT_ID, children, COMPONENT, window.isShowing(), false, geometry.project(window));
             }
-            case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children, sensitive, entry.parent.target);
+            case Node node -> {
+                var shows = showing(entry);
+                yield projectNode(node, entry.id, entry.parent.id, shows, children, sensitive, nodeGeometry(entry, node, shows, sensitive));
+            }
             default -> new AccessibleNode(Snapshot.ROOT_ID, redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
@@ -667,7 +679,19 @@ public final class SceneObserver {
         return new AccessibleNode(entry.id, "", entry.target == APPLICATION ? Role.APPLICATION : Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
     }
 
-    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive, Object parent) {
+    /**
+     * A sensitive node other than a password field publishes the box of its nearest non-sensitive observed ancestor:
+     * its own size may follow the protected content (an auto-sized label, a text shape). Password fields keep their
+     * own layout box, which depends on their column count, not on their contents.
+     */
+    private Geometry nodeGeometry(Observed entry, Node node, boolean showing, boolean sensitive) {
+        if (!sensitive || node instanceof PasswordField) return geometry.project(node, entry.parent.target, showing);
+        var box = entry.parent;
+        while (box.target instanceof Node && sensitive(box)) box = box.parent;
+        return geometry.substitute(node, box.target, box != entry.parent, showing);
+    }
+
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive, Geometry bounds) {
         var password = node instanceof PasswordField;
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
@@ -699,6 +723,6 @@ public final class SceneObserver {
         var blocked = window == null || modal.computeIfAbsent(window, ActionExecutor::blockedByModal);
         return new AccessibleNode(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
                 capabilities, enabled && showing && !blocked && !sensitive && !transformed, sensitive || transformed,
-                geometry.project(node, parent, showing));
+                bounds);
     }
 }

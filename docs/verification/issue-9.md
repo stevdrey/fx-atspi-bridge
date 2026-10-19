@@ -291,6 +291,38 @@ No performance workload was rerun for this QA-only change. The existing failed 1
 (33.476954 ms against 29 ms) remains unchanged. The user explicitly chose to preserve PR #40 as ready for review
 with that reservation documented after the earlier draft transition; this follow-up preserves that state.
 
+## PR #40 review follow-up: geometry privacy, window moves and Component getters
+
+On 2026-10-19, resolved the nine findings of a high-effort review of PR #40:
+
+- Sensitive nodes other than password fields publish the box of their nearest non-sensitive observed container
+  (or the scene viewport), so an auto-sized secret label no longer reveals its content length through extents or
+  BoundsChanged. Password fields keep their content-independent layout box.
+- `Geometry` now carries WINDOW/PARENT rectangles, the unrounded WINDOW extent and, for frames only, the window's
+  screen origin. SCREEN is derived on the provider thread from the containing frame (`Snapshot.frameOf`), rounding
+  outward once. Window x/y/width/height are frame-only properties: a move re-projects one target and emits one
+  frame BoundsChanged instead of one per descendant. Output scale is no longer observed.
+- `GetLayer`, `GetMDIZOrder` and `GetAlpha` answer constants; the frame PARENT role special case was removed.
+- The idle observer test again mutates an unmodeled property (opacity); the fixture writes checkpoints through an
+  exclusive temporary file; `BoundsChanged` is imported like its sibling cases.
+
+New tests: query-time SCREEN rounding/overflow (`GeometryTest`), frame-origin SCREEN and constant getters on the
+private bus (`ComponentTest`), one frame event per move and WINDOW-driven node events (`SnapshotDiffTest`), a move
+re-projecting only the frame and sensitive substitute/password boxes (`SceneObserverTest`). An output-scale change
+cannot be driven through public JavaFX APIs, so its removal is covered by inspection only.
+
+Commands run from the repository root with JDK 27:
+
+| Check | Outcome |
+|---|---|
+| `./gradlew test --rerun-tasks` | Passed: 209 tests, zero failures/errors/skips |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check --console=plain` | Passed |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 212 tests |
+| `git diff --check` | Passed |
+
+Not rerun: the independent `geometry_qa.py` desktop run and the performance workloads; they belong to the next QA
+session. The 1,000-node p99 reservation above is unchanged and not re-measured.
+
 ## Limits
 
 Native Wayland, multiple/mixed-scale monitors, other desktops/distributions and per-pixel/occlusion behavior are not

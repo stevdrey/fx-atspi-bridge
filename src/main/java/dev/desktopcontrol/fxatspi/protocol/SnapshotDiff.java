@@ -17,12 +17,14 @@ package dev.desktopcontrol.fxatspi.protocol;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
+import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * The AT-SPI changes between two snapshots, in emission order: every added object first, so a client already knows
@@ -47,6 +49,11 @@ public final class SnapshotDiff {
     public record ChildRemoved(String parent, int index, String child) implements Change {}
     public record ChildAdded(String parent, int index, String child) implements Change {}
 
+    private static Rect screen(Snapshot snapshot, AccessibleNode node) {
+        var frame = snapshot.frameOf(node);
+        return frame == null ? null : node.geometry().screen(frame.geometry());
+    }
+
     /**
      * Changes for {@code ids} (ids missing from both snapshots are ignored). An id whose record did not change yields
      * nothing. Linear in the ids and the children of the changed parents.
@@ -63,7 +70,7 @@ public final class SnapshotDiff {
             else if (old.equals(item)) continue;
             else {
                 if (!old.capabilities().equals(item.capabilities())) changed.add(new Reshaped(id));
-                properties(old, item, changed);
+                properties(old, item, before, after, changed);
             }
             children(id, old == null ? List.of() : old.children(), item.children(), old == null, changed);
         }
@@ -72,7 +79,7 @@ public final class SnapshotDiff {
         return added;
     }
 
-    private static void properties(AccessibleNode old, AccessibleNode item, List<Change> out) {
+    private static void properties(AccessibleNode old, AccessibleNode item, Snapshot before, Snapshot after, List<Change> out) {
         var id = item.id();
         if (old.enabled() != item.enabled()) { out.add(new State(id, "enabled", item.enabled())); out.add(new State(id, "sensitive", item.enabled())); }
         if (old.focused() != item.focused()) out.add(new State(id, "focused", item.focused()));
@@ -83,8 +90,11 @@ public final class SnapshotDiff {
             if (!item.text().isEmpty()) out.add(new TextInserted(id, item.text()));
         }
         if (old.caret() != item.caret()) out.add(new Caret(id, item.caret()));
-        var bounds = item.geometry().screen();
-        if (bounds != null && !bounds.equals(old.geometry().screen())) out.add(new BoundsChanged(id, bounds));
+        // A window move changes only its frame's SCREEN bounds; descendants report changes in their WINDOW bounds.
+        var frame = item.role() == Role.FRAME;
+        var moved = frame ? !Objects.equals(screen(after, item), screen(before, old)) : !Objects.equals(item.geometry().window(), old.geometry().window());
+        var bounds = moved ? screen(after, item) : null;
+        if (bounds != null) out.add(new BoundsChanged(id, bounds));
     }
 
     /**

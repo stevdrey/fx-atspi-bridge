@@ -124,12 +124,18 @@ public final class GeometryApp extends Application {
                     var reference = reference();
                     // Only one checkpoint can be pending. File IO never holds the FX or provider owner.
                     CompletableFuture.runAsync(() -> {
+                        Path temporary = null;
                         try {
-                            var temporary = output.resolveSibling(output.getFileName() + ".new");
+                            // A fresh exclusive sibling: never truncate or follow a pre-existing file or link.
+                            temporary = Files.createTempFile(output.getParent(), output.getFileName() + ".", ".new");
                             Files.writeString(temporary, reference);
                             Files.move(temporary, output, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                            temporary = null;
                             Platform.runLater(() -> next.setDisable(step + 1 == CASES.size()));
                         } catch (IOException failure) { System.err.println("Geometry fixture write failed"); Platform.exit(); }
+                        finally {
+                            if (temporary != null) try { Files.deleteIfExists(temporary); } catch (IOException _) { /* best effort */ }
+                        }
                     });
                 });
             }

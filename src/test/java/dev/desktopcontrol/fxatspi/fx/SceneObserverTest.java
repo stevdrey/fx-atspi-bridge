@@ -17,6 +17,7 @@ package dev.desktopcontrol.fxatspi.fx;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -193,7 +194,8 @@ class SceneObserverTest {
                 var initial = harness.last.get(id).geometry();
                 assertEquals(Rect.enclosing(30 + dx, 40 + dy, 110 + dx, 90 + dy), initial.window());
                 assertEquals(new Rect(10, 10, 80, 50), initial.parent());
-                assertNotNull(initial.screen());
+                var frameGeometry = harness.last.get(harness.id(stage)).geometry();
+                assertNotNull(initial.screen(frameGeometry));
                 assertFalse(harness.last.get("root").has(Capability.COMPONENT));
                 assertNull(harness.last.get(harness.id(stage)).geometry().parent());
 
@@ -234,13 +236,73 @@ class SceneObserverTest {
                 assertEquals(Rect.enclosing(dx, 40 + dy, 30 + dx, 120 + dy), harness.last.get(id).geometry().window());
                 var screenOrigin = root.localToScreen(0, 0);
                 assertEquals(Rect.enclosing(screenOrigin.getX(), screenOrigin.getY() + 40, screenOrigin.getX() + 30,
-                        screenOrigin.getY() + 120), harness.last.get(id).geometry().screen(),
+                        screenOrigin.getY() + 120), harness.last.get(id).geometry().screen(harness.last.get(harness.id(stage)).geometry()),
                         "rotated AABB minima must not introduce an extra SCREEN pixel");
                 stage.setIconified(true);
                 harness.endBatch();
                 assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
                 stage.setIconified(false);
                 assertEquals(id, harness.id(child));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void aWindowMoveReprojectsOnlyItsFrameAndDescendantsDeriveScreenFromIt() throws Exception {
+        onFx(() -> {
+            var child = new Rectangle(40, 30);
+            child.relocate(10, 20);
+            var stage = new Stage();
+            stage.setScene(new Scene(new Pane(child), 200, 150));
+            stage.show();
+            var harness = new Harness().start();
+            try {
+                var id = harness.id(child);
+                var window = harness.last.get(id).geometry().window();
+                var before = harness.observer.projections();
+                stage.setX(stage.getX() + 37);
+                stage.setY(stage.getY() + 11);
+                harness.endBatch();
+                assertEquals(1, harness.observer.projections() - before, "only the frame is projected again");
+                assertEquals(window, harness.last.get(id).geometry().window());
+                var bounds = child.localToScreen(child.getBoundsInLocal());
+                assertEquals(Rect.enclosing(bounds.getMinX(), bounds.getMinY(), bounds.getMaxX(), bounds.getMaxY()),
+                        harness.last.get(id).geometry().screen(harness.last.get(harness.id(stage)).geometry()));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void sensitiveNodesPublishTheirContainerBoxWhilePasswordFieldsKeepTheirOwn() throws Exception {
+        onFx(() -> {
+            var label = new Label("1234");
+            label.setId("private");
+            var password = new PasswordField();
+            password.relocate(0, 60);
+            var box = new Pane(label, password);
+            box.setManaged(false);
+            box.resizeRelocate(20, 30, 200, 150);
+            var stage = new Stage();
+            stage.setScene(new Scene(new Pane(box), 400, 300));
+            stage.show();
+            var harness = new Harness(BridgeOptions.builder().sensitiveNodes(node -> "private".equals(node.getId())).build()).start();
+            try {
+                var boxWindow = harness.last.get(harness.id(box)).geometry().window();
+                var initial = harness.last.get(harness.id(label)).geometry();
+                assertEquals(boxWindow, initial.window(), "a sensitive node never exposes its own content-sized box");
+                assertEquals(new Rect(0, 0, 200, 150), initial.parent());
+                var width = label.getWidth();
+                label.setText("123456789012345678901234567890");
+                box.applyCss();
+                box.layout();
+                assertTrue(label.getWidth() > width, "the fixture label is sized by its content");
+                harness.endBatch();
+                assertEquals(initial, harness.last.get(harness.id(label)).geometry());
+                var field = harness.last.get(harness.id(password)).geometry().window();
+                assertNotEquals(boxWindow, field, "password fields keep their content-independent layout box");
+                box.resize(220, 150);
+                harness.endBatch();
+                assertEquals(220, harness.last.get(harness.id(label)).geometry().window().width(), "the substitute follows its container");
             } finally { harness.observer.close(); }
             return null;
         });
@@ -393,7 +455,7 @@ class SceneObserverTest {
         var harness = onFx(() -> new Harness().start());
         Thread.sleep(300); // several pulses
         var result = onFx(() -> {
-            // Read the idle state without mutating the geometry now included in the model.
+            root.setOpacity(0.5); // neither modeled nor geometric: no listener may schedule a flush
             return List.of(harness.scheduled.size(), (int) harness.observer.publications());
         });
         assertEquals(List.of(0, 1), result, "start publishes the initial traversal once; nothing is scheduled while idle");

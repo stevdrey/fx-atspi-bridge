@@ -15,17 +15,33 @@
  */
 package dev.desktopcontrol.fxatspi.model;
 
-/** Logical JavaFX units, already projected on FX. Null means unavailable in that coordinate frame. */
-public record Geometry(Rect screen, Rect window, Rect parent) {
-    public static final Geometry UNAVAILABLE = new Geometry(null, null, null);
+/**
+ * Logical JavaFX units, already projected on FX. Null means unavailable in that coordinate frame.
+ * SCREEN is derived at query time from the unrounded WINDOW {@code extent} and the frame's screen {@code origin}, so a
+ * window move re-projects only its frame. Only frames carry an origin.
+ */
+public record Geometry(Rect window, Rect parent, Extent extent, Origin origin) {
+    public static final Geometry UNAVAILABLE = new Geometry(null, null, null, null);
+
+    /** Unrounded visible area in WINDOW axes, retained so SCREEN rounds once after translation. */
+    public record Extent(double x, double y, double right, double bottom) {}
+    /** Screen position of a frame's WINDOW origin. */
+    public record Origin(double x, double y) {}
 
     /** Whether a coordinate type is defined by AT-SPI; uint32 values are decoded into a long. */
     public static boolean known(long type) { return type >= 0 && type <= 2; }
 
-    public Rect at(long type) {
+    /** SCREEN bounds using {@code frame}'s origin (a frame passes itself); null when either part is unavailable. */
+    public Rect screen(Geometry frame) {
+        var offset = frame == null ? null : frame.origin;
+        if (extent == null || offset == null) return null;
+        return Rect.enclosing(extent.x + offset.x, extent.y + offset.y, extent.right + offset.x, extent.bottom + offset.y);
+    }
+
+    public Rect at(long type, Geometry frame) {
         if (!known(type)) throw new IllegalArgumentException("Unknown coordinate type");
         return switch ((int) type) {
-            case 0 -> screen;
+            case 0 -> screen(frame);
             case 1 -> window;
             case 2 -> parent;
             default -> throw new IllegalArgumentException("Unknown coordinate type");

@@ -22,15 +22,21 @@ scene cameras are unsupported.
 FX reads geometry through public JavaFX APIs and publishes framework-free,
 immutable scalar records. Provider calls never schedule or wait for FX.
 Component is stable on live nodes/windows, including sensitive controls; it is
-absent on the application root and inert failed projections. Password text,
+absent on the application root and inert failed projections. A sensitive node
+other than a password field publishes the box of its nearest non-sensitive
+observed ancestor (or the scene viewport), never its own content-sized bounds;
+password fields keep their content-independent layout box. Password text,
 caret and skin nodes remain unobserved. Existing facade APIs and model
 constructors remain compatible.
 
 GetExtents(u)->(iiii), GetPosition(u)->ii, GetSize()->ii and Contains(iiu)->b
-follow the upstream Component XML. Other Component methods return NotSupported.
+follow the upstream Component XML. GetLayer (WINDOW for frames, WIDGET otherwise),
+GetMDIZOrder (-1) and GetAlpha (1.0) are constants. Other Component methods
+return NotSupported.
 Use JavaFX logical coordinates without output-scale multiplication. WINDOW
 includes Scene.x/y; frame WINDOW origin is (0,0), with window dimensions.
-SCREEN comes from JavaFX localToScreen/window coordinates. PARENT subtracts
+SCREEN is derived at query time from a node's unrounded WINDOW extent plus its
+frame's window.x/y origin, so a window move re-projects only the frame. PARENT subtracts
 the accessible parent's un-inherited-clipped bounding origin, in WINDOW axes;
 a scene root uses the window origin. A frame's application parent has no
 geometry, so frame PARENT is unsupported. Coordinate systems have independent
@@ -53,15 +59,17 @@ ancestor clipping/origin work, with O(live targets) retention and deterministic
 clearing of target references (map backing arrays reuse high-water capacity).
 Identity lookups are expected O(1); ancestor clips are computed once per flush.
 Public JavaFX transform-read cost may depend on tree depth and is measured rather
-than assumed constant. Observe only live exported targets and their clip objects. Dispose
+than assumed constant. Output scale is neither read nor observed. Observe only live exported targets and their clip objects. Dispose
 subscriptions on clip/scene replacement, exclusion, detach and close. No timers,
 periodic traversal or forced CSS/layout. Publish the latest observed layout;
 tests wait for layout before comparison. Emit one BoundsChanged per touched id
-with changed valid SCREEN bounds in each provider publication.
+in each provider publication: for a frame when its SCREEN bounds change, for
+other nodes when their WINDOW bounds change, carrying the valid SCREEN bounds.
 
-Derive the shared scene-to-screen translation from root points, not differences
-of transformed bounding minima: the latter can introduce an extra pixel after
-outward rounding of rotated/clipped geometry. Region layout bounds also prevent
+Derive SCREEN by one outward rounding after adding the frame origin to the
+unrounded WINDOW extent, not from differences of transformed bounding minima:
+the latter can introduce an extra pixel after outward rounding of
+rotated/clipped geometry. Region layout bounds also prevent
 indirect invalidations from password skins and excluded child content.
 
 ## Limits and failure modes
@@ -106,6 +114,11 @@ excluded; a failed cell keeps the performance gate open. This focused gate does
 not qualify dirty-1/100, churn, other backends or stable-release performance.
 
 ## Rollout and documentation
+
+PR #40 review follow-up: sensitive substitute boxes, query-time SCREEN, the
+constant Component getters and removal of output-scale observation resolve
+review findings; the frame PARENT role special case is replaced by the frame's
+null PARENT rectangle (Contains on a hidden frame is false, as for nodes).
 
 Update README/system design with units, coordinate/clip/error contracts and
 qualified environments. No new exported Java API. Reuse the issue branch and

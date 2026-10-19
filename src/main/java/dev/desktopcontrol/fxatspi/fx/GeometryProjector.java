@@ -16,6 +16,8 @@
 package dev.desktopcontrol.fxatspi.fx;
 
 import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Geometry.Extent;
+import dev.desktopcontrol.fxatspi.model.Geometry.Origin;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import java.util.IdentityHashMap;
 import javafx.geometry.Bounds;
@@ -31,7 +33,6 @@ final class GeometryProjector {
     private final IdentityHashMap<Node, Area> raw = new IdentityHashMap<>();
     private final IdentityHashMap<Node, Area> clips = new IdentityHashMap<>();
     private final IdentityHashMap<Node, Boolean> twoDimensional = new IdentityHashMap<>();
-    private final IdentityHashMap<Scene, Point2D> screenOrigins = new IdentityHashMap<>();
 
     /** Doubles are retained until after intersection and coordinate translation. Null areas mean unavailable. */
     private record Area(double x, double y, double right, double bottom) {
@@ -49,9 +50,10 @@ final class GeometryProjector {
             return new Area(left, top, Math.max(left, Math.min(right, other.right)), Math.max(top, Math.min(bottom, other.bottom)));
         }
         Rect translated(double dx, double dy) { return Rect.enclosing(x + dx, y + dy, right + dx, bottom + dy); }
+        Rect size() { return Rect.enclosing(0, 0, right - x, bottom - y); }
     }
 
-    void clear() { raw.clear(); clips.clear(); twoDimensional.clear(); screenOrigins.clear(); }
+    void clear() { raw.clear(); clips.clear(); twoDimensional.clear(); }
 
     private boolean isTwoDimensional(Node node) {
         var known = twoDimensional.get(node);
@@ -63,16 +65,6 @@ final class GeometryProjector {
         if (!result) result = node.getLocalToSceneTransform().isType2D();
         twoDimensional.put(node, result);
         return result;
-    }
-
-    private Point2D screenOrigin(Scene scene) {
-        if (screenOrigins.containsKey(scene)) return screenOrigins.get(scene);
-        var root = scene.getRoot();
-        var local = root.localToScene(0, 0, true);
-        var screen = root.localToScreen(0, 0);
-        var origin = local == null || screen == null ? null : screen.subtract(local);
-        screenOrigins.put(scene, origin);
-        return origin;
     }
 
     private Area raw(Node node) {
@@ -107,29 +99,63 @@ final class GeometryProjector {
         return window != null && window.isShowing() && !(window instanceof Stage stage && stage.isIconified());
     }
 
+    /** A frame's SCREEN derives from its own origin; its descendants derive theirs from it at query time. */
     Geometry project(Window window) {
         if (!available(window)) return Geometry.UNAVAILABLE;
-        return new Geometry(Rect.enclosing(window.getX(), window.getY(), window.getX() + window.getWidth(), window.getY() + window.getHeight()),
-                Rect.enclosing(0, 0, window.getWidth(), window.getHeight()), null);
+        var x = window.getX();
+        var y = window.getY();
+        var origin = Double.isFinite(x) && Double.isFinite(y) ? new Origin(x, y) : null;
+        return new Geometry(Rect.enclosing(0, 0, window.getWidth(), window.getHeight()), null,
+                new Extent(0, 0, window.getWidth(), window.getHeight()), origin);
+    }
+
+    private static boolean available(Node node, boolean showing) {
+        var scene = node.getScene();
+        return showing && scene != null && scene.getCamera() == null && available(scene.getWindow());
+    }
+
+    /** WINDOW-axis geometry for {@code visible} scene coordinates; SCREEN is left to the frame's origin. */
+    private static Geometry geometry(Scene scene, Area visible, Rect relative) {
+        var dx = scene.getX();
+        var dy = scene.getY();
+        return new Geometry(visible.translated(dx, dy), relative,
+                new Extent(visible.x + dx, visible.y + dy, visible.right + dx, visible.bottom + dy), null);
     }
 
     Geometry project(Node node, Object parent, boolean showing) {
+        if (!available(node, showing)) return Geometry.UNAVAILABLE;
         var scene = node.getScene();
-        if (!showing || scene == null || scene.getCamera() != null || !available(scene.getWindow())) return Geometry.UNAVAILABLE;
         var area = raw(node);
         if (area == null) return Geometry.UNAVAILABLE;
         var visible = area.intersect(clip(node));
         if (visible == null) return Geometry.UNAVAILABLE;
-        var window = visible.translated(scene.getX(), scene.getY());
-        // Derive one translation from points, not a difference between transformed AABB minima. Bounds APIs
-        // can round those minima differently after rotation, adding a spurious pixel when rounding outward.
-        var origin = screenOrigin(scene);
-        var screen = origin == null ? null : visible.translated(origin.getX(), origin.getY());
         Rect relative = null;
         if (parent instanceof Node ancestor) {
             var parentOrigin = raw(ancestor);
             if (parentOrigin != null) relative = visible.translated(-parentOrigin.x, -parentOrigin.y);
-        } else if (parent instanceof Window) relative = window;
-        return new Geometry(screen, window, relative);
+        } else if (parent instanceof Window) relative = visible.translated(scene.getX(), scene.getY());
+        return geometry(scene, visible, relative);
+    }
+
+    /**
+     * Inert geometry of a sensitive node: the visible box of {@code box}, its nearest non-sensitive observed ancestor
+     * (a node, or the window for the scene viewport), so the node's own content-dependent size is never read out.
+     * {@code nested} means the accessible parent is itself sensitive and publishes the same box.
+     */
+    Geometry substitute(Node node, Object box, boolean nested, boolean showing) {
+        if (!available(node, showing)) return Geometry.UNAVAILABLE;
+        var scene = node.getScene();
+        Area visible;
+        Rect relative;
+        if (box instanceof Node ancestor) {
+            var area = ancestor.getScene() == scene ? raw(ancestor) : null;
+            visible = area == null ? null : area.intersect(clip(ancestor));
+            if (visible == null) return Geometry.UNAVAILABLE;
+            relative = nested ? visible.size() : visible.translated(-area.x, -area.y);
+        } else {
+            visible = new Area(0, 0, scene.getWidth(), scene.getHeight());
+            relative = nested ? visible.size() : visible.translated(scene.getX(), scene.getY());
+        }
+        return geometry(scene, visible, relative);
     }
 }
