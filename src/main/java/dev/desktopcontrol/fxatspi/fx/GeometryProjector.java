@@ -30,6 +30,7 @@ import javafx.stage.Window;
 final class GeometryProjector {
     private final IdentityHashMap<Node, Area> raw = new IdentityHashMap<>();
     private final IdentityHashMap<Node, Area> clips = new IdentityHashMap<>();
+    private final IdentityHashMap<Node, Boolean> twoDimensional = new IdentityHashMap<>();
     private final IdentityHashMap<Scene, Point2D> screenOrigins = new IdentityHashMap<>();
 
     /** Doubles are retained until after intersection and coordinate translation. Null areas mean unavailable. */
@@ -50,7 +51,19 @@ final class GeometryProjector {
         Rect translated(double dx, double dy) { return Rect.enclosing(x + dx, y + dy, right + dx, bottom + dy); }
     }
 
-    void clear() { raw.clear(); clips.clear(); screenOrigins.clear(); }
+    void clear() { raw.clear(); clips.clear(); twoDimensional.clear(); screenOrigins.clear(); }
+
+    private boolean isTwoDimensional(Node node) {
+        var known = twoDimensional.get(node);
+        if (known != null) return known;
+        var parent = node.getParent();
+        var result = node.getLocalToParentTransform().isType2D() && (parent == null || isTwoDimensional(parent));
+        // The usual 2D case needs no per-node global-transform property or its cached Transform.
+        // Preserve the global check when 3D transforms could cancel along the ancestor chain.
+        if (!result) result = node.getLocalToSceneTransform().isType2D();
+        twoDimensional.put(node, result);
+        return result;
+    }
 
     private Point2D screenOrigin(Scene scene) {
         if (screenOrigins.containsKey(scene)) return screenOrigins.get(scene);
@@ -65,7 +78,7 @@ final class GeometryProjector {
     private Area raw(Node node) {
         if (raw.containsKey(node)) return raw.get(node);
         var bounds = bounds(node);
-        var area = node.getLocalToSceneTransform().isType2D() ? Area.from(node.localToScene(bounds, true)) : null;
+        var area = isTwoDimensional(node) ? Area.from(node.localToScene(bounds, true)) : null;
         raw.put(node, area);
         return area;
     }

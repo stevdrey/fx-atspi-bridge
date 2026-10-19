@@ -246,6 +246,34 @@ class SceneObserverTest {
         });
     }
 
+    @Test void geometryRechecksAncestorDimensionalityAndPreservesCancellingTransforms() throws Exception {
+        onFx(() -> {
+            var child = new Rectangle(40, 30);
+            var parent = new Pane(child);
+            show(new VBox(parent));
+            var harness = new Harness().start();
+            try {
+                var id = harness.id(child);
+                var initial = harness.last.get(id).geometry();
+                assertNotNull(initial.window());
+                parent.setScaleZ(2);
+                harness.endBatch();
+                assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+                child.setScaleZ(0.5);
+                harness.endBatch();
+                assertEquals(initial.window(), harness.last.get(id).geometry().window(),
+                        "the combined transform remains 2D when ancestor and local Z scales cancel");
+                assertNull(harness.last.get(id).geometry().parent(), "the parent's own transform is still 3D");
+                parent.setScaleZ(1);
+                child.setScaleZ(1);
+                harness.endBatch();
+                assertEquals(initial, harness.last.get(id).geometry());
+                assertEquals(id, harness.id(child));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
     @Test void reshowingAnIconifiedWindowRestoresGeometryInTheSameBatch() throws Exception {
         onFx(() -> {
             var child = new Rectangle(40, 30);

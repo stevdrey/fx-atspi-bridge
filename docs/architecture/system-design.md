@@ -66,7 +66,9 @@ NEW → STARTING → RUNNING → STOPPING → CLOSED, with FAILED as a terminal 
 
 SC-09 adds read-only Component geometry to immutable node projections. FX subscribes to bounds, local transforms,
 clips and window/scene geometry; it coalesces inherited invalidations and memoizes shared ancestor clip/origin reads
-only during a flush. Temporary unavailability does not change object identity or interfaces. Provider queries use
+only during a flush. Local-transform checks cached by ancestor handle the common 2D case, avoiding per-node
+JavaFX global-transform properties; a global check still handles potential cancellation of 3D transforms.
+Temporary unavailability does not change object identity or interfaces. Provider queries use
 only scalar SCREEN/WINDOW/PARENT rectangles, with the existing registration/reply ownership. A typed uint32 GLib
 getter preserves all coordinate-type bits; each temporary child variant is released on the provider owner. No
 new queues, native arenas, retained action invocations or periodic sources are introduced. BoundsChanged uses the

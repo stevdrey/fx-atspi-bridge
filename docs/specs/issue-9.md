@@ -87,6 +87,19 @@ batch, preserving identity without requiring a WM to honor a restore request. Co
 before/after clean revisions using the existing dispatch profile; no smoke-based
 performance claims. Actual commands/results belong in docs/verification/issue-9.md.
 
+PR #40 latency follow-up: retain the original valid outliers and diagnose FX,
+rendering and GC waits separately. Avoid materializing JavaFX global-transform
+properties just to establish the ordinary 2D case; memoize ancestor checks within
+the flush, retaining the existing global check for possible 3D cancellation.
+Preserve geometry, invalidation and disposal behavior. Qualification uses an
+unchanged `dispatch` workload on a clean commit, five paired runs per size, no
+profiling instrumentation or overlapping builds. Every bridge-on run must meet
+the existing SC-01 dirty-10 provisional budgets: p99 41/29/307 ms, allocation
+116/299/8,844 KiB/sample, idle CPU 8/14/137 percent of one core, and idle RSS
+327/434/1,590 MiB at 100/1,000/10,000 nodes. Valid outliers are not retried or
+excluded; a failed cell keeps the performance gate open. This focused gate does
+not qualify dirty-1/100, churn, other backends or stable-release performance.
+
 ## Rollout and documentation
 
 Update README/system design with units, coordinate/clip/error contracts and
