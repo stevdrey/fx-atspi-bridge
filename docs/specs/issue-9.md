@@ -50,7 +50,10 @@ return NotSupported, unknown uint32 types return InvalidArgs. Never manufacture
 
 Deduplicate inherited invalidations until flush. Per-flush identity caches share
 ancestor clipping/origin work, with O(live targets) retention and deterministic
-clearing. Observe only live exported targets and their clip objects. Dispose
+clearing of target references (map backing arrays reuse high-water capacity).
+Identity lookups are expected O(1); ancestor clips are computed once per flush.
+Public JavaFX transform-read cost may depend on tree depth and is measured rather
+than assumed constant. Observe only live exported targets and their clip objects. Dispose
 subscriptions on clip/scene replacement, exclusion, detach and close. No timers,
 periodic traversal or forced CSS/layout. Publish the latest observed layout;
 tests wait for layout before comparison. Emit one BoundsChanged per touched id
