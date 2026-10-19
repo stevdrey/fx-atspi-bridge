@@ -327,7 +327,8 @@ session. The 1,000-node p99 reservation above is unchanged and not re-measured.
 
 The accepted follow-up keeps the historical 33.476954-ms / 29-ms result failed, without a performance exception.
 PR #40 remains ready for review; merge approval requires the new native QA and unchanged performance budgets.
-The comparison revisions are `8f78da7` (before the geometry/privacy refactor) and the QA follow-up to `c395e72`.
+The comparison revisions are clean `8f78da798d0a115e018e0f301ba6cc44e3867958` (before the geometry/privacy
+refactor) and `c2411243fe504a776113307600fb0f2d5e09cdc1` (the QA follow-up to `c395e72`).
 The bridge and benchmark sources are unchanged by this follow-up; only the isolated fixture/client, tests and docs change.
 
 A clean managed checkout of `c395e7274612bf80cc0c436f2e1d50b42aae578e` was built using
@@ -372,8 +373,10 @@ units, while its published box remained 200 × 85 and neither protected control 
 the container changed the label's published box to 220 × 85 and emitted one label event. The password's external
 box stayed 120 × 28. These dimensions are synthetic fixture observations, not application field contents.
 
-Numeric references, actual results, per-case event counts and artifact hashes for these two runs and the original
-`c395e72` run are retained under [the versioned evidence](data/issue-9/pr40-verification-20261019/README.md).
+Numeric references, actual results and per-case event records remain local; the verdicts, counts and relevant
+artifact hashes are summarized here. To collect fresh results, use the source
+[geometry client](../../examples/fx-lab/scripts/geometry_qa.py) and
+[fixture](../../examples/fx-lab/src/main/java/dev/desktopcontrol/fxlab/GeometryApp.java) with the commands above.
 The former total of 20 events is not a criterion: the new frame-only movement contract changes the expected sources.
 
 ### Fresh dispatch comparison and acceptance decision
@@ -387,23 +390,21 @@ examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-verification-after 
 examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-verification-after dispatch --resume
 python3 examples/fx-lab/scripts/budgets.py /tmp/fx-atspi-issue9-verification-before
 python3 examples/fx-lab/scripts/budgets.py /tmp/fx-atspi-issue9-verification-after
-python3 docs/verification/data/issue-9/pr40-verification-20261019/compare.py
 ```
 
 **Passed:** 60 completed valid runs (30 per revision), no waiver, no validity-guard retries and no budget-driven
 reruns. At interruption, 26 after JSON files existed and the collector was no longer active on continuation.
 The first `--resume` skipped those files and collected the four missing cells. An audit then found that
 `n10000-d10-on-r3` had written its metrics but had no persisted collector log/exit confirmation. Its original
-33.952650-ms p99 and all other metrics are retained in `after/interrupted`, with completion explicitly unconfirmed.
+33.952650-ms p99 and all other metrics remain local, with completion explicitly unconfirmed.
 Only that cell was then collected again with the same `--resume` command to confirm completion; no result with
 confirmed successful completion was repeated or removed, and no retry was selected by a budget result. Thus there
-are 60 completed qualifying runs plus one interruption-affected metrics record. `after/interruption.json`,
-`after/interrupted/completion-unconfirmed.json` and both resume timestamps in `environment.txt` retain this
-collection discontinuity. Each completed cell used a fresh JVM with the
+are 60 completed qualifying runs plus one interruption-affected metrics record. Local interruption notes and
+resume timestamps record this collection discontinuity. Each completed cell used a fresh JVM with the
 same warmup 50, 200 samples and 10-second idle phase. No build, native QA or profiling overlapped measured cells.
 
 `budgets.py` accepted both collections' workload, readiness/liveness, allocation and display/max-pulse validity
-markers. Its generated proposed budgets are not adopted. `compare.py` separately applies the existing limits to
+markers. No replacement budgets were adopted. A local analysis separately applied the existing limits to
 all 15 bridge-on runs per revision (60 individual metric checks per revision). Both revisions passed those fixed
 checks. Worst **after bridge-on** values across all five repetitions:
 
@@ -413,12 +414,26 @@ checks. Worst **after bridge-on** values across all five repetitions:
 | 1,000 | 21.490566 / 29 | 204.42 / 299 | 5.20 / 14 | 306.48 / 434 | Passed |
 | 10,000 | 45.811206 / 307 | 874.88 / 8,844 | 1.10 / 137 | 823.48 / 1,590 | Passed |
 
-The complete before/after medians, ranges and pulse maxima are in [tables.md](data/issue-9/pr40-verification-20261019/tables.md),
-and every metric check is in [summary.json](data/issue-9/pr40-verification-20261019/summary.json). All 60 run JSON files,
-sanitized logs, environments, artifact/benchmark-class hashes and a reproducible SHA-256 manifest are versioned in
-[the evidence directory](data/issue-9/pr40-verification-20261019/README.md). The benchmark class hashes match across
-revisions; JavaFX JARs and workload/limits are unchanged. The after bridge and lab JAR hashes match the two final
-native runs. The changed lab JAR contains the extended geometry fixture; the benchmark classes did not change.
+Authored variability summary: each cell below contains five fresh JVMs, each with 200 measured samples after
+50 warmup mutations. The range is across the five per-run p99 values; maximum pulse is the largest single
+sample across those JVMs. Before is `8f78da7`; after is `c241124`.
+
+| Nodes | Bridge | Before p99 median (min–max), ms | After p99 median (min–max), ms | Maximum pulse before → after, ms |
+|---:|---|---|---|---|
+| 100 | off | 17.52 (17.21–32.49) | 24.97 (17.41–33.12) | 39.11 → 33.85 |
+| 100 | on | 17.78 (17.07–22.31) | 27.19 (17.18–33.25) | 31.16 → 33.82 |
+| 1,000 | off | 19.92 (19.50–23.08) | 24.52 (18.61–62.34) | 67.98 → 68.87 |
+| 1,000 | on | 19.74 (19.63–23.80) | 19.32 (18.56–21.49) | 68.62 → 71.47 |
+| 10,000 | off | 32.21 (24.23–34.49) | 35.54 (28.77–76.51) | 213.01 → 455.45 |
+| 10,000 | on | 25.67 (24.06–31.34) | 39.70 (29.67–45.81) | 217.24 → 290.18 |
+
+The benchmark class hashes matched across revisions; JavaFX JARs and workload/limits were unchanged. The before
+bridge JAR SHA-256 was `e7577bfd963c869fc6e3535692a7bf57886ed9e1bc8e6d0440f1dca15615c05a`; the after
+bridge and lab hashes are recorded above and matched the two final native runs. The changed lab JAR contains
+the extended geometry fixture; benchmark classes did not change. Fresh collection and validation use the source
+[runner](../../examples/fx-lab/scripts/run-baseline.sh), [summarizer](../../examples/fx-lab/scripts/budgets.py) and
+[validity limits](../../examples/fx-lab/scripts/baseline.conf). Compare every fresh bridge-on run against the
+fixed acceptance limits above; collection validity alone is not a fixed-budget verdict.
 
 This is **a passing fresh dirty-10 qualification for the current tested artifact**, not a reclassification of the
 historical 33.476954-ms / 29-ms failure, a performance-gate exception or a stable-release qualification. It does
@@ -431,7 +446,34 @@ remain outside this focused qualification; broader baseline work remains under #
 The two acceptance items in “Review feedback — Verification pending” are satisfied for this tested scope:
 latest-head independent native QA passed and every current fixed performance-budget check passed. Merge may be
 recommended on these verification grounds, subject to review/CI; no merge is performed and PR #40 remains ready
-for review. All later evidence-only commits preserve the tested Java/Python QA sources and measured bytecode.
+for review. Subsequent evidence/cleanup commits preserve the tested Java/Python QA sources and measured bytecode.
+
+### P3 cleanup: summarized evidence, local originals
+
+Following [policy #39](https://github.com/stevdrey/fx-atspi-bridge/issues/39) and the
+[P3 review](https://github.com/stevdrey/fx-atspi-bridge/pull/40#issuecomment-6276953947), the 140 generated run,
+native-QA, log, manifest and one-off comparison files were removed from the tracked PR diff. The reusable
+collection/client scripts, automated tests and intentional fixtures remain unchanged. A byte-for-byte local copy
+was verified before removal under `/tmp/fx-atspi-issue9-pr40-generated-evidence`; original collection/build files
+also remain under `/tmp/fx-atspi-issue9-*`. No evidence-only PR or external upload is used, and these temporary
+local files are not promised as a permanent/public archive.
+
+The authored aggregate tables and hashes **do not independently reconstruct the original samples, individual
+checks or artifact validation**. Independent recalculation requires full local originals or a new controlled run
+using the measured SHAs, environment, commands and unchanged workload above. No native QA or benchmark campaign
+was rerun solely for this removal: tested source/bytecode and all reported measurements remain unchanged.
+
+Cleanup checks (JDK 27), without re-running the benchmark/native campaigns:
+
+| Check | Outcome |
+|---|---|
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check --console=plain` | Passed; unchanged Java tasks up-to-date, prior 209-test results reused |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed again: 219 tests, zero skips |
+| Local Markdown paths/fragments in README, architecture, spec and this report | Passed: 16 links across four PR documents; no links to removed evidence |
+| Authored p99/range/pulse tables compared with local originals | Passed: reported values unchanged |
+| `git diff d4a857a --name-only -- src examples build.gradle settings.gradle` | Empty: runtime, harness, client and test source unchanged |
+| `git ls-files docs/verification/data/issue-9` | Empty: all 140 generated files removed from the tracked tree |
+| `git diff --check` and `git diff --cached --check` | Passed; net PR scope reduced from 169 to 29 files |
 
 ## Limits
 

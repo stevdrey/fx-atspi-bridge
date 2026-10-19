@@ -1,5 +1,0 @@
-{
-  "run": "n10000-d10-on-r3.json",
-  "reason": "Metrics JSON was written, but user interruption occurred before collector persisted its log/exit status; process completion cannot be confirmed",
-  "qualification": "not counted as a completed cell; original metrics preserved; rerun only for completion confirmation, not budget selection"
-}
