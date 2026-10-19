@@ -32,6 +32,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
+import javafx.geometry.Point2D;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
@@ -42,6 +43,7 @@ import javafx.scene.control.Labeled;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextInputControl;
+import javafx.scene.layout.Region;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
@@ -62,8 +64,10 @@ public final class SceneObserver {
     @FunctionalInterface public interface Sink { boolean publish(Snapshot snapshot, Set<String> touched); }
 
     private static final Set<Capability> NONE = Set.of();
-    private static final Set<Capability> ACTION = Set.of(Capability.ACTION);
-    private static final Set<Capability> TEXT_INPUT = Set.of(Capability.TEXT, Capability.EDITABLE_TEXT);
+    private static final Set<Capability> COMPONENT = Set.of(Capability.COMPONENT);
+    private static final Set<Capability> ACTION = Set.of(Capability.ACTION, Capability.COMPONENT);
+    private static final Set<Capability> TEXT_INPUT = Set.of(Capability.TEXT, Capability.EDITABLE_TEXT, Capability.COMPONENT);
+    private static final Set<Capability> TEXT = Set.of(Capability.TEXT, Capability.COMPONENT);
     private static final Observable[] NO_PROPERTIES = {};
     /** Stands for the application root, whose children are the windows. */
     private static final Object APPLICATION = new Object();
@@ -77,6 +81,9 @@ public final class SceneObserver {
     private final Set<Observed> dirty = new LinkedHashSet<>();
     /** Targets whose child list must be read again. */
     private final Set<Observed> restructured = new LinkedHashSet<>();
+    /** Inherited geometry changes are expanded once per flush, never once per invalidation. */
+    private final Set<Observed> geometryRoots = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final GeometryProjector geometry = new GeometryProjector();
     /** Ids added, changed or removed since the last publication, in the order they changed. */
     private final Set<String> touched = new LinkedHashSet<>();
     /**
@@ -170,6 +177,10 @@ public final class SceneObserver {
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
         Observable[] own;
+        Observable[] geometryInherited = NO_PROPERTIES;
+        Node clip;
+        Point2D origin;
+        boolean originInitialized;
         /** Visibility of a node or showing state of a window: affects every descendant. */
         Observable inherited;
         /** The child list of a parent, the window list, or the scene property of a window. */
@@ -191,8 +202,15 @@ public final class SceneObserver {
             if (parent != null && filtersTargets()) inclusion.add(this); // tested at flush, never inside the listener
             if (source == structure || scene != null && source == scene.rootProperty()) restructured.add(this);
             else if (source == inherited) markSubtree(this);
+            else if (source == (clip == null ? null : clip.boundsInParentProperty()) || isInheritedGeometry(source)) geometryRoots.add(this);
             else dirty.add(this);
             schedule();
+        }
+
+        private boolean isInheritedGeometry(Observable source) {
+            for (var property : geometryInherited) if (source == property) return true;
+            return scene != null && (source == scene.xProperty() || source == scene.yProperty()
+                    || source == scene.widthProperty() || source == scene.heightProperty() || source == scene.cameraProperty());
         }
 
         void subscribe() {
@@ -202,6 +220,10 @@ public final class SceneObserver {
                     own = window instanceof Stage stage ? new Observable[] {window.focusedProperty(), stage.titleProperty()}
                             : new Observable[] {window.focusedProperty()};
                     structure = window.sceneProperty();
+                    geometryInherited = window instanceof Stage stage ? new Observable[] {window.xProperty(), window.yProperty(),
+                            window.widthProperty(), window.heightProperty(), window.outputScaleXProperty(), window.outputScaleYProperty(), stage.iconifiedProperty()}
+                            : new Observable[] {window.xProperty(), window.yProperty(), window.widthProperty(), window.heightProperty(),
+                            window.outputScaleXProperty(), window.outputScaleYProperty()};
                 }
                 case Node node -> {
                     inherited = node.visibleProperty();
@@ -213,10 +235,12 @@ public final class SceneObserver {
                         default -> nodeProperties(node);
                     };
                     if (node instanceof Parent container && !(node instanceof Control)) structure = container.getChildrenUnmodifiable();
+                    geometryInherited = new Observable[] {node.localToParentTransformProperty(), node.clipProperty()};
                 }
                 default -> { own = NO_PROPERTIES; structure = Window.getWindows(); }
             }
             for (var property : own) listen(property);
+            for (var property : geometryInherited) listen(property);
             if (inherited != null) listen(inherited);
             if (structure != null) listen(structure);
         }
@@ -224,6 +248,8 @@ public final class SceneObserver {
         private void listen(Observable property) {
             try { property.addListener(this); }
             catch (RuntimeException failure) {
+                // Some properties register before evaluating a failing binding; never duplicate that listener on retry.
+                property.removeListener(this);
                 if (unsubscribed.isEmpty()) unsubscribed = new ArrayList<>(1);
                 unsubscribed.add(property);
             }
@@ -241,6 +267,8 @@ public final class SceneObserver {
         void unsubscribe() {
             attached = false;
             for (var property : own) property.removeListener(this);
+            for (var property : geometryInherited) property.removeListener(this);
+            observeClip(null);
             if (inherited != null) inherited.removeListener(this);
             if (structure != null) structure.removeListener(this);
             observeScene(null);
@@ -249,20 +277,56 @@ public final class SceneObserver {
         /** Moves the root-property subscription of a window to {@code next}. */
         void observeScene(Scene next) {
             if (next == scene) return;
-            if (scene != null) scene.rootProperty().removeListener(this);
+            if (scene != null) for (var property : sceneProperties(scene)) unlisten(property);
             scene = next;
-            if (scene != null) scene.rootProperty().addListener(this);
+            if (scene != null) for (var property : sceneProperties(scene)) listen(property);
+        }
+
+        private Observable[] sceneProperties(Scene value) {
+            return new Observable[] {value.rootProperty(), value.xProperty(), value.yProperty(), value.widthProperty(), value.heightProperty(), value.cameraProperty()};
+        }
+
+        private void unlisten(Observable property) {
+            property.removeListener(this);
+            if (!unsubscribed.isEmpty()) unsubscribed.remove(property);
+        }
+
+        void observeClip(Node next) {
+            if (clip == next) return;
+            if (clip != null) unlisten(clip.boundsInParentProperty());
+            clip = next;
+            if (clip != null) listen(clip.boundsInParentProperty());
+        }
+
+        /** Read every subscribed geometric property even when hidden, so invalidation listeners re-arm. */
+        void readGeometry() {
+            switch (target) {
+                case Node node -> {
+                    node.getLocalToParentTransform();
+                    GeometryProjector.bounds(node);
+                    observeClip(node.getClip());
+                    if (clip != null) clip.getBoundsInParent();
+                }
+                case Window window -> {
+                    window.getX(); window.getY(); window.getWidth(); window.getHeight();
+                    window.getOutputScaleX(); window.getOutputScaleY();
+                    if (window instanceof Stage stage) stage.isIconified();
+                    if (scene != null) { scene.getX(); scene.getY(); scene.getWidth(); scene.getHeight(); scene.getCamera(); }
+                }
+                default -> {}
+            }
         }
     }
 
     /** The properties every node publishes, followed by {@code extra}. */
     private static Observable[] nodeProperties(Node node, Observable... extra) {
-        var properties = new Observable[4 + extra.length];
+        var properties = new Observable[5 + extra.length];
         properties[0] = node.disabledProperty();
         properties[1] = node.focusedProperty();
         properties[2] = node.accessibleTextProperty();
         properties[3] = node.idProperty();
-        System.arraycopy(extra, 0, properties, 4, extra.length);
+        properties[4] = node instanceof Region ? node.layoutBoundsProperty() : node.boundsInLocalProperty();
+        System.arraycopy(extra, 0, properties, 5, extra.length);
         return properties;
     }
 
@@ -304,6 +368,8 @@ public final class SceneObserver {
         model.clear();
         dirty.clear();
         restructured.clear();
+        geometryRoots.clear();
+        geometry.clear();
         touched.clear();
         retry.clear();
         showing.clear();
@@ -345,6 +411,13 @@ public final class SceneObserver {
             if (entry != null && entry.parent == removal.former()) detach(entry);
         }
         if (windowsChanged) { windowsChanged = false; reconcileModality(); }
+        // An ancestor invalidation subsumes every descendant root in this batch.
+        for (var entry : geometryRoots) {
+            var ancestor = entry.parent;
+            while (ancestor != null && !geometryRoots.contains(ancestor)) ancestor = ancestor.parent;
+            if (ancestor == null && entry.attached) markSubtree(entry);
+        }
+        geometryRoots.clear();
         for (var entry : retry) if (entry.attached) { entry.resubscribe(); dirty.add(entry); }
         retry.clear();
         try {
@@ -358,8 +431,22 @@ public final class SceneObserver {
                 var sensitive = false;
                 projections++;
                 try {
+                    entry.readGeometry();
                     sensitive = sensitive(entry);
                     node = project(entry, sensitive);
+                    if (entry.target instanceof Node target) {
+                        var origin = geometry.origin(target);
+                        var originChanged = entry.originInitialized && !Objects.equals(origin, entry.origin);
+                        entry.origin = origin;
+                        entry.originInitialized = true;
+                        if (originChanged) {
+                            // Only immediate children's PARENT frame depends on this bounding origin.
+                            for (var child : entry.children) {
+                                var descendant = observed.get(child);
+                                if (descendant != null && descendant.parent == entry) dirty.add(descendant);
+                            }
+                        }
+                    }
                 }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
                     projectionFailures++;
@@ -381,7 +468,7 @@ public final class SceneObserver {
                 var previous = model.put(entry.id, node);
                 if (!node.equals(previous)) touched.add(entry.id);
             }
-        } finally { showing.clear(); sensitivity.clear(); modal.clear(); rotated.clear(); }
+        } finally { showing.clear(); sensitivity.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
         var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
@@ -429,7 +516,7 @@ public final class SceneObserver {
     private AccessibleNode identity(AccessibleNode node, Observed entry) {
         return new AccessibleNode(entry.id, node.name(), node.role(), node.text(), node.editable(), node.enabled(),
                 node.showing(), node.focused(), node.focusable(), node.caret(), entry.parent.id, childIds(entry),
-                node.capabilities(), node.actionEligible(), node.redacted());
+                node.capabilities(), node.actionEligible(), node.redacted(), node.geometry());
     }
 
     private record Removal(Object child, Observed former) {}
@@ -566,9 +653,9 @@ public final class SceneObserver {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
                 yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
-                        Snapshot.ROOT_ID, children, NONE);
+                        Snapshot.ROOT_ID, children, COMPONENT, window.isShowing(), false, geometry.project(window));
             }
-            case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children, sensitive);
+            case Node node -> projectNode(node, entry.id, entry.parent.id, showing(entry), children, sensitive, entry.parent.target);
             default -> new AccessibleNode(Snapshot.ROOT_ID, redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
@@ -580,7 +667,7 @@ public final class SceneObserver {
         return new AccessibleNode(entry.id, "", entry.target == APPLICATION ? Role.APPLICATION : Role.PANEL, "", false, false, false, false, false, 0, ancestor, childIds(entry), NONE);
     }
 
-    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive) {
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive, Object parent) {
         var password = node instanceof PasswordField;
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
@@ -603,7 +690,7 @@ public final class SceneObserver {
         var role = node instanceof ButtonBase ? Role.PUSH_BUTTON : node instanceof TextArea ? Role.TEXT_AREA
                 : node instanceof TextInputControl ? Role.ENTRY : node instanceof Label ? Role.LABEL : Role.PANEL;
         var capabilities = node instanceof ButtonBase && !sensitive && options.pressAllowed().test(node) ? ACTION
-                : input != null ? writable ? TEXT_INPUT : Set.of(Capability.TEXT) : NONE;
+                : input != null ? writable ? TEXT_INPUT : TEXT : COMPONENT;
         var focusable = node instanceof ButtonBase || node instanceof TextInputControl;
         var enabled = !node.isDisabled();
         var focused = node.isFocused();
@@ -611,6 +698,7 @@ public final class SceneObserver {
         var window = scene == null ? null : scene.getWindow();
         var blocked = window == null || modal.computeIfAbsent(window, ActionExecutor::blockedByModal);
         return new AccessibleNode(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
-                capabilities, enabled && showing && !blocked && !sensitive && !transformed, sensitive || transformed);
+                capabilities, enabled && showing && !blocked && !sensitive && !transformed, sensitive || transformed,
+                geometry.project(node, parent, showing));
     }
 }

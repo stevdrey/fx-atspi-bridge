@@ -18,6 +18,8 @@ package dev.desktopcontrol.fxatspi;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
@@ -74,7 +76,7 @@ import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.textRange;
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
-/** Experimental dynamic AT-SPI2 provider: Application/Accessible/Action/Text/EditableText.
+/** Experimental dynamic AT-SPI2 provider: Application/Accessible/Action/Text/EditableText/Component.
  * The bus thread owns GDBus registrations; immutable UI snapshots avoid blocking JavaFX.
  * Mutations are admitted by a bounded {@link CommandCoordinator} and retain their invocation on the provider thread;
  * the FX thread only revalidates and runs the action and posts a completion, and the provider thread replies and
@@ -605,6 +607,8 @@ final class AtSpiProvider {
                 case TextDeleted(var id, var text) -> event(id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
                 case TextInserted(var id, var text) -> event(id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
                 case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
+                case SnapshotDiff.BoundsChanged(var id, var bounds) -> event(id, "BoundsChanged",
+                        "('', 0, 0, <" + AtSpiObjects.rectangle(bounds) + ">, @a{sv} {})");
                 case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
                 case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
                 case Reshaped(var id) -> {
@@ -688,6 +692,10 @@ final class AtSpiProvider {
             var name = Ffm.string(method);
             var api = Ffm.string(iface);
             var item = snapshot.get().get(id);
+            if (api.equals(PREFIX + "Component")) {
+                reply(invocation, component(item, name, args));
+                return;
+            }
             if (api.endsWith("Action") && name.equals("DoAction")) {
                 if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
                 requireCapability(item, Capability.ACTION);
@@ -725,6 +733,31 @@ final class AtSpiProvider {
             };
             reply(invocation, result);
         } catch (Throwable failure) { fail(invocation, failure); }
+    }
+    /** Snapshot-only reads: no admission, retained invocation, FX scheduling or application callback. */
+    private String component(AccessibleNode item, String method, MemorySegment args) {
+        if (item == null) throw Rejected.STALE;
+        if (!item.has(Capability.COMPONENT)) throw Rejected.NOT_SUPPORTED;
+        var type = switch (method) {
+            case "GetExtents", "GetPosition" -> ffi.unsignedInteger(args, 0);
+            case "Contains" -> ffi.unsignedInteger(args, 2);
+            case "GetSize" -> 1L;
+            default -> throw Rejected.NOT_SUPPORTED;
+        };
+        if (!Geometry.known(type)) throw new Rejected("Unknown coordinate type");
+        if (type == 2 && item.role() == Role.FRAME) throw Rejected.NOT_SUPPORTED;
+        var bounds = item.geometry().at(type);
+        if (method.equals("Contains")) {
+            if (bounds == null && !item.geometry().equals(Geometry.UNAVAILABLE)) throw Rejected.NOT_SUPPORTED;
+            return "(" + (bounds != null && bounds.contains(ffi.integer(args, 0), ffi.integer(args, 1))) + ",)";
+        }
+        if (bounds == null) throw Rejected.NOT_SUPPORTED;
+        return switch (method) {
+            case "GetExtents" -> "(" + AtSpiObjects.rectangle(bounds) + ",)";
+            case "GetPosition" -> "(" + bounds.x() + ", " + bounds.y() + ")";
+            case "GetSize" -> "(" + bounds.width() + ", " + bounds.height() + ")";
+            default -> throw Rejected.NOT_SUPPORTED;
+        };
     }
     /** Rejects a target that the published snapshot does not know or that does not offer {@code capability}. */
     private static void requireCapability(AccessibleNode item, Capability capability) {

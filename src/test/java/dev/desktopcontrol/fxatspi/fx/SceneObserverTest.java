@@ -26,6 +26,8 @@ import dev.desktopcontrol.fxatspi.BridgeOptions;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
 import dev.desktopcontrol.fxatspi.protocol.AtSpiObjects;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
@@ -39,12 +41,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.beans.value.ObservableValueBase;
 import javafx.scene.Scene;
+import javafx.scene.Node;
+import javafx.scene.ParallelCamera;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.Pane;
+import javafx.scene.shape.Rectangle;
+import javafx.scene.transform.Rotate;
+import javafx.scene.transform.Scale;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -144,7 +152,7 @@ class SceneObserverTest {
         var button = nodes.get(fixture.button());
         assertEquals(Role.PUSH_BUTTON, button.role());
         assertEquals("OK", button.name());
-        assertTrue(button.capabilities().equals(Set.of(Capability.ACTION)) && button.focusable());
+        assertTrue(button.capabilities().equals(Set.of(Capability.ACTION, Capability.COMPONENT)) && button.focusable());
         var field = nodes.get(fixture.field());
         assertEquals(Role.ENTRY, field.role());
         assertEquals("a\uD83E\uDDEAb", field.text());
@@ -157,13 +165,201 @@ class SceneObserverTest {
         assertEquals("", password.text());
         assertEquals(0, password.caret());
         assertFalse(password.editable());
-        assertTrue(password.capabilities().isEmpty());
+        assertEquals(Set.of(Capability.COMPONENT), password.capabilities());
         assertTrue(password.focusable());
         assertFalse(nodes.nodes().values().stream().anyMatch(node -> node.text().contains("hunter2") || node.name().contains("hunter2")));
         var root = nodes.get("root");
         assertEquals(Role.APPLICATION, root.role());
         assertEquals(1, root.children().size());
         assertEquals(Role.FRAME, nodes.get(root.children().get(0)).role());
+    }
+
+    @Test void geometryTracksTransformsClipsVisibilityAndMinimizationWithoutChangingIdentity() throws Exception {
+        onFx(() -> {
+            var child = new Rectangle(80, 50);
+            child.relocate(10, 10);
+            var parent = new Pane(child);
+            parent.setManaged(false);
+            parent.resizeRelocate(20, 30, 200, 150);
+            var root = new Pane(parent);
+            var stage = new Stage();
+            stage.setScene(new Scene(root, 400, 300));
+            stage.show();
+            var harness = new Harness().start();
+            try {
+                var id = harness.id(child);
+                var dx = stage.getScene().getX();
+                var dy = stage.getScene().getY();
+                var initial = harness.last.get(id).geometry();
+                assertEquals(Rect.enclosing(30 + dx, 40 + dy, 110 + dx, 90 + dy), initial.window());
+                assertEquals(new Rect(10, 10, 80, 50), initial.parent());
+                assertNotNull(initial.screen());
+                assertFalse(harness.last.get("root").has(Capability.COMPONENT));
+                assertNull(harness.last.get(harness.id(stage)).geometry().parent());
+
+                child.getTransforms().add(new Scale(2, 1, 0, 0));
+                harness.endBatch();
+                assertEquals(new Rect(10, 10, 160, 50), harness.last.get(id).geometry().parent());
+                var clip = new Rectangle(65, 100);
+                parent.setClip(clip);
+                harness.endBatch();
+                assertEquals(55, harness.last.get(id).geometry().window().width());
+                clip.setWidth(45);
+                harness.endBatch();
+                assertEquals(35, harness.last.get(id).geometry().window().width());
+                parent.getTransforms().setAll(new Scale(2, 1, 0, 0));
+                harness.endBatch();
+                assertEquals(70, harness.last.get(id).geometry().window().width(), "ancestor transforms also transform its clip");
+                parent.getTransforms().clear();
+                harness.endBatch();
+                var beforeMove = harness.last;
+                parent.setTranslateX(15);
+                parent.setTranslateX(20);
+                harness.endBatch();
+                assertEquals(Rect.enclosing(50 + dx, 40 + dy, 85 + dx, 90 + dy), harness.last.get(id).geometry().window());
+                assertEquals(1, SnapshotDiff.diff(beforeMove, harness.last, harness.published.getLast()).stream()
+                        .filter(change -> change instanceof SnapshotDiff.BoundsChanged bounds && bounds.id().equals(id)).count());
+                clip.setWidth(0);
+                harness.endBatch();
+                assertEquals(0, harness.last.get(id).geometry().window().width());
+                assertFalse(harness.last.get(id).geometry().window().contains(50, 40));
+                child.setVisible(false);
+                harness.endBatch();
+                assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+                child.setVisible(true);
+                parent.setClip(null);
+                child.getTransforms().setAll(new Rotate(90, 0, 0));
+                parent.setTranslateX(0);
+                harness.endBatch();
+                assertEquals(Rect.enclosing(dx, 40 + dy, 30 + dx, 120 + dy), harness.last.get(id).geometry().window());
+                var screenOrigin = root.localToScreen(0, 0);
+                assertEquals(Rect.enclosing(screenOrigin.getX(), screenOrigin.getY() + 40, screenOrigin.getX() + 30,
+                        screenOrigin.getY() + 120), harness.last.get(id).geometry().screen(),
+                        "rotated AABB minima must not introduce an extra SCREEN pixel");
+                stage.setIconified(true);
+                harness.endBatch();
+                assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+                stage.setIconified(false);
+                assertEquals(id, harness.id(child));
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void restoringAnIconifiedWindowPublishesAfterTheWindowManagerAcknowledgesIt() throws Exception {
+        record WindowFixture(Stage stage, Rectangle child, Harness harness, String id) {}
+        var fixture = onFx(() -> {
+            var child = new Rectangle(40, 30);
+            var stage = new Stage();
+            stage.setScene(new Scene(new Pane(child), 200, 150));
+            stage.show();
+            var harness = new Harness().start();
+            return new WindowFixture(stage, child, harness, harness.id(child));
+        });
+        try {
+            // Allow mapping before minimizing; an unmapped window's minimize/restore requests can cross in the WM.
+            Thread.sleep(500);
+            onFx(() -> {
+                fixture.stage().setIconified(true);
+                fixture.harness().endBatch();
+                assertEquals(Geometry.UNAVAILABLE, fixture.harness().last.get(fixture.id()).geometry());
+                return null;
+            });
+            Thread.sleep(250);
+            onFx(() -> { fixture.stage().setIconified(false); fixture.stage().toFront(); return null; });
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            boolean restored;
+            var last = new String[1];
+            do {
+                restored = onFx(() -> {
+                    fixture.harness().endBatch();
+                    last[0] = "iconified=" + fixture.stage().isIconified() + " geometry=" + fixture.harness().last.get(fixture.id()).geometry();
+                    return !fixture.stage().isIconified() && fixture.harness().last.get(fixture.id()).geometry().window() != null;
+                });
+                if (!restored) Thread.sleep(20);
+            } while (!restored && System.nanoTime() < deadline);
+            assertTrue(restored, "native restore or projection unavailable; " + last[0]);
+            assertEquals(fixture.id(), onFx(() -> fixture.harness().id(fixture.child())));
+        } finally { onFx(() -> { fixture.harness().observer.close(); return null; }); }
+    }
+
+    @Test void geometrySubscriptionsAreRemovedForReplacedClipsScenesDetachedNodesAndClose() throws Exception {
+        onFx(() -> {
+            var child = new Rectangle(80, 50);
+            var clip = new Rectangle(40, 50);
+            child.setClip(clip);
+            var first = new Pane(child);
+            var second = new Pane();
+            var root = new Pane(first, second);
+            var stage = new Stage();
+            var oldScene = new Scene(root, 400, 300);
+            stage.setScene(oldScene);
+            stage.show();
+            var harness = new Harness().start();
+            var id = harness.id(child);
+            child.setClip(new Rectangle(50, 50));
+            harness.endBatch();
+            clip.setWidth(10);
+            assertTrue(harness.scheduled.isEmpty(), "old clip subscription was released");
+            first.getChildren().remove(child);
+            second.getChildren().add(child);
+            harness.endBatch();
+            assertEquals(id, harness.id(child));
+            child.setTranslateX(Double.NaN);
+            harness.endBatch();
+            assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+            assertEquals(id, harness.id(child), "unavailable geometry must not retire an export");
+            child.setTranslateX(5);
+            harness.endBatch();
+            assertNotNull(harness.last.get(id).geometry().window());
+            stage.getScene().setCamera(new ParallelCamera());
+            harness.endBatch();
+            assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry(), "custom scene cameras are not projected as ordinary 2D");
+            stage.getScene().setCamera(null);
+            harness.endBatch();
+            assertNotNull(harness.last.get(id).geometry().window());
+            stage.setScene(new Scene(new Pane(), 240, 180));
+            harness.endBatch();
+            assertNull(harness.last.get(id));
+            child.setTranslateX(10);
+            child.getClip().setTranslateX(5);
+            root.setTranslateX(10);
+            assertTrue(harness.scheduled.isEmpty(), "old scene/node/clip listeners must be gone");
+            harness.observer.close();
+            stage.setX(stage.getX() + 10);
+            stage.setWidth(stage.getWidth() + 10);
+            assertTrue(harness.scheduled.isEmpty());
+            assertEquals(0, harness.registry.size());
+            return null;
+        });
+    }
+
+    @Test void aThrowingClipBindingFailsOnlyItsProjectionAndCanRecover() throws Exception {
+        onFx(() -> {
+            var armed = new boolean[1];
+            var failing = new ObservableValueBase<Node>() {
+                @Override public Node getValue() {
+                    if (armed[0]) throw new IllegalStateException("unpublished application detail");
+                    return null;
+                }
+            };
+            var button = new Button("safe");
+            button.clipProperty().bind(failing);
+            show(new VBox(button));
+            armed[0] = true;
+            var harness = new Harness().start();
+            try {
+                var failed = harness.last.get(harness.id(button));
+                assertTrue(failed.capabilities().isEmpty());
+                assertEquals(Geometry.UNAVAILABLE, failed.geometry());
+                assertFalse(harness.last.toString().contains("unpublished application detail"));
+                armed[0] = false;
+                harness.observer.synchronize();
+                assertTrue(harness.last.get(harness.id(button)).has(Capability.COMPONENT));
+                assertNotNull(harness.last.get(harness.id(button)).geometry().window());
+            } finally { harness.observer.close(); }
+            return null;
+        });
     }
 
     @Test void untitledStageIsPublishedWithAnEmptyName() throws Exception {
@@ -179,7 +375,7 @@ class SceneObserverTest {
         var harness = onFx(() -> new Harness().start());
         Thread.sleep(300); // several pulses
         var result = onFx(() -> {
-            root.setLayoutX(5); // geometry is not part of the model
+            // Read the idle state without mutating the geometry now included in the model.
             return List.of(harness.scheduled.size(), (int) harness.observer.publications());
         });
         assertEquals(List.of(0, 1), result, "start publishes the initial traversal once; nothing is scheduled while idle");
@@ -479,7 +675,7 @@ class SceneObserverTest {
             assertEquals(7, projected.characterCount());
             assertEquals(0, projected.caret());
             assertFalse(projected.editable());
-            assertEquals(Set.of(Capability.TEXT), projected.capabilities());
+            assertEquals(Set.of(Capability.TEXT, Capability.COMPONENT), projected.capabilities());
             assertFalse(harness.observer.permits(projected.id(), Capability.EDITABLE_TEXT));
             assertFalse(harness.last.toString().contains("SECRETMARKER"));
             assertFalse(harness.last.toString().contains("PASSWORDMARKER"));
@@ -514,7 +710,7 @@ class SceneObserverTest {
         assertNull(harness.registry.target(oldId));
         assertFalse(oldId.equals(replacement.id()));
         assertTrue(replacement.redacted());
-        assertEquals(Set.of(Capability.TEXT), replacement.capabilities());
+        assertEquals(Set.of(Capability.TEXT, Capability.COMPONENT), replacement.capabilities());
         assertEquals("", replacement.text());
         assertEquals(0, replacement.caret());
         assertFalse(replacement.editable() || replacement.actionEligible());
@@ -539,7 +735,7 @@ class SceneObserverTest {
                 assertTrue(projected.redacted());
                 assertEquals(32768, projected.text().length());
                 assertTrue(projected.text().contains("SECRETMARKER"));
-                assertEquals(Set.of(Capability.TEXT), projected.capabilities());
+                assertEquals(Set.of(Capability.TEXT, Capability.COMPONENT), projected.capabilities());
                 harness.observer.updateOptions(BridgeOptions.builder().sensitiveNodes(node -> node == field).build(), 1);
                 assertPrivacyReplacement(harness, before, oldId, field);
             } finally { harness.observer.close(); }

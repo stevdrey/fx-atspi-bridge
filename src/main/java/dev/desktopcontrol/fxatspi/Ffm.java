@@ -96,6 +96,7 @@ final class Ffm implements AutoCloseable {
     private final MethodHandle variantChild = bind("g_variant_get_child_value", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
     private final MethodHandle variantString = bind("g_variant_get_string", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
     private final MethodHandle variantInt32 = bind("g_variant_get_int32", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    private final MethodHandle variantUint32 = bind("g_variant_get_uint32", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     private final MethodHandle errorFree = bind("g_error_free", FunctionDescriptor.ofVoid(ADDRESS));
     private final MethodHandle objectRef = bind("g_object_ref", FunctionDescriptor.of(ADDRESS, ADDRESS));
     private final MethodHandle objectUnref = bind("g_object_unref", FunctionDescriptor.ofVoid(ADDRESS));
@@ -406,6 +407,13 @@ final class Ffm implements AutoCloseable {
         var value = child(tuple, index);
         try { return (int) variantInt32.invokeExact(value); }
         catch (Throwable error) { throw failed("g_variant_get_int32", error); }
+        finally { release(value); }
+    }
+    /** Correct GLib getter for a signature-validated uint32; retain all 32 bits in Java. */
+    long unsignedInteger(MemorySegment tuple, int index) {
+        var value = child(tuple, index);
+        try { return Integer.toUnsignedLong((int) variantUint32.invokeExact(value)); }
+        catch (Throwable error) { throw failed("g_variant_get_uint32", error); }
         finally { release(value); }
     }
     /** The int32 held directly by {@code value}. */

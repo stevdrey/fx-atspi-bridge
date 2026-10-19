@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi.protocol;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -42,6 +43,7 @@ public final class SnapshotDiff {
     public record TextDeleted(String id, String text) implements Change {}
     public record TextInserted(String id, String text) implements Change {}
     public record Caret(String id, int offset) implements Change {}
+    public record BoundsChanged(String id, Rect bounds) implements Change {}
     public record ChildRemoved(String parent, int index, String child) implements Change {}
     public record ChildAdded(String parent, int index, String child) implements Change {}
 
@@ -81,6 +83,8 @@ public final class SnapshotDiff {
             if (!item.text().isEmpty()) out.add(new TextInserted(id, item.text()));
         }
         if (old.caret() != item.caret()) out.add(new Caret(id, item.caret()));
+        var bounds = item.geometry().screen();
+        if (bounds != null && !bounds.equals(old.geometry().screen())) out.add(new BoundsChanged(id, bounds));
     }
 
     /**

@@ -55,6 +55,18 @@ class FfmTest {
         }
     }
 
+    @Test void unsignedCoordinatesRetainAllBitsThroughTheCorrectNativeGetter() {
+        try (var api = new Ffm()) {
+            var tuple = api.variant("(uint32 0, uint32 2, uint32 2147483648, uint32 4294967295)");
+            try {
+                assertEquals(0, api.unsignedInteger(tuple, 0));
+                assertEquals(2, api.unsignedInteger(tuple, 1));
+                assertEquals(2147483648L, api.unsignedInteger(tuple, 2));
+                assertEquals(4294967295L, api.unsignedInteger(tuple, 3));
+            } finally { api.release(tuple); }
+        }
+    }
+
     @Test void parseErrorsAreStableAndLeakNoNativeText() {
         try (var api = new Ffm()) {
             var failure = assertThrows(IllegalStateException.class, () -> api.variant("(this is not a variant"));

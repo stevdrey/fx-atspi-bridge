@@ -141,11 +141,51 @@ pending registry `Embed` call uses the same blocking dispatch with a one-second 
 - Windows, containers, labels, buttons, TextField, and TextArea.
 - Button actions and text reading/writing, with Unicode offsets measured in code points.
 - Password contents are hidden; PasswordField exposes neither Text nor EditableText in this experiment.
-- Partial AT-SPI interfaces: geometry, full selection support, virtualized tables, menus, and semantic mappings for all custom controls are not implemented. An unsupported control is published as a panel without specific actions.
+- Read-only Component geometry for windows and nodes, including sensitive controls; see the coordinate contract below.
+- Partial AT-SPI interfaces: full selection support, virtualized tables, menus, and semantic mappings for all custom controls are not implemented. An unsupported control is published as a panel without specific actions.
 - Full screen reader compatibility has not been established. Invoking an accessible button action tests its behavior, not a physical click or its appearance.
 - Initial ABI support targets Linux x86_64 and JavaFX 27. The UI may still use XWayland: AT-SPI communicates over D-Bus and does not depend on X11 screenshots.
 
 The bridge does not inject accessibility into another running JVM. Each application must integrate the library. A generic client can use libatspi to inspect applications that provide their own AT-SPI implementation.
+
+### Component geometry
+
+`GetExtents`, `GetPosition`, `GetSize` and `Contains` read the latest immutable geometry snapshot. All JavaFX reads
+and subscriptions belong to the FX thread; queries never wait for layout or application handlers. Layout-driven
+changes become visible after JavaFX performs layout and the observer publishes them. `BoundsChanged` reports
+changed valid SCREEN rectangles once per node per provider publication. Other Component methods, including focus,
+point lookup, scrolling and geometry setters, return `org.freedesktop.DBus.Error.NotSupported` without effects.
+
+| Coordinate type | Contract |
+|---|---|
+| SCREEN (0) | JavaFX screen coordinates from `localToScreen`; window frames use public window coordinates |
+| WINDOW (1) | Relative to the top-level window, including `Scene.x/y`; frame origin is `(0,0)` with the window's dimensions |
+| PARENT (2) | Relative to the accessible parent's bounding origin before inherited clipping, with WINDOW axes; a scene root uses the window origin |
+
+The application root has no Component interface. Frames cannot answer PARENT because their application parent has
+no geometric origin. Availability is independent between coordinate types. Unknown uint32 coordinate types return
+`InvalidArgs`; unavailable extents/positions/sizes and unsupported coordinate frames return `NotSupported`.
+Hidden or minimized nodes have unavailable geometry and `Contains` is false. Completely clipped nodes have known
+empty rectangles. Excluded nodes remain absent. Sensitive/password controls expose only their external geometry,
+without adding text/caret interfaces or observing skin nodes.
+
+Units are **JavaFX logical coordinates**, not physical screenshot pixels. The bridge does not multiply by
+`outputScaleX/Y`, invent a global origin, or infer the backend from the session type. SCREEN is limited by what
+the installed JavaFX backend provides; native Wayland and mixed-scale/multi-monitor correctness require their own
+qualification. Invalid/non-finite or unrepresentable data is unavailable, never replaced by `(0,0)` or saturated.
+
+Controls and layout regions use their external layout box, independent of skin/content bounds and effects; other
+nodes use their local visual bounds. Bounds are axis-aligned rectangles after 2D transforms, intersected with the bounding rectangles of node/ancestor
+clips and the scene viewport. Curved or rotated clips are rectangular approximations. Ordinary parent bounds do
+not clip children unless a clip is set. Three-dimensional bounds/transforms and custom scene cameras are unsupported. Bounds do not establish
+occlusion, per-pixel visibility or pointer hit-testability. Edges are rounded outward to signed integers, empty
+dimensions remain empty, and `Contains` excludes right/bottom edges. `GetSize` uses WINDOW; different origins can
+produce a one-unit rounding difference in other systems.
+
+For a disposable numeric interoperability check, build `:examples:fx-lab:installDist`, then run
+`python3 examples/fx-lab/scripts/geometry_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/new-geometry-run`.
+It starts an isolated `--geometry` fixture and compares 13 post-layout checkpoints through libatspi. The output
+directory must be new. Test results and actual platform limitations are recorded in [issue-9 verification](docs/verification/issue-9.md).
 
 ## Requirements and testing
 

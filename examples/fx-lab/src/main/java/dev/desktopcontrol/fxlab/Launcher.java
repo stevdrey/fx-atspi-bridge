@@ -18,6 +18,7 @@ import javafx.application.Application;
 import java.util.Arrays;
 public final class Launcher {
     public static void main(String[] args) {
-        Application.launch(Arrays.asList(args).contains("--bench") ? BenchApp.class : FxLab.class, args);
+        var flags = Arrays.asList(args);
+        Application.launch(flags.contains("--geometry") ? GeometryApp.class : flags.contains("--bench") ? BenchApp.class : FxLab.class, args);
     }
 }

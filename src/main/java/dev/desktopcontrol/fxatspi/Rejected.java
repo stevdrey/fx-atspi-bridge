@@ -35,6 +35,7 @@ final class Rejected extends RuntimeException {
     static final Rejected STILL_RUNNING = new Rejected(TIMEOUT, "Action is still running; its outcome is unknown");
     static final Rejected STOPPED = new Rejected(FAILED, "Provider stopped");
     static final Rejected STALE = new Rejected(UNKNOWN_OBJECT, "Unknown or stale object");
+    static final Rejected NOT_SUPPORTED = new Rejected("org.freedesktop.DBus.Error.NotSupported", "Geometry unavailable or operation unsupported");
 
     private final String errorName;
 

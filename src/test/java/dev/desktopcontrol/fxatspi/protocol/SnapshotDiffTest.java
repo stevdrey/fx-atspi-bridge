@@ -20,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
@@ -48,6 +50,22 @@ class SnapshotDiffTest {
         var map = new LinkedHashMap<String, AccessibleNode>();
         for (var node : nodes) map.put(node.id(), node);
         return new Snapshot(map);
+    }
+
+    private static AccessibleNode geometric(Rect screen, Rect window) {
+        return new AccessibleNode("g", "", Role.PANEL, "", false, true, true, false, false, 0, "root", List.of(),
+                Set.of(Capability.COMPONENT), false, false, new Geometry(screen, window, null));
+    }
+
+    @Test void boundsEventsUseOnlyChangedAvailableScreenRectangles() {
+        var a = new Rect(10, 20, 30, 40);
+        var b = new Rect(11, 20, 30, 40);
+        assertEquals(List.of(new SnapshotDiff.BoundsChanged("g", b)),
+                SnapshotDiff.diff(tree(geometric(a, a)), tree(geometric(b, a)), List.of("g")));
+        assertTrue(SnapshotDiff.diff(tree(geometric(a, a)), tree(geometric(a, b)), List.of("g")).isEmpty());
+        assertTrue(SnapshotDiff.diff(tree(geometric(a, a)), tree(geometric(null, a)), List.of("g")).isEmpty());
+        assertEquals(List.of(new SnapshotDiff.BoundsChanged("g", a)),
+                SnapshotDiff.diff(tree(geometric(null, a)), tree(geometric(a, a)), List.of("g")));
     }
 
     private static Snapshot parentWith(String... children) {

@@ -22,5 +22,7 @@ public enum Capability {
     /** Text interface; never granted to password-like fields. */
     TEXT,
     /** EditableText interface; never granted to password-like fields. */
-    EDITABLE_TEXT
+    EDITABLE_TEXT,
+    /** Read-only geometric Component interface, including on sensitive controls. */
+    COMPONENT
 }
