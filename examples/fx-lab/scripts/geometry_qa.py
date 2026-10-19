@@ -233,14 +233,20 @@ def run(launcher, directory):
             result['errorCode'] = type(error).__name__
             result['failureStep'] = len(result['cases'])
         finally:
-            if listener is not None:
-                listener.deregister('object:bounds-changed')
-            process.terminate()
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+                if listener is not None and not listener.deregister('object:bounds-changed'):
+                    raise RuntimeError('bounds event unsubscription failed')
+            except Exception as error:
+                result['status'] = 'Failed'
+                result['cleanupErrorCode'] = type(error).__name__
+                result.setdefault('failureStep', len(result['cases']))
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
     (directory / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     print(result['status'] + ': ' + str(len(result['cases'])) + ' geometry cases')
     return 0 if result['status'] == 'Passed' else 1

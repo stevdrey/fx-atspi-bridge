@@ -262,6 +262,35 @@ per-run budget checks and a SHA-256 manifest are in `/tmp/fx-atspi-issue9-latenc
 JAR hash are in `/tmp/fx-atspi-issue9-verification/junit-latency-fix`. Temporary diagnostic changes were removed from
 the measurement checkout after recording. Unrelated local issue-1/issue-16 changes remain outside this PR.
 
+## PR #40 review follow-up: independent-client cleanup
+
+On 2026-10-19, fixed the P2 in the independent `geometry_qa.py` client: an event deregistration exception previously
+escaped before fixture termination/reaping and before writing `results.json`. Cleanup now always enters the existing
+terminate/wait/kill path. A deregistration exception or false return produces a failed verdict and a sanitized
+`cleanupErrorCode` containing only the exception class. Any earlier `errorCode` and `failureStep` remain intact.
+This changes the QA client only; bridge, fixture and benchmark Java sources/bytecode are unchanged.
+
+Four regression tests exercise `run()` with mocked AT-SPI/process dependencies and real temporary result files:
+an otherwise successful run followed by `GLib.Error`, a prior subscription failure followed by `GLib.Error`,
+the same cleanup error followed by a process wait timeout requiring kill/reap, and a false deregistration return.
+They assert failed exit status, persisted sanitized results and process cleanup; the original error is preserved.
+Before the fix, the three exception cases errored and the false-return case failed its verdict assertion.
+These are injected failures, not a claim of a live desktop bus-loss exercise.
+
+Commands run from the repository root with Zulu JDK 27+35:
+
+| Check | Outcome |
+|---|---|
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p test_geometry_qa.py` | Passed: 9 tests, zero skips, including all four new cleanup regressions |
+| `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 212 tests, zero skips |
+| `REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check --console=plain` | Passed: Java tasks up-to-date; retained reports contain 206 tests, zero failures/errors/skips; no Java source changes |
+| `python3 examples/fx-lab/scripts/geometry_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/fx-atspi-issue9-deregister-fix-20261019` | Passed: 13 cases, 20 bounds events, normal deregistration/termination, no cleanup error; actual XWayland in the Wayland session |
+| `git diff --check` | Passed |
+
+No performance workload was rerun for this QA-only change. The existing failed 1,000-node p99 qualification
+(33.476954 ms against 29 ms) remains unchanged. The user explicitly chose to preserve PR #40 as ready for review
+with that reservation documented after the earlier draft transition; this follow-up preserves that state.
+
 ## Limits
 
 Native Wayland, multiple/mixed-scale monitors, other desktops/distributions and per-pixel/occlusion behavior are not

@@ -72,6 +72,11 @@ are released in finally on the provider owner. No new retained invocations,
 queues, arenas or native registrations beyond the Component interface. Reuse
 existing sanitized errors, stale-reference and lifecycle contracts.
 
+The independent QA client owns its disposable fixture process. A failed event
+deregistration (exception or false result) must still terminate and reap that
+process with the existing bounded kill fallback. Record a failed verdict and
+only the cleanup exception type in results.json, preserving any earlier failure.
+
 ## Acceptance and verification
 
 Unit tests cover rounding, overflow, empty/unknown coordinates, schema/cache,
