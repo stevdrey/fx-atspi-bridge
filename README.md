@@ -200,7 +200,7 @@ The project's own code and example are distributed under the [Apache License 2.0
 
 ## Continuous integration
 
-`.github/workflows/build.yml` runs `./gradlew check generatePomFileForMavenJavaPublication` on Linux with Zulu JDK 27 for pull requests and pushes to `main`. It has read-only permissions, pinned action SHAs and no secrets. It covers the native Unicode/variant unit tests only; it is not desktop QA. Baseline measurements and the compatibility matrix live in `docs/verification/issue-1.md`.
+`.github/workflows/build.yml` runs `./gradlew check generatePomFileForMavenJavaPublication` on Linux with Zulu JDK 27 for pull requests and pushes to `main`. It has read-only permissions, pinned action SHAs and no secrets. It includes native and JavaFX tests under Xvfb; it is not desktop QA. Baseline measurements and the compatibility matrix live in `docs/verification/issue-1.md`.
 
 ## Product development
 

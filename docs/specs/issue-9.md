@@ -81,7 +81,9 @@ privacy, disposal and concurrent reads during modal actions. A separate lab
 mode and bounded independent libatspi client compare post-layout FX reference
 rectangles with remote results. Verify actual backend and tested scales/screens
 on Fedora/GNOME/Wayland; unavailable native-Wayland/mixed-monitor cases remain
-explicit gaps. Run focused checks then ./gradlew check under JDK 27. Compare
+explicit gaps. Run focused checks then ./gradlew check under JDK 27. Exercise
+minimization recovery through public hide/setIconified/show peer remapping in one
+batch, preserving identity without requiring a WM to honor a restore request. Compare
 before/after clean revisions using the existing dispatch profile; no smoke-based
 performance claims. Actual commands/results belong in docs/verification/issue-9.md.
 

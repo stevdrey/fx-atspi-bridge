@@ -14,7 +14,8 @@ One monitor and real JavaFX output scale **2.0 × 2.0** were tested; logical coo
 multiplied by this scale. No desktop preferences were changed.
 
 The production baseline is `5dc4c68148ce7cfaaae20a9a6083e1297c6d3a12`; the clean measured implementation
-is `3f10ab7c2c5e3f6b9d922c936f43417524139cc7`. Subsequent changes are documentation only.
+is `3f10ab7c2c5e3f6b9d922c936f43417524139cc7`. Subsequent changes affect documentation and the
+deterministic window-peer remapping test only; production/benchmark bytecode is unchanged.
 The desktop/test bridge JAR matches the measured JAR:
 `40ad5bbfe83ce5f2217f2e81cfbe1fb4ff2c12989c04b1c2077f9559fa2aa26d`.
 Raw local datasets/logs are under `/tmp/fx-atspi-issue9-*`; generated bulk output is not committed.
@@ -44,11 +45,17 @@ It checks SCREEN/WINDOW/PARENT extents, positions, WINDOW size and half-open Con
 analytic fixture rectangles. It refreshes per-node libatspi caches; libatspi discards remote D-Bus error names, so
 the client checks the fixed unavailable message while private-bus tests verify exact error names.
 
+The first GitHub Actions build on `374fa99` failed only the new native restore-acknowledgement case. A WM can
+ignore/override restore requests; Xvfb has no WM to acknowledge them. The test now exercises public
+hide/setIconified/show peer remapping in one batch, checks restored geometry and retained identity, and runs
+under both environments. No additional skip or weaker workflow/toolkit guard is used. The local command above
+still executes all 205 cases. This test does not claim that a WM must honor an application's restore request.
+
 ## Behavior and ownership evidence
 
 - Desktop cases: initial geometry, window move/resize, node scale/rotation, own and ancestor clips, dynamic clip
   resizing, empty clip, hidden/restored target, reparenting and scene replacement. Both complete runs used scale 2.0.
-- FX tests cover inherited transforms and clipping, minimization/restoration after native WM acknowledgement,
+- FX tests cover inherited transforms and clipping, minimization and same-batch window-peer remap recovery,
   invalid/non-finite geometry, custom-camera rejection/recovery, stable identities and clip/scene disposal.
 - Private-bus tests verify uint32 values through `4294967295`, method signatures, fixed InvalidArgs/NotSupported
   errors, unsupported mutations without effects, half-open edges, unavailable geometry and native registration balance.

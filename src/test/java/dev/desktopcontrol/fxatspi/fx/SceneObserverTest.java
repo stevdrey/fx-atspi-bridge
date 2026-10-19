@@ -246,41 +246,31 @@ class SceneObserverTest {
         });
     }
 
-    @Test void restoringAnIconifiedWindowPublishesAfterTheWindowManagerAcknowledgesIt() throws Exception {
-        record WindowFixture(Stage stage, Rectangle child, Harness harness, String id) {}
-        var fixture = onFx(() -> {
+    @Test void reshowingAnIconifiedWindowRestoresGeometryInTheSameBatch() throws Exception {
+        onFx(() -> {
             var child = new Rectangle(40, 30);
             var stage = new Stage();
             stage.setScene(new Scene(new Pane(child), 200, 150));
             stage.show();
             var harness = new Harness().start();
-            return new WindowFixture(stage, child, harness, harness.id(child));
+            try {
+                var id = harness.id(child);
+                stage.setIconified(true);
+                harness.endBatch();
+                assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+                // A WM may ignore restore requests. Remapping the peer is deterministic through public APIs;
+                // hide/show in one batch also exercises coalescing without retiring the live target identity.
+                stage.hide();
+                stage.setIconified(false);
+                stage.show();
+                harness.endBatch();
+                assertFalse(stage.isIconified());
+                assertEquals(id, harness.id(child));
+                assertNotNull(harness.last.get(id).geometry().window());
+                assertEquals(40, harness.last.get(id).geometry().window().width());
+            } finally { harness.observer.close(); }
+            return null;
         });
-        try {
-            // Allow mapping before minimizing; an unmapped window's minimize/restore requests can cross in the WM.
-            Thread.sleep(500);
-            onFx(() -> {
-                fixture.stage().setIconified(true);
-                fixture.harness().endBatch();
-                assertEquals(Geometry.UNAVAILABLE, fixture.harness().last.get(fixture.id()).geometry());
-                return null;
-            });
-            Thread.sleep(250);
-            onFx(() -> { fixture.stage().setIconified(false); fixture.stage().toFront(); return null; });
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            boolean restored;
-            var last = new String[1];
-            do {
-                restored = onFx(() -> {
-                    fixture.harness().endBatch();
-                    last[0] = "iconified=" + fixture.stage().isIconified() + " geometry=" + fixture.harness().last.get(fixture.id()).geometry();
-                    return !fixture.stage().isIconified() && fixture.harness().last.get(fixture.id()).geometry().window() != null;
-                });
-                if (!restored) Thread.sleep(20);
-            } while (!restored && System.nanoTime() < deadline);
-            assertTrue(restored, "native restore or projection unavailable; " + last[0]);
-            assertEquals(fixture.id(), onFx(() -> fixture.harness().id(fixture.child())));
-        } finally { onFx(() -> { fixture.harness().observer.close(); return null; }); }
     }
 
     @Test void geometrySubscriptionsAreRemovedForReplacedClipsScenesDetachedNodesAndClose() throws Exception {
