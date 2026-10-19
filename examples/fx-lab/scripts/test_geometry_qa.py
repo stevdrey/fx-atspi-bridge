@@ -77,6 +77,78 @@ class GeometryVerdicts(unittest.TestCase):
         with patch.object(self.component, 'get_extents', wrong), self.assertRaises(AssertionError):
             qa.compare(None, self.reference)
 
+    def test_wrong_sensitive_geometry_fails(self):
+        expected = json.loads(json.dumps(self.rectangles))
+        reference = {'case': 'privacy-short', 'privacy': {'label': expected, 'password': expected, 'labelOwnWidth': 10}}
+        found = {'label': None, 'password': None}
+        self.assertIsNotNone(qa.compare_privacy(found, reference, None, None))
+        self.rectangles[0][2] -= 1
+        with self.assertRaises(qa.ExtentMismatch):
+            qa.compare_privacy(found, reference, None, None)
+
+    def test_privacy_transition_requires_real_content_growth_and_stable_boxes(self):
+        expected = json.loads(json.dumps(self.rectangles))
+        actual = {'label': expected, 'password': expected}
+        previous = {'privacy': {'labelOwnWidth': 10}, 'privacyActual': actual}
+        reference = {'case': 'privacy-long', 'privacy': {**actual, 'labelOwnWidth': 30}}
+        self.assertEqual(actual, qa.compare_privacy({'label': None, 'password': None}, reference, previous, None))
+        reference['privacy']['labelOwnWidth'] = 10
+        with self.assertRaises(AssertionError):
+            qa.compare_privacy({'label': None, 'password': None}, reference, previous, None)
+
+
+@unittest.skipUnless(AVAILABLE, 'PyGObject unavailable')
+class GeometryEvents(unittest.TestCase):
+    def setUp(self):
+        self.events = qa.BoundsEvents()
+        self.frame, self.target, self.label, self.password = (object() for _ in range(4))
+        self.events.bind({'frame': self.frame, 'Geometry target': self.target,
+                          'label': self.label, 'password': self.password})
+
+    def emit(self, source):
+        self.events.record(SimpleNamespace(source=source))
+
+    def test_move_accepts_frame_notifications_but_rejects_descendants(self):
+        self.emit(self.frame)
+        self.emit(self.frame)
+        self.assertEqual({'frame': 2}, self.events.verify('window-move'))
+        self.emit(self.target)
+        with self.assertRaises(AssertionError):
+            self.events.verify('window-move')
+
+    def test_expected_events_cannot_be_missing(self):
+        for case in ('window-move', 'scale', 'privacy-container-resize'):
+            with self.subTest(case=case), self.assertRaises(AssertionError):
+                self.events.verify(case)
+        self.emit(self.label)
+        self.assertEqual({'label': 1}, self.events.verify('privacy-container-resize'))
+
+    def test_content_changes_cannot_emit_protected_bounds(self):
+        for source in (self.label, self.password):
+            self.events.counts[self.events.phase].clear()
+            self.emit(source)
+            with self.assertRaises(AssertionError):
+                self.events.verify('privacy-long')
+
+    def test_event_phases_and_storage_are_bounded(self):
+        self.emit(self.target)
+        self.events.phase = 1
+        self.emit(self.frame)
+        self.assertEqual({'frame': 1}, self.events.verify('window-move'))
+        with patch.object(qa, 'MAX_EVENTS', 2):
+            self.emit(self.frame)
+        self.assertEqual(2, self.events.total)
+        with self.assertRaises(AssertionError):
+            self.events.verify('window-move')
+
+    def test_move_requires_changed_screen_and_stable_other_frames(self):
+        previous = {'actual': [[10, 20, 30, 40], [1, 2, 30, 40], [0, 0, 30, 40]]}
+        moved = [[55, 50, 30, 40], *previous['actual'][1:]]
+        qa.verify_move(previous, moved)
+        for wrong in (previous['actual'], [moved[0], [2, 2, 30, 40], moved[2]]):
+            with self.assertRaises(AssertionError):
+                qa.verify_move(previous, wrong)
+
 
 @unittest.skipUnless(AVAILABLE, 'PyGObject unavailable')
 class GeometryCleanup(unittest.TestCase):
@@ -110,6 +182,7 @@ class GeometryCleanup(unittest.TestCase):
             with patch.multiple(qa, Atspi=api, libatspi_version=Mock(return_value='test'),
                                 find_applications=Mock(return_value=[app]), process_ids=Mock(return_value=[process.pid]),
                                 backend=Mock(return_value={}), pump=Mock(), compare=Mock(return_value=rectangles),
+                                settle_events=Mock(),
                                 nodes=Mock(return_value={'Geometry target': object(), 'Next geometry case': object()})), \
                     patch.object(qa.subprocess, 'Popen', side_effect=launch), patch.object(qa.time, 'sleep'), \
                     patch('builtins.print'):

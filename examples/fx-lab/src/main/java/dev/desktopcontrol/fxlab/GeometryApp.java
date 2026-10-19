@@ -27,6 +27,8 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
 import javafx.scene.layout.Pane;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.transform.Rotate;
@@ -37,12 +39,16 @@ import javafx.stage.Stage;
 /** Disposable, synthetic desktop fixture. Numeric reference bounds are analytic, not read from bridge internals. */
 public final class GeometryApp extends Application {
     private static final List<String> CASES = List.of("initial", "window-move", "window-resize", "scale", "rotation",
-            "own-clip", "ancestor-clip", "clip-resize", "empty-clip", "hidden", "restored", "reparent", "scene-replace");
+            "own-clip", "ancestor-clip", "clip-resize", "empty-clip", "hidden", "restored", "reparent", "scene-replace",
+            "privacy-short", "privacy-long", "privacy-container-resize");
     private Rectangle target;
     private Rectangle clip;
     private Pane first;
     private Pane second;
     private Button next;
+    private Label privateLabel;
+    private PasswordField password;
+    private Pane labelBox;
     private FxAtSpiBridge bridge;
     private Stage stage;
     private Path output;
@@ -77,7 +83,8 @@ public final class GeometryApp extends Application {
         stage.setTitle("AT-SPI Geometry QA");
         stage.setScene(new Scene(new Pane(first, second, next), 520, 380));
         stage.show();
-        bridge = FxAtSpiBridge.installConfigured(BridgeOptions.builder().applicationName("Geometry QA").build());
+        bridge = FxAtSpiBridge.installConfigured(BridgeOptions.builder().applicationName("Geometry QA")
+                .sensitiveNodes(node -> "geometry-private".equals(node.getId())).build());
         checkpoint();
     }
 
@@ -99,6 +106,26 @@ public final class GeometryApp extends Application {
                 old.getChildren().removeAll(second, next);
                 stage.setScene(new Scene(new Pane(second, next), 460, 340));
             }
+            case 13 -> {
+                privateLabel = new Label("x");
+                privateLabel.setId("geometry-private");
+                privateLabel.relocate(5, 5);
+                labelBox = new Pane(privateLabel);
+                labelBox.setAccessibleText("Privacy label box");
+                labelBox.setManaged(false);
+                labelBox.resizeRelocate(20, 160, 200, 85);
+                password = new PasswordField();
+                password.setText("x");
+                password.setManaged(false);
+                password.resizeRelocate(5, 5, 120, 28);
+                var passwordBox = new Pane(password);
+                passwordBox.setAccessibleText("Privacy password box");
+                passwordBox.setManaged(false);
+                passwordBox.resizeRelocate(250, 160, 180, 85);
+                ((Pane) stage.getScene().getRoot()).getChildren().addAll(labelBox, passwordBox);
+            }
+            case 14 -> { privateLabel.setText("x".repeat(30)); password.setText("x".repeat(30)); }
+            case 15 -> labelBox.resize(220, 85);
             default -> throw new IllegalStateException("Unknown fixture step");
         }
     }
@@ -151,6 +178,15 @@ public final class GeometryApp extends Application {
         return "[" + (int) left + "," + (int) top + "," + (int) width + "," + (int) height + "]";
     }
 
+    /** Analytic boxes; only scene/screen offsets and the fixture's own numeric layout are sampled on FX. */
+    private String privacyRectangles(double x, double y, double width, double height, double parentX, double parentY) {
+        var scene = stage.getScene();
+        var origin = scene.getRoot().localToScreen(0, 0);
+        var screen = origin == null ? "null" : rectangle(x + origin.getX(), y + origin.getY(), x + width + origin.getX(), y + height + origin.getY());
+        return "[" + screen + "," + rectangle(x + scene.getX(), y + scene.getY(), x + width + scene.getX(), y + height + scene.getY())
+                + "," + rectangle(x - parentX, y - parentY, x + width - parentX, y + height - parentY) + "]";
+    }
+
     /** Explicit expected shape/clip coordinates for each case, independent of GeometryProjector. */
     private String reference() {
         var x = step >= 11 ? 230.0 : step == 4 ? -20.0 : 30.0;
@@ -170,9 +206,12 @@ public final class GeometryApp extends Application {
         var parentX = step >= 11 ? 220.0 : 20.0;
         var parentY = step >= 11 ? 40.0 : 30.0;
         var parent = hidden ? "null" : rectangle(x - parentX, y - parentY, right - parentX, bottom - parentY);
+        var privacy = step < 13 ? "" : ",\"privacy\":{\"label\":" + privacyRectangles(20, 160, step == 15 ? 220 : 200, 85, 20, 160)
+                + ",\"password\":" + privacyRectangles(255, 165, 120, 28, 250, 160)
+                + ",\"labelOwnWidth\":" + privateLabel.getWidth() + "}";
         return "{\"step\":" + step + ",\"case\":\"" + CASES.get(step) + "\",\"count\":" + CASES.size()
                 + ",\"rectangles\":[" + screen + "," + window + "," + parent + "],\"screens\":" + Screen.getScreens().size()
-                + ",\"outputScale\":[" + stage.getOutputScaleX() + "," + stage.getOutputScaleY() + "]}";
+                + ",\"outputScale\":[" + stage.getOutputScaleX() + "," + stage.getOutputScaleY() + "]" + privacy + "}";
     }
 
     @Override public void stop() { if (bridge != null) bridge.close(); }

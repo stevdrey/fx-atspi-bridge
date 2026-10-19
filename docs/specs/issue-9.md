@@ -87,6 +87,16 @@ only the cleanup exception type in results.json, preserving any earlier failure.
 
 ## Acceptance and verification
 
+PR #40 verification follow-up: retain the 13 original native cases and add
+short/long sensitive-content and container-resize checkpoints, verifying substitute
+and password boxes without retaining contents. Classify bounded BoundsChanged
+events by phase/object: pure window moves must update descendant SCREEN queries
+while only the frame emits bounds events. Native WM notifications need not map
+one-to-one to provider publications; do not require the historical event count.
+Compare clean 8f78da7 and the QA follow-up with the unchanged dispatch profile
+(30 runs each), preserving valid tails and all invalid attempts. A failed budget
+remains failed; ready-for-review status is not an exception or merge approval.
+
 Unit tests cover rounding, overflow, empty/unknown coordinates, schema/cache,
 events and unsigned native decoding. FX/private-bus tests cover transforms,
 ancestor/own clip changes, hidden/minimized state, reparenting, replacement,

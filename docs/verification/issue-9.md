@@ -323,6 +323,34 @@ Commands run from the repository root with JDK 27:
 Not rerun: the independent `geometry_qa.py` desktop run and the performance workloads; they belong to the next QA
 session. The 1,000-node p99 reservation above is unchanged and not re-measured.
 
+## PR #40: latest-head native and performance verification
+
+The accepted follow-up keeps the historical 33.476954-ms / 29-ms result failed, without a performance exception.
+PR #40 remains ready for review; merge approval requires the new native QA and unchanged performance budgets.
+The comparison revisions are `8f78da7` (before the geometry/privacy refactor) and the QA follow-up to `c395e72`.
+The bridge and benchmark sources are unchanged by this follow-up; only the isolated fixture/client, tests and docs change.
+
+A clean managed checkout of `c395e7274612bf80cc0c436f2e1d50b42aae578e` was built using
+`./gradlew :examples:fx-lab:installDist --console=plain`. Its original client passed all 13 cases with 15 bounds events.
+Actual backend: XWayland in a Wayland session, one monitor, output scale 2.0 × 2.0. Bridge JAR SHA-256:
+`db56f3bf7bdf077e98f2705befe26211286289d174c555b14d6a07a7d4ed3ea4`; fixture JAR:
+`5a55c2da57b984ed94a6491d09ed13fcbca8c131a892fac7aee26ae56114f80f`.
+Local results and the complete JAR manifest: `/tmp/fx-atspi-issue9-verification-c395e72`.
+
+The extended client retains those 13 cases and adds short/long sensitive-content and container-resize checkpoints.
+It checks the sensitive label's substitute box, fixed external password box, positive local label-width growth,
+absence of protected bounds events for content changes, and a substitute-box event when its container resizes.
+Pure window moves require changed descendant SCREEN, unchanged WINDOW/PARENT and frame-only bounds events.
+Event counts are bounded at 2,048, classified by object and phase, with a bounded quiet period before the next action.
+Multiple native frame notifications are allowed; one event per provider publication remains covered by unit tests.
+
+Development verification: 16 focused Python tests and all 219 Python tests passed, zero skips.
+`REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check :examples:fx-lab:installDist --console=plain` passed;
+Java tasks were up-to-date with 209 retained tests, zero failures/errors/skips. A development desktop run passed
+16 cases and 17 events. Seven new adverse tests cover wrong sensitive geometry, ineffective content growth,
+descendant events during moves, missing expected events, content-dependent events, event bounds/phases and SCREEN-only movement.
+Final clean-commit native runs and the two 30-run dispatch collections are recorded below after execution.
+
 ## Limits
 
 Native Wayland, multiple/mixed-scale monitors, other desktops/distributions and per-pixel/occlusion behavior are not

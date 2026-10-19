@@ -190,7 +190,9 @@ produce a one-unit rounding difference in other systems.
 For a disposable numeric interoperability check, build `:examples:fx-lab:installDist`, then run
 `python3 examples/fx-lab/scripts/geometry_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/new-geometry-run`.
 The client needs PyGObject with the Atspi 2.0 namespace, libatspi and `xprop` for X11/XWayland backend attribution.
-It starts an isolated `--geometry` fixture and compares 13 post-layout checkpoints through libatspi. The output
+It starts an isolated `--geometry` fixture and compares 16 post-layout checkpoints through libatspi, including
+sensitive substitute/password boxes and bounded event checks by phase/object. Pure window moves must update
+descendant SCREEN queries while only frames emit bounds events. The output
 directory must be new. Test results and actual platform limitations are recorded in [issue-9 verification](docs/verification/issue-9.md).
 
 ## Requirements and testing

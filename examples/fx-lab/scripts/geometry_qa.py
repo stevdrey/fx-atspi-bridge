@@ -22,8 +22,60 @@ from atspi_probe import find_applications, process_ids, libatspi_version  # noqa
 
 MAX_NODES = 256
 MAX_CASES = 32
+MAX_EVENTS = 2048
 TIMEOUT = 180
 COORDINATES = (Atspi.CoordType.SCREEN, Atspi.CoordType.WINDOW, Atspi.CoordType.PARENT)
+
+
+class BoundsEvents:
+    """Bounded counts only: no remote names, contents or retained event objects."""
+    def __init__(self):
+        self.phase = 0
+        self.total = 0
+        self.overflow = False
+        self.sources = {}
+        self.counts = [{} for _ in range(MAX_CASES)]
+
+    def bind(self, found):
+        self.sources = {node: name for name, node in found.items()
+                        if name in ('frame', 'Geometry target', 'label', 'password')}
+
+    def record(self, event):
+        if self.total >= MAX_EVENTS:
+            self.overflow = True
+            return
+        self.total += 1
+        name = self.sources.get(getattr(event, 'source', None), 'other')
+        counts = self.counts[self.phase]
+        counts[name] = counts.get(name, 0) + 1
+
+    def verify(self, case):
+        if self.overflow:
+            raise AssertionError('bounds event limit exceeded')
+        counts = self.counts[self.phase]
+        if case == 'window-move' and (counts.get('frame', 0) == 0 or any(value for key, value in counts.items() if key != 'frame')):
+            raise AssertionError('window move must emit frame bounds only')
+        if case == 'privacy-long' and (counts.get('label', 0) or counts.get('password', 0)):
+            raise AssertionError('content change leaked through bounds events')
+        if case == 'privacy-container-resize' and counts.get('label', 0) == 0:
+            raise AssertionError('substitute box event missing')
+        if case in ('scale', 'rotation', 'own-clip', 'ancestor-clip', 'clip-resize', 'empty-clip', 'restored') and counts.get('Geometry target', 0) == 0:
+            raise AssertionError('target bounds event missing')
+        return dict(counts)
+
+
+def settle_events(events, deadline):
+    """Drain delayed native delivery before attributing the next action to a new phase."""
+    previous = events.total
+    quiet_since = time.monotonic()
+    while time.monotonic() - quiet_since < .2:
+        if time.monotonic() >= deadline:
+            raise TimeoutError('event settling timeout')
+        pump()
+        if events.total != previous:
+            previous = events.total
+            quiet_since = time.monotonic()
+        time.sleep(.01)
 
 
 class ExtentMismatch(AssertionError):
@@ -54,8 +106,10 @@ def nodes(app, deadline):
         # This client subscribes to bounds only; do not reuse cached enabled/showing/name state.
         node.clear_cache()
         name = node.get_name()
-        if name in ('Geometry target', 'Next geometry case'):
+        if name in ('Geometry target', 'Next geometry case', 'Privacy label box', 'Privacy password box'):
             result[name] = node
+        if node.get_role() == Atspi.Role.FRAME:
+            result['frame'] = node
         count = node.get_child_count()
         if count < 0 or count > MAX_NODES or len(queue) + len(seen) + count > MAX_NODES:
             raise RuntimeError('fixture child bound exceeded')
@@ -63,6 +117,10 @@ def nodes(app, deadline):
             if time.monotonic() >= deadline:
                 raise RuntimeError('fixture traversal timeout')
             queue.append(node.get_child_at_index(i))
+        if name in ('Privacy label box', 'Privacy password box'):
+            if count != 1:
+                raise AssertionError('privacy fixture child count mismatch')
+            result['label' if name == 'Privacy label box' else 'password'] = node.get_child_at_index(0)
     return result
 
 
@@ -113,6 +171,31 @@ def compare(node, reference, deadline=None):
         if [size.x, size.y] != expected_size[2:]:
             raise AssertionError('size mismatch')
     return rectangles
+
+
+def compare_privacy(found, reference, previous, deadline):
+    expected = reference.get('privacy')
+    if expected is None:
+        return None
+    if any(name not in found for name in ('label', 'password')):
+        raise AssertionError('privacy fixture target missing')
+    actual = {name: compare(found[name], {'rectangles': expected[name]}, deadline) for name in ('label', 'password')}
+    if reference['case'] == 'privacy-long':
+        if previous is None or expected['labelOwnWidth'] <= previous['privacy']['labelOwnWidth']:
+            raise AssertionError('fixture content did not resize label')
+        if actual != previous['privacyActual']:
+            raise AssertionError('content change altered protected geometry')
+    if reference['case'] == 'privacy-container-resize':
+        if previous is None or actual['label'] == previous['privacyActual']['label']:
+            raise AssertionError('substitute box did not follow container')
+        if actual['password'] != previous['privacyActual']['password']:
+            raise AssertionError('password external box changed')
+    return actual
+
+
+def verify_move(previous, current):
+    if previous is None or current[0] == previous['actual'][0] or current[1:] != previous['actual'][1:]:
+        raise AssertionError('window move must update SCREEN only')
 
 
 def backend(pid, deadline):
@@ -167,13 +250,8 @@ def run(launcher, directory):
             if app is None:
                 raise RuntimeError('fixture discovery timeout')
             result['backend'] = backend(process.pid, deadline)
-            events = [0]
-
-            def event_seen(event):
-                # register_with_app limits delivery to this disposable fixture; retain only a count.
-                events[0] += 1
-
-            listener = Atspi.EventListener.new(event_seen)
+            events = BoundsEvents()
+            listener = Atspi.EventListener.new(events.record)
             if not listener.register_with_app('object:bounds-changed', None, app):
                 raise RuntimeError('bounds event subscription failed')
             for step in range(MAX_CASES):
@@ -200,12 +278,14 @@ def run(launcher, directory):
                     pump()
                     app.clear_cache()
                     found = nodes(app, step_deadline)
+                    events.bind(found)
                     target = found.get('Geometry target')
                     button = found.get('Next geometry case')
                     try:
                         if target is None or button is None:
                             raise AssertionError('fixture target missing')
                         rectangles = compare(target, reference, step_deadline)
+                        privacy = compare_privacy(found, reference, result['cases'][-1] if result['cases'] else None, step_deadline)
                         matched = rectangles
                         if step + 1 == reference['count'] or button.get_state_set().contains(Atspi.StateType.ENABLED):
                             break
@@ -217,16 +297,21 @@ def run(launcher, directory):
                 if matched is None:
                     result['lastMismatch'] = mismatch
                     raise AssertionError('remote geometry did not match FX checkpoint')
-                result['cases'].append({**reference, 'actual': matched, 'status': 'Passed'})
+                settle_events(events, step_deadline)
+                if reference.get('case') == 'window-move':
+                    verify_move(result['cases'][-1], matched)
+                counts = events.verify(reference.get('case'))
+                result['cases'].append({**reference, 'actual': matched, 'privacyActual': privacy, 'events': counts, 'status': 'Passed'})
                 if step + 1 == reference['count']:
                     break
+                events.phase = step + 1
                 if not Atspi.Action.do_action(button, 0):
                     raise AssertionError('fixture advance denied')
             else:
                 raise RuntimeError('case count exceeded')
             pump()
-            result['boundsEvents'] = events[0]
-            if events[0] == 0:
+            result['boundsEvents'] = events.total
+            if events.total == 0:
                 raise AssertionError('no bounds events observed')
             result['status'] = 'Passed'
         except Exception as error:
