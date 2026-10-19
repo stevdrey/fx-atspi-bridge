@@ -1,0 +1,1117 @@
+{
+  "status": "Passed",
+  "cases": [
+    {
+      "step": 0,
+      "case": "initial",
+      "count": 16,
+      "rectangles": [
+        [
+          538,
+          247,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          538,
+          247,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {},
+      "status": "Passed"
+    },
+    {
+      "step": 1,
+      "case": "window-move",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "frame": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 2,
+      "case": "window-resize",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "frame": 1,
+        "other": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 3,
+      "case": "scale",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          120,
+          63
+        ],
+        [
+          30,
+          77,
+          120,
+          63
+        ],
+        [
+          10,
+          10,
+          120,
+          63
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          120,
+          63
+        ],
+        [
+          30,
+          77,
+          120,
+          63
+        ],
+        [
+          10,
+          10,
+          120,
+          63
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 4,
+      "case": "rotation",
+      "count": 16,
+      "rectangles": [
+        [
+          553,
+          277,
+          30,
+          80
+        ],
+        [
+          0,
+          77,
+          30,
+          80
+        ],
+        [
+          -20,
+          10,
+          30,
+          80
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          553,
+          277,
+          30,
+          80
+        ],
+        [
+          0,
+          77,
+          30,
+          80
+        ],
+        [
+          -20,
+          10,
+          30,
+          80
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 5,
+      "case": "own-clip",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          35,
+          50
+        ],
+        [
+          30,
+          77,
+          35,
+          50
+        ],
+        [
+          10,
+          10,
+          35,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          35,
+          50
+        ],
+        [
+          30,
+          77,
+          35,
+          50
+        ],
+        [
+          10,
+          10,
+          35,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 6,
+      "case": "ancestor-clip",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          40,
+          50
+        ],
+        [
+          30,
+          77,
+          40,
+          50
+        ],
+        [
+          10,
+          10,
+          40,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          40,
+          50
+        ],
+        [
+          30,
+          77,
+          40,
+          50
+        ],
+        [
+          10,
+          10,
+          40,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1,
+        "other": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 7,
+      "case": "clip-resize",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          55,
+          50
+        ],
+        [
+          30,
+          77,
+          55,
+          50
+        ],
+        [
+          10,
+          10,
+          55,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          55,
+          50
+        ],
+        [
+          30,
+          77,
+          55,
+          50
+        ],
+        [
+          10,
+          10,
+          55,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "other": 1,
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 8,
+      "case": "empty-clip",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          0,
+          50
+        ],
+        [
+          30,
+          77,
+          0,
+          50
+        ],
+        [
+          10,
+          10,
+          0,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          0,
+          50
+        ],
+        [
+          30,
+          77,
+          0,
+          50
+        ],
+        [
+          10,
+          10,
+          0,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "other": 1,
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 9,
+      "case": "hidden",
+      "count": 16,
+      "rectangles": [
+        null,
+        null,
+        null
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        null,
+        null,
+        null
+      ],
+      "privacyActual": null,
+      "events": {},
+      "status": "Passed"
+    },
+    {
+      "step": 10,
+      "case": "restored",
+      "count": 16,
+      "rectangles": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          583,
+          277,
+          80,
+          50
+        ],
+        [
+          30,
+          77,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1,
+        "other": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 11,
+      "case": "reparent",
+      "count": 16,
+      "rectangles": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {
+        "Geometry target": 1
+      },
+      "status": "Passed"
+    },
+    {
+      "step": 12,
+      "case": "scene-replace",
+      "count": 16,
+      "rectangles": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "actual": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": null,
+      "events": {},
+      "status": "Passed"
+    },
+    {
+      "step": 13,
+      "case": "privacy-short",
+      "count": 16,
+      "rectangles": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "privacy": {
+        "label": [
+          [
+            573,
+            397,
+            200,
+            85
+          ],
+          [
+            20,
+            197,
+            200,
+            85
+          ],
+          [
+            0,
+            0,
+            200,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ],
+        "labelOwnWidth": 6.876999855041504
+      },
+      "actual": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": {
+        "label": [
+          [
+            573,
+            397,
+            200,
+            85
+          ],
+          [
+            20,
+            197,
+            200,
+            85
+          ],
+          [
+            0,
+            0,
+            200,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ]
+      },
+      "events": {},
+      "status": "Passed"
+    },
+    {
+      "step": 14,
+      "case": "privacy-long",
+      "count": 16,
+      "rectangles": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "privacy": {
+        "label": [
+          [
+            573,
+            397,
+            200,
+            85
+          ],
+          [
+            20,
+            197,
+            200,
+            85
+          ],
+          [
+            0,
+            0,
+            200,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ],
+        "labelOwnWidth": 206.3099822998047
+      },
+      "actual": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": {
+        "label": [
+          [
+            573,
+            397,
+            200,
+            85
+          ],
+          [
+            20,
+            197,
+            200,
+            85
+          ],
+          [
+            0,
+            0,
+            200,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ]
+      },
+      "events": {},
+      "status": "Passed"
+    },
+    {
+      "step": 15,
+      "case": "privacy-container-resize",
+      "count": 16,
+      "rectangles": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "screens": 1,
+      "outputScale": [
+        2.0,
+        2.0
+      ],
+      "privacy": {
+        "label": [
+          [
+            573,
+            397,
+            220,
+            85
+          ],
+          [
+            20,
+            197,
+            220,
+            85
+          ],
+          [
+            0,
+            0,
+            220,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ],
+        "labelOwnWidth": 206.3099822998047
+      },
+      "actual": [
+        [
+          783,
+          287,
+          80,
+          50
+        ],
+        [
+          230,
+          87,
+          80,
+          50
+        ],
+        [
+          10,
+          10,
+          80,
+          50
+        ]
+      ],
+      "privacyActual": {
+        "label": [
+          [
+            573,
+            397,
+            220,
+            85
+          ],
+          [
+            20,
+            197,
+            220,
+            85
+          ],
+          [
+            0,
+            0,
+            220,
+            85
+          ]
+        ],
+        "password": [
+          [
+            808,
+            402,
+            120,
+            28
+          ],
+          [
+            255,
+            202,
+            120,
+            28
+          ],
+          [
+            5,
+            5,
+            120,
+            28
+          ]
+        ]
+      },
+      "events": {
+        "other": 1,
+        "label": 1
+      },
+      "status": "Passed"
+    }
+  ],
+  "python": "3.14.8",
+  "pygobject": "3.56.3",
+  "libatspi": "at-spi2-core-2.60.7-1.fc44.x86_64",
+  "os": "Fedora Linux 44 (Workstation Edition)",
+  "backend": {
+    "glassLibraries": [
+      "libglass.so",
+      "libglassgtk3.so"
+    ],
+    "session": "wayland",
+    "backend": "XWayland",
+    "fixtureWindow": "0x1600003"
+  },
+  "boundsEvents": 17
+}

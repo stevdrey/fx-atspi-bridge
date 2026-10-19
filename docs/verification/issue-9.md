@@ -349,7 +349,89 @@ Development verification: 16 focused Python tests and all 219 Python tests passe
 Java tasks were up-to-date with 209 retained tests, zero failures/errors/skips. A development desktop run passed
 16 cases and 17 events. Seven new adverse tests cover wrong sensitive geometry, ineffective content growth,
 descendant events during moves, missing expected events, content-dependent events, event bounds/phases and SCREEN-only movement.
-Final clean-commit native runs and the two 30-run dispatch collections are recorded below after execution.
+
+### Final native QA on the clean QA commit
+
+`c2411243fe504a776113307600fb0f2d5e09cdc1` passed the full Java check in the clean managed checkout, executing
+209 tests with zero failures/errors/skips. The bridge JAR hash is identical to `c395e72` above. The extended fixture
+JAR hash is `ff53b337592b9403332d1435bdba8c639c3ca8bfde2dc505cb1c63d0cfe76520`.
+The complete Python suite passed 219 tests with zero skips; the focused client suite passed 16 tests.
+
+After building `:examples:fx-lab:installDist`, two sequential fresh JVMs were run under the idle/suspend inhibitor:
+
+```sh
+python3 examples/fx-lab/scripts/geometry_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/fx-atspi-issue9-verification-c241124-1
+python3 examples/fx-lab/scripts/geometry_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/fx-atspi-issue9-verification-c241124-2
+```
+
+Both **passed 16 cases / 17 events**, with no cleanup error. Actual backend was XWayland (`libglass.so` /
+`libglassgtk3.so` plus own-PID X11 window attribution) in the Fedora/GNOME Wayland session; one monitor and output
+scale 2.0 × 2.0 were observed. The pure move emitted one frame event and no descendant event, with changed target
+SCREEN and unchanged WINDOW/PARENT. The sensitive label's actual local width grew from 6.877 to 206.310 logical
+units, while its published box remained 200 × 85 and neither protected control emitted a bounds event. Resizing
+the container changed the label's published box to 220 × 85 and emitted one label event. The password's external
+box stayed 120 × 28. These dimensions are synthetic fixture observations, not application field contents.
+
+Numeric references, actual results, per-case event counts and artifact hashes for these two runs and the original
+`c395e72` run are retained under [the versioned evidence](data/issue-9/pr40-verification-20261019/README.md).
+The former total of 20 events is not a criterion: the new frame-only movement contract changes the expected sources.
+
+### Fresh dispatch comparison and acceptance decision
+
+Both collections used the unchanged `dispatch` profile on the same host/session, sequentially, from clean commits:
+
+```sh
+examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-verification-before dispatch
+examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-verification-after dispatch
+# After the user interrupted the active turn, resume the same commit/profile/workload:
+examples/fx-lab/scripts/run-baseline.sh /tmp/fx-atspi-issue9-verification-after dispatch --resume
+python3 examples/fx-lab/scripts/budgets.py /tmp/fx-atspi-issue9-verification-before
+python3 examples/fx-lab/scripts/budgets.py /tmp/fx-atspi-issue9-verification-after
+python3 docs/verification/data/issue-9/pr40-verification-20261019/compare.py
+```
+
+**Passed:** 60 completed valid runs (30 per revision), no waiver, no validity-guard retries and no budget-driven
+reruns. At interruption, 26 after JSON files existed and the collector was no longer active on continuation.
+The first `--resume` skipped those files and collected the four missing cells. An audit then found that
+`n10000-d10-on-r3` had written its metrics but had no persisted collector log/exit confirmation. Its original
+33.952650-ms p99 and all other metrics are retained in `after/interrupted`, with completion explicitly unconfirmed.
+Only that cell was then collected again with the same `--resume` command to confirm completion; no result with
+confirmed successful completion was repeated or removed, and no retry was selected by a budget result. Thus there
+are 60 completed qualifying runs plus one interruption-affected metrics record. `after/interruption.json`,
+`after/interrupted/completion-unconfirmed.json` and both resume timestamps in `environment.txt` retain this
+collection discontinuity. Each completed cell used a fresh JVM with the
+same warmup 50, 200 samples and 10-second idle phase. No build, native QA or profiling overlapped measured cells.
+
+`budgets.py` accepted both collections' workload, readiness/liveness, allocation and display/max-pulse validity
+markers. Its generated proposed budgets are not adopted. `compare.py` separately applies the existing limits to
+all 15 bridge-on runs per revision (60 individual metric checks per revision). Both revisions passed those fixed
+checks. Worst **after bridge-on** values across all five repetitions:
+
+| Nodes | p99 ms / limit | Allocation KiB/sample / limit | Idle CPU % / limit | RSS MiB / limit | Verdict |
+|---:|---|---|---|---|---|
+| 100 | 33.247138 / 41 | 103.96 / 116 | 0.90 / 8 | 256.01 / 327 | Passed |
+| 1,000 | 21.490566 / 29 | 204.42 / 299 | 5.20 / 14 | 306.48 / 434 | Passed |
+| 10,000 | 45.811206 / 307 | 874.88 / 8,844 | 1.10 / 137 | 823.48 / 1,590 | Passed |
+
+The complete before/after medians, ranges and pulse maxima are in [tables.md](data/issue-9/pr40-verification-20261019/tables.md),
+and every metric check is in [summary.json](data/issue-9/pr40-verification-20261019/summary.json). All 60 run JSON files,
+sanitized logs, environments, artifact/benchmark-class hashes and a reproducible SHA-256 manifest are versioned in
+[the evidence directory](data/issue-9/pr40-verification-20261019/README.md). The benchmark class hashes match across
+revisions; JavaFX JARs and workload/limits are unchanged. The after bridge and lab JAR hashes match the two final
+native runs. The changed lab JAR contains the extended geometry fixture; the benchmark classes did not change.
+
+This is **a passing fresh dirty-10 qualification for the current tested artifact**, not a reclassification of the
+historical 33.476954-ms / 29-ms failure, a performance-gate exception or a stable-release qualification. It does
+not establish a causal improvement: both revisions' fresh 1,000-node bridge-on runs passed, while the after
+10,000-node bridge-on p99 median increased from 25.67 to 39.70 ms. Large pulses remain: the after bridge-on maximum
+was 290.18 ms at 10,000 nodes; bridge-off controls reached p99 62.34 ms at 1,000 nodes and a 455.45-ms maximum pulse
+at 10,000 nodes. These valid tails are retained. Native Wayland, mixed/multiple monitors, dirty-1/100 and churn
+remain outside this focused qualification; broader baseline work remains under #15.
+
+The two acceptance items in “Review feedback — Verification pending” are satisfied for this tested scope:
+latest-head independent native QA passed and every current fixed performance-budget check passed. Merge may be
+recommended on these verification grounds, subject to review/CI; no merge is performed and PR #40 remains ready
+for review. All later evidence-only commits preserve the tested Java/Python QA sources and measured bytecode.
 
 ## Limits
 

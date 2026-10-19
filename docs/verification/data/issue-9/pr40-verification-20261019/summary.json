@@ -1,0 +1,1019 @@
+{
+  "before": {
+    "status": "Passed",
+    "checks": [
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 17.780251,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.681640625,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 0.699993454221211,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 247.265625,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 22.307622,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 107.9853515625,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999900437701418,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 254.125,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 17.068715,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 104.7314453125,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 1.0999891267174813,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 252.046875,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 17.536613,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 104.095703125,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999869604489249,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 252.4375,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 18.020382,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 109.4560546875,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 5.499945065998686,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 246.421875,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 23.796616,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 202.3837890625,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999926947867082,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 340.73828125,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 19.736743,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 202.408203125,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.6999767574817608,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 328.7578125,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 19.629532,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 202.486328125,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 0.6999936087083557,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 326.89453125,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 19.98522,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 202.5390625,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 0.6999925356995949,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 315.58203125,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 19.672764,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 202.40625,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999922830161693,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 332.40234375,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 31.339165,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 874.3798828125,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999916311578201,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 762.4375,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 24.678942,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 870.388671875,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999931877380091,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 767.09765625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 24.056824,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 874.255859375,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999914269718721,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 766.94921875,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 30.331794,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 870.8603515625,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999878867434165,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 754.44140625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 25.666216,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 870.638671875,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999934362938533,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 757.46875,
+        "budget": 1590,
+        "passed": true
+      }
+    ],
+    "cells": [
+      {
+        "nodes": 100,
+        "bridge": "off",
+        "p99MedianMs": 17.517236,
+        "p99MinMs": 17.211203,
+        "p99MaxMs": 32.493023,
+        "pulseMaxMs": 39.105245,
+        "allocationMaxKiB": 82.0986328125,
+        "idleCpuMaxPercent": 0.8999920324605359,
+        "rssMaxMiB": 252.1484375
+      },
+      {
+        "nodes": 100,
+        "bridge": "on",
+        "p99MedianMs": 17.780251,
+        "p99MinMs": 17.068715,
+        "p99MaxMs": 22.307622,
+        "pulseMaxMs": 31.158749,
+        "allocationMaxKiB": 109.4560546875,
+        "idleCpuMaxPercent": 5.499945065998686,
+        "rssMaxMiB": 254.125
+      },
+      {
+        "nodes": 1000,
+        "bridge": "off",
+        "p99MedianMs": 19.924686,
+        "p99MinMs": 19.498576,
+        "p99MaxMs": 23.076875,
+        "pulseMaxMs": 67.982529,
+        "allocationMaxKiB": 178.8564453125,
+        "idleCpuMaxPercent": 0.7999912064966582,
+        "rssMaxMiB": 322.546875
+      },
+      {
+        "nodes": 1000,
+        "bridge": "on",
+        "p99MedianMs": 19.736743,
+        "p99MinMs": 19.629532,
+        "p99MaxMs": 23.796616,
+        "pulseMaxMs": 68.622261,
+        "allocationMaxKiB": 202.5390625,
+        "idleCpuMaxPercent": 0.8999922830161693,
+        "rssMaxMiB": 340.73828125
+      },
+      {
+        "nodes": 10000,
+        "bridge": "off",
+        "p99MedianMs": 32.213568,
+        "p99MinMs": 24.226322,
+        "p99MaxMs": 34.486204,
+        "pulseMaxMs": 213.014021,
+        "allocationMaxKiB": 851.02734375,
+        "idleCpuMaxPercent": 0.8999925012624795,
+        "rssMaxMiB": 710.3515625
+      },
+      {
+        "nodes": 10000,
+        "bridge": "on",
+        "p99MedianMs": 25.666216,
+        "p99MinMs": 24.056824,
+        "p99MaxMs": 31.339165,
+        "pulseMaxMs": 217.236198,
+        "allocationMaxKiB": 874.3798828125,
+        "idleCpuMaxPercent": 0.8999916311578201,
+        "rssMaxMiB": 767.09765625
+      }
+    ]
+  },
+  "after": {
+    "status": "Passed",
+    "checks": [
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 17.184893,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.9580078125,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 0.6999930279994417,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 256.0078125,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 27.19173,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.623046875,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999889070338195,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 255.4453125,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 33.247138,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.6328125,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999921901377717,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 249.04296875,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 32.879638,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.7529296875,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999903750529339,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 254.71484375,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 24.159357,
+        "budget": 41,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 103.5439453125,
+        "budget": 116,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 0.6999940863099601,
+        "budget": 8,
+        "passed": true
+      },
+      {
+        "run": "n100-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 255.69921875,
+        "budget": 327,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 21.490566,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 204.4208984375,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 5.199821220266787,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 303.87890625,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 18.563912,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 204.185546875,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999909324113577,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 301.97265625,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 18.913357,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 203.4931640625,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 1.199987311094175,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 302.43359375,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 20.143798,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 203.3662109375,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 1.0999892391352704,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 306.4765625,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 19.319049,
+        "budget": 29,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 203.4306640625,
+        "budget": 299,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 0.9999886303292709,
+        "budget": 14,
+        "passed": true
+      },
+      {
+        "run": "n1000-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 297.61328125,
+        "budget": 434,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "latencyP99Ms",
+        "value": 39.700042,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 874.876953125,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999917695246768,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r1.json",
+        "metric": "rssAfterIdleKb",
+        "value": 725.5625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "latencyP99Ms",
+        "value": 37.248759,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 871.822265625,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999911275274683,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r2.json",
+        "metric": "rssAfterIdleKb",
+        "value": 787.2265625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "latencyP99Ms",
+        "value": 29.665744,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 873.9970703125,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "idleCpuPercent",
+        "value": 1.0999886657167883,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r3.json",
+        "metric": "rssAfterIdleKb",
+        "value": 724.40625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "latencyP99Ms",
+        "value": 45.811206,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 870.2548828125,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "idleCpuPercent",
+        "value": 0.8999881097170896,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r4.json",
+        "metric": "rssAfterIdleKb",
+        "value": 823.4765625,
+        "budget": 1590,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "latencyP99Ms",
+        "value": 41.940177,
+        "budget": 307,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "allocatedBytesPerSample",
+        "value": 870.646484375,
+        "budget": 8844,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "idleCpuPercent",
+        "value": 0.7999934110142688,
+        "budget": 137,
+        "passed": true
+      },
+      {
+        "run": "n10000-d10-on-r5.json",
+        "metric": "rssAfterIdleKb",
+        "value": 772.015625,
+        "budget": 1590,
+        "passed": true
+      }
+    ],
+    "cells": [
+      {
+        "nodes": 100,
+        "bridge": "off",
+        "p99MedianMs": 24.970139,
+        "p99MinMs": 17.413001,
+        "p99MaxMs": 33.122464,
+        "pulseMaxMs": 33.846122,
+        "allocationMaxKiB": 85.9619140625,
+        "idleCpuMaxPercent": 0.899985987668165,
+        "rssMaxMiB": 248.8359375
+      },
+      {
+        "nodes": 100,
+        "bridge": "on",
+        "p99MedianMs": 27.19173,
+        "p99MinMs": 17.184893,
+        "p99MaxMs": 33.247138,
+        "pulseMaxMs": 33.817489,
+        "allocationMaxKiB": 103.9580078125,
+        "idleCpuMaxPercent": 0.8999921901377717,
+        "rssMaxMiB": 256.0078125
+      },
+      {
+        "nodes": 1000,
+        "bridge": "off",
+        "p99MedianMs": 24.524523,
+        "p99MinMs": 18.610449,
+        "p99MaxMs": 62.338714,
+        "pulseMaxMs": 68.871128,
+        "allocationMaxKiB": 184.498046875,
+        "idleCpuMaxPercent": 1.199985205982388,
+        "rssMaxMiB": 308.4296875
+      },
+      {
+        "nodes": 1000,
+        "bridge": "on",
+        "p99MedianMs": 19.319049,
+        "p99MinMs": 18.563912,
+        "p99MaxMs": 21.490566,
+        "pulseMaxMs": 71.467202,
+        "allocationMaxKiB": 204.4208984375,
+        "idleCpuMaxPercent": 5.199821220266787,
+        "rssMaxMiB": 306.4765625
+      },
+      {
+        "nodes": 10000,
+        "bridge": "off",
+        "p99MedianMs": 35.540271,
+        "p99MinMs": 28.765511,
+        "p99MaxMs": 76.507272,
+        "pulseMaxMs": 455.452977,
+        "allocationMaxKiB": 851.7802734375,
+        "idleCpuMaxPercent": 13.699801887164911,
+        "rssMaxMiB": 709.73046875
+      },
+      {
+        "nodes": 10000,
+        "bridge": "on",
+        "p99MedianMs": 39.700042,
+        "p99MinMs": 29.665744,
+        "p99MaxMs": 45.811206,
+        "pulseMaxMs": 290.177754,
+        "allocationMaxKiB": 874.876953125,
+        "idleCpuMaxPercent": 1.0999886657167883,
+        "rssMaxMiB": 823.4765625
+      }
+    ]
+  },
+  "interruptedAttempts": [
+    {
+      "file": "after/interrupted/n10000-d10-on-r3.json",
+      "completionConfirmed": false,
+      "metrics": {
+        "bridge": "on",
+        "bridgeReady": true,
+        "pulseCadenceP50Ms": 15.947493,
+        "nodes": 10000,
+        "warmup": 50,
+        "samples": 200,
+        "dirty": 10,
+        "idleSeconds": 10,
+        "heapAfterWarmupGcBytes": 190469600,
+        "rssAfterWarmupKb": 753384,
+        "latencyMaxMs": 195.276635,
+        "latencyP50Ms": 21.625775,
+        "latencyP95Ms": 28.382201,
+        "latencyP99Ms": 33.95265,
+        "allocationMethod": "total",
+        "allocatedBytesPerSample": 895160,
+        "idleCpuPercent": 0.6999941301292224,
+        "idleVoluntarySwitchesPerSecond": 97.79917989519707,
+        "idleEdgePulseMaxMs": 16.133913,
+        "heapAfterIdleGcBytes": 190602176,
+        "rssAfterIdleKb": 783288,
+        "threadCount": 17,
+        "providerAliveAtEnd": true
+      }
+    }
+  ]
+}
