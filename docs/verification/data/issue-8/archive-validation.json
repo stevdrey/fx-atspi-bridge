@@ -1,0 +1,39 @@
+{
+  "pythonSourcesParse": true,
+  "sourceAndJarHashesMatch": [
+    "representative",
+    "retention",
+    "reference"
+  ],
+  "negativeSummaryCases": [
+    {
+      "case": "idle-edge",
+      "rejected": true,
+      "diagnostic": "Throttled display or stalled run"
+    },
+    {
+      "case": "structural-duration",
+      "rejected": true,
+      "diagnostic": "Throttled display or stalled run"
+    },
+    {
+      "case": "wrong-cycles",
+      "rejected": true,
+      "diagnostic": "Unexpected measurement workload"
+    },
+    {
+      "case": "allocation-method",
+      "rejected": true,
+      "diagnostic": "Unexpected allocation measurement method"
+    },
+    {
+      "case": "filename",
+      "rejected": true,
+      "diagnostic": "Filename/workload mismatch"
+    }
+  ],
+  "visibilitySupervisorExitStatusSmokes": [
+    0,
+    1
+  ]
+}

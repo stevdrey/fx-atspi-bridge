@@ -1,0 +1,131 @@
+{
+  "completedRuns": 12,
+  "repetitionsPerCell": 2,
+  "dirty": 10,
+  "structuralCyclesPerRun": 10,
+  "installCyclesPerBridgeRun": 10,
+  "scope": "Reduced representative cells; no full quick/full or 30/100-cycle retention qualification",
+  "comparisons": [
+    {
+      "nodes": 100,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 41,
+      "worstObserved": 19.02429,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 1000,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 29,
+      "worstObserved": 28.908661,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 10000,
+      "metric": "latencyP99Ms",
+      "unit": "ms",
+      "limit": 307,
+      "worstObserved": 40.442896,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 100,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 116,
+      "worstObserved": 105.63671875,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 1000,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 299,
+      "worstObserved": 204.1298828125,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 10000,
+      "metric": "allocatedBytesPerSample",
+      "unit": "KiB/sample",
+      "limit": 8844,
+      "worstObserved": 872.1435546875,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 100,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 8,
+      "worstObserved": 1.1999840693714903,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 1000,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 14,
+      "worstObserved": 1.2999843033395293,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 10000,
+      "metric": "idleCpuPercent",
+      "unit": "% of one core",
+      "limit": 137,
+      "worstObserved": 1.2999834607004246,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 100,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 327,
+      "worstObserved": 273.48828125,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 1000,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 434,
+      "worstObserved": 328.5703125,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 10000,
+      "metric": "rssAfterIdleKb",
+      "unit": "MiB",
+      "limit": 1590,
+      "worstObserved": 792.2265625,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 100,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 1000,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true
+    },
+    {
+      "nodes": 10000,
+      "metric": "installChurnProviderThreadsAfterDrain",
+      "unit": "threads",
+      "limit": 2,
+      "worstObserved": 1.0,
+      "withinProvisionalBudget": true
+    }
+  ],
+  "exceedances": []
+}

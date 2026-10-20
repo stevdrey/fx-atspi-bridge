@@ -1,0 +1,9 @@
+{
+  "scope": "Discarded partial collection; not included in final comparison",
+  "completedCells": 3,
+  "rejectedCell": "n100-d10-on-r2",
+  "exitCode": 3,
+  "reason": "Original maximum pulse guard rejected 1005.121628 ms",
+  "jvmAttach": false,
+  "displayObservation": "The benchmark window was normal but had lost focus before rejection; occlusion was not measured directly"
+}

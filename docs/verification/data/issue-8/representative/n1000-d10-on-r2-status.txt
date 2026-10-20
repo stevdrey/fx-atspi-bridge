@@ -1,0 +1,12 @@
+bench pid 208776
+FX AT-SPI Lab ready: :1.227 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.228 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.229 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.230 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.231 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.232 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.233 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.234 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.235 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.236 /org/a11y/atspi/accessible/root
+FX AT-SPI Lab ready: :1.237 /org/a11y/atspi/accessible/root
