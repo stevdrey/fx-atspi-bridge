@@ -19,9 +19,9 @@ preserved outside this PR.
 
 ## Functional checks
 
-- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — complete Java/native suite, example distribution and publication metadata. Actual counts are in `data/issue-8/java-check.json`.
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 226 Java/native tests, zero skips; example distribution and publication metadata generated. Counts are retained in `data/issue-8/java-check.json`.
 - `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip. The sandbox denies temporary Unix socket binds; the successful run used the normal host permissions needed by those tests.
-- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-published-qa` — independent libatspi scenarios; retained JSON and fixed status output identify the actual outcome.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-published-qa` — **Passed**, 11 independent libatspi scenarios; retained JSON and fixed status output identify the actual outcome.
 
 New Java coverage exercises IDs without CSS fallback and without incarnation changes, duplicate initial/candidate/live
 IDs, checked/indeterminate/radio states and events, repeated list occurrences and permutations, selected-child index
@@ -42,6 +42,9 @@ policy propagation for popup windows and the menu window's coordinate-frame iden
 assertion intermittently received a late geometry/focus notification; its assertions were retained and a complete rerun
 was used. No timeout, capacity, screen-throttling guard or performance budget was relaxed.
 
+GitHub Actions [Build and test #128](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/39506618374) also
+**passed** on code commit `959b643`. Subsequent verification-only commits do not change the measured Java sources.
+
 ## SC-01 comparison
 
 Command: `python3 docs/verification/data/issue-8/collect_cells.py /tmp/sc08-published-cells` after building the distribution.
@@ -59,6 +62,11 @@ be attributed to bridge code: no bridge was installed in the rejected cell. `per
 artifact/source hashes, fixed diagnostic and outcome. A diagnostic stack showed the benchmark worker awaiting FX
 pulses; the session was unlocked, so the benchmark window may have been occluded or compositor-throttled. That
 attempt also received a diagnostic JVM attach and is not timing evidence. Earlier exploratory cells are not included.
+
+A second bounded attempt used `gnome-session-inhibit --inhibit idle:suspend` (the existing SC-01 temporary guard),
+and its first bridge-off cell was also rejected with exit 3: maximum pulse 1002.790201 ms. It produced zero valid
+cells. `performance-inhibited-attempt/` records that attempt independently; no JVM diagnostic attach was used in it.
+The temporary inhibitor ended with its child process; no persistent desktop setting changed.
 
 The full performance comparison remains outstanding. Keep the benchmark window visible in an unthrottled graphical
 session and run the existing temporary `gnome-session-inhibit --inhibit idle:suspend` guard when repeating collection.
