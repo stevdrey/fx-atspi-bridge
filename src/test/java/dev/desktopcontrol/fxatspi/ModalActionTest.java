@@ -151,6 +151,8 @@ class ModalActionTest {
         assertTrue(dialogShown.await(WAIT_SECONDS, TimeUnit.SECONDS), "the handler must open the modal dialog");
         awaitTrue(() -> idOf("OK") != null, "the dialog must be published while the handler is still running");
         var okId = idOf("OK");
+        assertTrue(output(gdbus("/org/a11y/atspi/accessible/" + okId,
+                "org.a11y.atspi.Component.GetExtents", "1")).startsWith("(("), "geometry reads work in the real nested modal loop");
 
         // Reads are answered by the provider thread from the snapshot while the FX thread is in the nested loop.
         var latencies = new long[READS];

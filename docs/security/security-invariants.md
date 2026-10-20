@@ -3,7 +3,7 @@
 Target requirements, not a security certification of the prototype.
 
 1. Installation is explicit, per JVM, without sudo or global accessibility/security changes.
-2. Never expose password content through text, attributes, names, events, cache, errors or logs. Offer exclusion/redaction for other sensitive nodes; minimize diagnostic data.
+2. Never expose password content through text, attributes, names, events, cache, errors or logs. Offer exclusion/redaction for other sensitive nodes; minimize diagnostic data. Sensitive nodes other than password fields publish their nearest non-sensitive container's geometry, so content-sized bounds and their change events do not reveal protected content (container-granularity residual).
 3. Treat all D-Bus calls as untrusted. Validate signatures, offsets, sizes, methods and state; reject stale references deterministically. Client IDs never authorize actions.
 4. Allow actions only after admission and immediate FX-thread revalidation of policy, showing/enabled/editable state and modal eligibility. Sensitive fields remain protected under all adapters.
 5. Document default same-session accessibility access. Make action capability restrictions configurable; sender filtering is defense in depth, not strong isolation against a compromised desktop session. Do not break assistive technology without an explicit deployment policy.

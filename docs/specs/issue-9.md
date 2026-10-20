@@ -1,0 +1,136 @@
+# Spec Context — Issue 9
+
+## Context and source evidence
+
+[SC-09 / #9](https://github.com/stevdrey/fx-atspi-bridge/issues/9), baseline
+`5dc4c68148ce7cfaaae20a9a6083e1297c6d3a12`. Component and geometry are absent.
+SceneObserver owns JavaFX subscriptions and immutable projections; AtSpiObjects
+defines schemas and AtSpiProvider owns native dispatch. Prerequisite contracts
+from #2, #5 and #7 are implemented. Follow ADR 0001, system design and security
+invariants. Preserve unrelated local issue-1/issue-16 documentation.
+
+## Goal and non-goals
+
+Implement read-only Component geometry in SCREEN (0), WINDOW (1), PARENT (2).
+Respect rectangular bounds of node/ancestor clips and the scene viewport.
+No pointer injection, screenshots, per-pixel picking, occlusion inference, focus,
+scroll or geometry mutations. Three-dimensional bounds, non-2D combined transforms and custom
+scene cameras are unsupported.
+
+## Contracts and design
+
+FX reads geometry through public JavaFX APIs and publishes framework-free,
+immutable scalar records. Provider calls never schedule or wait for FX.
+Component is stable on live nodes/windows, including sensitive controls; it is
+absent on the application root and inert failed projections. A sensitive node
+other than a password field publishes the box of its nearest non-sensitive
+observed ancestor (or the scene viewport), never its own content-sized bounds;
+password fields keep their content-independent layout box. Password text,
+caret and skin nodes remain unobserved. Existing facade APIs and model
+constructors remain compatible.
+
+GetExtents(u)->(iiii), GetPosition(u)->ii, GetSize()->ii and Contains(iiu)->b
+follow the upstream Component XML. GetLayer (WINDOW for frames, WIDGET otherwise),
+GetMDIZOrder (-1) and GetAlpha (1.0) are constants. Other Component methods
+return NotSupported.
+Use JavaFX logical coordinates without output-scale multiplication. WINDOW
+includes Scene.x/y; frame WINDOW origin is (0,0), with window dimensions.
+SCREEN is derived at query time from a node's unrounded WINDOW extent plus its
+frame's window.x/y origin, so a window move re-projects only the frame. PARENT subtracts
+the accessible parent's un-inherited-clipped bounding origin, in WINDOW axes;
+a scene root uses the window origin. A frame's application parent has no
+geometry, so frame PARENT is unsupported. Coordinate systems have independent
+availability. Round edges outward, preserving empty dimensions; GetSize uses
+WINDOW and rounding can cause a one-unit difference between systems. Contains
+uses the same integer rectangle, with right/bottom edges excluded.
+
+Intersect axis-aligned visual bounds with rectangular clip bounds and scene
+viewport before rounding. Curved/rotated clips are bounding-box approximations,
+not visual hit tests. Regions/controls use external layout bounds, avoiding
+skin/content invalidations and excluding effects; other nodes use local visual
+bounds. Hidden/minimized nodes have unavailable bounds; completely
+clipped nodes have known empty bounds. Contains is false for both; bounds reads
+on unavailable coordinates return NotSupported. Unsupported coordinate frames
+return NotSupported, unknown uint32 types return InvalidArgs. Never manufacture
+(0,0), clamp overflow or expose previous geometry as current.
+
+Deduplicate inherited invalidations until flush. Per-flush identity caches share
+ancestor clipping/origin work, with O(live targets) retention and deterministic
+clearing of target references (map backing arrays reuse high-water capacity).
+Identity lookups are expected O(1); ancestor clips are computed once per flush.
+Public JavaFX transform-read cost may depend on tree depth and is measured rather
+than assumed constant. Output scale is neither read nor observed. Observe only live exported targets and their clip objects. Dispose
+subscriptions on clip/scene replacement, exclusion, detach and close. No timers,
+periodic traversal or forced CSS/layout. Publish the latest observed layout;
+tests wait for layout before comparison. Emit one BoundsChanged per touched id
+in each provider publication: for a frame when its SCREEN bounds change, for
+other nodes when their WINDOW bounds change, carrying the valid SCREEN bounds.
+
+Derive SCREEN by one outward rounding after adding the frame origin to the
+unrounded WINDOW extent, not from differences of transformed bounding minima:
+the latter can introduce an extra pixel after outward rounding of
+rotated/clipped geometry. Region layout bounds also prevent
+indirect invalidations from password skins and excluded child content.
+
+## Limits and failure modes
+
+Reject non-finite/unrepresentable rectangles per coordinate system. Native
+uint32 extraction uses the correct typed GLib getter; temporary child variants
+are released in finally on the provider owner. No new retained invocations,
+queues, arenas or native registrations beyond the Component interface. Reuse
+existing sanitized errors, stale-reference and lifecycle contracts.
+
+The independent QA client owns its disposable fixture process. A failed event
+deregistration (exception or false result) must still terminate and reap that
+process with the existing bounded kill fallback. Record a failed verdict and
+only the cleanup exception type in results.json, preserving any earlier failure.
+
+## Acceptance and verification
+
+PR #40 verification follow-up: retain the 13 original native cases and add
+short/long sensitive-content and container-resize checkpoints, verifying substitute
+and password boxes without retaining contents. Classify bounded BoundsChanged
+events by phase/object: pure window moves must update descendant SCREEN queries
+while only the frame emits bounds events. Native WM notifications need not map
+one-to-one to provider publications; do not require the historical event count.
+Compare clean 8f78da7 and the QA follow-up with the unchanged dispatch profile
+(30 runs each), preserving valid tails and all invalid attempts. A failed budget
+remains failed; ready-for-review status is not an exception or merge approval.
+
+Unit tests cover rounding, overflow, empty/unknown coordinates, schema/cache,
+events and unsigned native decoding. FX/private-bus tests cover transforms,
+ancestor/own clip changes, hidden/minimized state, reparenting, replacement,
+privacy, disposal and concurrent reads during modal actions. A separate lab
+mode and bounded independent libatspi client compare post-layout FX reference
+rectangles with remote results. Verify actual backend and tested scales/screens
+on Fedora/GNOME/Wayland; unavailable native-Wayland/mixed-monitor cases remain
+explicit gaps. Run focused checks then ./gradlew check under JDK 27. Exercise
+minimization recovery through public hide/setIconified/show peer remapping in one
+batch, preserving identity without requiring a WM to honor a restore request. Compare
+before/after clean revisions using the existing dispatch profile; no smoke-based
+performance claims. Actual commands/results belong in docs/verification/issue-9.md.
+
+PR #40 latency follow-up: retain the original valid outliers and diagnose FX,
+rendering and GC waits separately. Avoid materializing JavaFX global-transform
+properties just to establish the ordinary 2D case; memoize ancestor checks within
+the flush, retaining the existing global check for possible 3D cancellation.
+Preserve geometry, invalidation and disposal behavior. Qualification uses an
+unchanged `dispatch` workload on a clean commit, five paired runs per size, no
+profiling instrumentation or overlapping builds. Every bridge-on run must meet
+the existing SC-01 dirty-10 provisional budgets: p99 41/29/307 ms, allocation
+116/299/8,844 KiB/sample, idle CPU 8/14/137 percent of one core, and idle RSS
+327/434/1,590 MiB at 100/1,000/10,000 nodes. Valid outliers are not retried or
+excluded; a failed cell keeps the performance gate open. This focused gate does
+not qualify dirty-1/100, churn, other backends or stable-release performance.
+
+## Rollout and documentation
+
+PR #40 review follow-up: sensitive substitute boxes, query-time SCREEN, the
+constant Component getters and removal of output-scale observation resolve
+review findings; the frame PARENT role special case is replaced by the frame's
+null PARENT rectangle (Contains on a hidden frame is false, as for nodes).
+
+Update README/system design with units, coordinate/clip/error contracts and
+qualified environments. No new exported Java API. Reuse the issue branch and
+publish a reviewed [Issue-9] PR. Do not close the issue while mandatory
+acceptance evidence is unavailable.

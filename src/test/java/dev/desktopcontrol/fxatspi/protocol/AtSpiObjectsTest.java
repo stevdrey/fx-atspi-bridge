@@ -46,7 +46,7 @@ class AtSpiObjectsTest {
         assertEquals(List.of(P + "Accessible", P + "Action"), AtSpiObjects.interfaces(node("o2", Role.PUSH_BUTTON, true, Set.of(Capability.ACTION))));
         assertEquals(List.of(P + "Accessible", P + "Text", P + "EditableText"),
                 AtSpiObjects.interfaces(node("o3", Role.ENTRY, true, Set.of(Capability.TEXT, Capability.EDITABLE_TEXT))));
-        // A password-like field is modeled with no capabilities: only Accessible is exported.
+        // An inert field has no optional interfaces; real password controls may offer geometric Component only.
         assertEquals(List.of(P + "Accessible"), AtSpiObjects.interfaces(node("o4", Role.ENTRY, true, Set.of())));
     }
 
@@ -61,6 +61,16 @@ class AtSpiObjectsTest {
         assertTrue(button.contains("name='DoAction'") && !button.contains(P + "Text"));
         assertTrue(AtSpiObjects.xml(node("root", Role.APPLICATION, false, Set.of())).contains(P + "Application"));
         assertTrue(AtSpiObjects.cacheXml().contains(P + "Cache"));
+    }
+
+    @Test void geometricSensitiveFieldsExposeComponentWithoutTextOrActions() {
+        var field = node("password", Role.ENTRY, true, Set.of(Capability.COMPONENT));
+        assertEquals(List.of(P + "Accessible", P + "Component"), AtSpiObjects.interfaces(field));
+        var xml = AtSpiObjects.xml(field);
+        assertTrue(xml.contains("name='GetExtents'><arg direction='in' type='u'/><arg direction='out' type='(iiii)'/>"));
+        assertTrue(xml.contains("name='Contains'><arg direction='in' type='i'/><arg direction='in' type='i'/><arg direction='in' type='u'/><arg direction='out' type='b'/>"));
+        assertFalse(xml.contains(P + "Text"));
+        assertFalse(xml.contains(P + "Action"));
     }
 
     @Test void schemaIndexesIdentifyExactlyOneSchemaAndIgnorePublishedValues() {

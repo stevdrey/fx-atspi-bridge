@@ -26,7 +26,15 @@ import java.util.Set;
  */
 public record AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                              boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
-                             List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted) {
+                             List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted,
+                             Geometry geometry) {
+    /** Compatibility constructor for producers without geometry. */
+    public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
+                          boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
+                          List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted) {
+        this(id, name, role, text, editable, enabled, showing, focused, focusable, caret, ancestor, children,
+                capabilities, actionEligible, redacted, Geometry.UNAVAILABLE);
+    }
     /** Compatibility constructor for internal producers without a separate modal/policy projection. */
     public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                           boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
@@ -41,6 +49,7 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
         text = publishable(text);
         children = List.copyOf(children);
         capabilities = Set.copyOf(capabilities); // no copy when the caller already passes an immutable set
+        geometry = Objects.requireNonNull(geometry);
     }
 
     /** Longest published string, in UTF-16 units. */

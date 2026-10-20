@@ -19,6 +19,7 @@ import static dev.desktopcontrol.fxatspi.protocol.VariantText.quote;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
@@ -50,6 +51,7 @@ public final class AtSpiObjects {
         if (node.has(Capability.ACTION)) result.add(PREFIX + "Action");
         if (node.has(Capability.TEXT)) result.add(PREFIX + "Text");
         if (node.has(Capability.EDITABLE_TEXT)) result.add(PREFIX + "EditableText");
+        if (node.has(Capability.COMPONENT)) result.add(PREFIX + "Component");
         return result;
     }
 
@@ -94,6 +96,11 @@ public final class AtSpiObjects {
         for (var type : in.split(" ")) if (!type.isEmpty()) xml.append("<arg direction='in' type='").append(type).append("'/>");
         for (var type : out.split(" ")) if (!type.isEmpty()) xml.append("<arg direction='out' type='").append(type).append("'/>");
         return xml.append("</method>").toString();
+    }
+
+    /** GVariant structure, also used as the BoundsChanged variant payload. */
+    public static String rectangle(Rect bounds) {
+        return "(" + bounds.x() + ", " + bounds.y() + ", " + bounds.width() + ", " + bounds.height() + ")";
     }
 
     private static String properties(String... definitions) {
@@ -145,6 +152,23 @@ public final class AtSpiObjects {
                 .append(properties("version:u", "CharacterCount:i", "CaretOffset:i")).append(methodXml("GetText", "i i", "s")).append("</interface>");
         if (node.has(Capability.EDITABLE_TEXT)) xml.append("<interface name='").append(PREFIX).append("EditableText'>").append(properties("version:u"))
                 .append(methodXml("SetTextContents", "s", "b")).append("</interface>");
+        if (node.has(Capability.COMPONENT)) xml.append("<interface name='").append(PREFIX).append("Component'>")
+                .append(properties("version:u"))
+                .append(methodXml("Contains", "i i u", "b"))
+                .append(methodXml("GetExtents", "u", "(iiii)"))
+                .append(methodXml("GetPosition", "u", "i i"))
+                .append(methodXml("GetSize", "", "i i"))
+                .append(methodXml("GetAccessibleAtPoint", "i i u", "(so)"))
+                .append(methodXml("GetLayer", "", "u"))
+                .append(methodXml("GetMDIZOrder", "", "n"))
+                .append(methodXml("GetAlpha", "", "d"))
+                .append(methodXml("GrabFocus", "", "b"))
+                .append(methodXml("SetExtents", "i i i i u", "b"))
+                .append(methodXml("SetPosition", "i i u", "b"))
+                .append(methodXml("SetSize", "i i", "b"))
+                .append(methodXml("ScrollTo", "u", "b"))
+                .append(methodXml("ScrollToPoint", "u i i", "b"))
+                .append("</interface>");
         return xml.append("</node>").toString();
     }
 }

@@ -20,6 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
+import dev.desktopcontrol.fxatspi.model.Geometry.Extent;
+import dev.desktopcontrol.fxatspi.model.Geometry.Origin;
+import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
@@ -48,6 +52,32 @@ class SnapshotDiffTest {
         var map = new LinkedHashMap<String, AccessibleNode>();
         for (var node : nodes) map.put(node.id(), node);
         return new Snapshot(map);
+    }
+
+    private static AccessibleNode frame(double x, double y) {
+        return new AccessibleNode("f", "", Role.FRAME, "", false, true, true, false, false, 0, "root", List.of("g"),
+                Set.of(Capability.COMPONENT), true, false,
+                new Geometry(new Rect(0, 0, 100, 100), null, new Extent(0, 0, 100, 100), new Origin(x, y)));
+    }
+
+    private static AccessibleNode geometric(Rect window) {
+        var extent = window == null ? null : new Extent(window.x(), window.y(), window.x() + window.width(), window.y() + window.height());
+        return new AccessibleNode("g", "", Role.PANEL, "", false, true, true, false, false, 0, "f", List.of(),
+                Set.of(Capability.COMPONENT), false, false, new Geometry(window, null, extent, null));
+    }
+
+    @Test void aWindowMoveSignalsOnlyItsFrameAndNodesSignalWindowChangesInScreenAxes() {
+        var a = new Rect(10, 20, 30, 40);
+        var b = new Rect(11, 20, 30, 40);
+        assertEquals(List.of(new SnapshotDiff.BoundsChanged("f", new Rect(5, 0, 100, 100))),
+                SnapshotDiff.diff(tree(frame(0, 0), geometric(a)), tree(frame(5, 0), geometric(a)), List.of("f", "g")),
+                "descendants keep their WINDOW bounds, so a move is one frame event");
+        assertEquals(List.of(new SnapshotDiff.BoundsChanged("g", new Rect(16, 20, 30, 40))),
+                SnapshotDiff.diff(tree(frame(5, 0), geometric(a)), tree(frame(5, 0), geometric(b)), List.of("g")));
+        assertTrue(SnapshotDiff.diff(tree(frame(5, 0), geometric(a)), tree(frame(5, 0), geometric(null)), List.of("g")).isEmpty(),
+                "unavailable bounds are never signalled");
+        assertEquals(List.of(new SnapshotDiff.BoundsChanged("g", new Rect(15, 20, 30, 40))),
+                SnapshotDiff.diff(tree(frame(5, 0), geometric(null)), tree(frame(5, 0), geometric(a)), List.of("g")));
     }
 
     private static Snapshot parentWith(String... children) {

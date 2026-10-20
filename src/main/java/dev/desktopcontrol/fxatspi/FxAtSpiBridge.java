@@ -181,6 +181,7 @@ public final class FxAtSpiBridge implements AutoCloseable {
     boolean closeRequested() { return closed; }
     boolean observerActive() { return observer.active(); }
     long publications() { return observer.publications(); }
+    long projections() { return observer.projections(); }
     int trackedTargets() { return registry.size(); }
     /**
      * Completes after the provider thread has released all native resources, whether it stopped normally or
