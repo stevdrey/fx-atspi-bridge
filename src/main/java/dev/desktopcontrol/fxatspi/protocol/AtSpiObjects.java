@@ -18,6 +18,7 @@ package dev.desktopcontrol.fxatspi.protocol;
 import static dev.desktopcontrol.fxatspi.protocol.VariantText.quote;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.adapter.SemanticState;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
@@ -51,6 +52,7 @@ public final class AtSpiObjects {
         if (node.has(Capability.ACTION)) result.add(PREFIX + "Action");
         if (node.has(Capability.TEXT)) result.add(PREFIX + "Text");
         if (node.has(Capability.EDITABLE_TEXT)) result.add(PREFIX + "EditableText");
+        if (node.has(Capability.SELECTION)) result.add(PREFIX + "Selection");
         if (node.has(Capability.COMPONENT)) result.add(PREFIX + "Component");
         return result;
     }
@@ -64,6 +66,10 @@ public final class AtSpiObjects {
         if (node.focusable()) bits |= 1L << 11;
         if (node.role() == Role.TEXT_AREA) bits |= 1L << 17;
         if (node.role() == Role.ENTRY) bits |= 1L << 26;
+        for (var state : node.semantics().states()) bits |= 1L << switch (state) {
+            case CHECKED -> 4; case INDETERMINATE -> 32; case SELECTED -> 23; case SELECTABLE -> 22;
+            case MULTISELECTABLE -> 18; case EXPANDABLE -> 9; case EXPANDED -> 10;
+        };
         return bits;
     }
 
@@ -83,7 +89,7 @@ public final class AtSpiObjects {
         var index = root ? -1 : snapshot.get(node.ancestor()).children().indexOf(id);
         return "(" + reference(busName, id) + ", " + reference(busName, Snapshot.ROOT_ID) + ", " + ancestor + ", " + index + ", " + node.children().size()
                 + ", [" + String.join(",", interfaces(node).stream().map(VariantText::quote).toList()) + "], " + quote(node.name())
-                + ", uint32 " + node.role().atspiValue() + ", " + quote(DESCRIPTION) + ", [uint32 " + stateBits(node) + ", uint32 0])";
+                + ", uint32 " + node.role().atspiValue() + ", " + quote(DESCRIPTION) + ", [uint32 " + (stateBits(node) & 0xffffffffL) + ", uint32 " + (stateBits(node) >>> 32) + "])";
     }
 
     public static String cacheItems(Snapshot snapshot, String busName, String applicationParent) {
@@ -152,6 +158,15 @@ public final class AtSpiObjects {
                 .append(properties("version:u", "CharacterCount:i", "CaretOffset:i")).append(methodXml("GetText", "i i", "s")).append("</interface>");
         if (node.has(Capability.EDITABLE_TEXT)) xml.append("<interface name='").append(PREFIX).append("EditableText'>").append(properties("version:u"))
                 .append(methodXml("SetTextContents", "s", "b")).append("</interface>");
+        if (node.has(Capability.SELECTION)) xml.append("<interface name='").append(PREFIX).append("Selection'>")
+                .append(properties("version:u", "NSelectedChildren:i"))
+                .append(methodXml("GetSelectedChild", "i", "(so)"))
+                .append(methodXml("SelectChild", "i", "b"))
+                .append(methodXml("DeselectSelectedChild", "i", "b"))
+                .append(methodXml("DeselectChild", "i", "b"))
+                .append(methodXml("IsChildSelected", "i", "b"))
+                .append(methodXml("SelectAll", "", "b"))
+                .append(methodXml("ClearSelection", "", "b")).append("</interface>");
         if (node.has(Capability.COMPONENT)) xml.append("<interface name='").append(PREFIX).append("Component'>")
                 .append(properties("version:u"))
                 .append(methodXml("Contains", "i i u", "b"))

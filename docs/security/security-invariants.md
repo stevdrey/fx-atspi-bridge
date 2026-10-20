@@ -18,3 +18,17 @@ Target requirements, not a security certification of the prototype.
 `BridgeOptions` applies before snapshots, with runtime/null failures producing an empty inert projection. Password metadata is generic and no password values reach the redactor. Application redactors are trusted and must cover aliases in titles, labels and IDs; no automatic cross-control secret detection is claimed. Sensitivity is inherited by the observed subtree of a matching node. Sensitive/transformed text has projected offsets, zero caret and no mutation capability; one-for-one NUL replacement is not a transformation. Limits and sender settings in snapshots contain no FX objects/callbacks.
 
 Update completion is a provider reconciliation barrier, not revocation of already received data. Privacy/interface/failure changes rotate references rather than sending deleted old text. Exclusion disposes descendants and their listeners; reintroduction creates fresh identities. Admission checks stable sender, capability and redaction policy; current state (enabled, showing, modal, editable) and full policy are checked on FX after synchronization, immediately before effects. Denials are fixed AccessDenied errors. Update delivery normally completes on FX, with a five-second independent daemon fallback after the provider result (immediate on FX rejection). Public completion never runs on the provider owner. Continuations registered after completion follow standard registering-thread semantics; explicit FX scheduling is required for UI affinity. Continuations must not block. A maximum of 64 global reservations bounds delivery jobs, one per bridge; settlement cancels scheduled jobs and releases captures. Delivery failure cannot roll back a reconciled policy and is not a native-reconciliation timeout. Optional unique-name sender allowlists affect mutations only; same-session reads remain available and no authentication is claimed. Reducing action capacity never cancels admitted work or shortens its captured deadlines.
+
+## SC-08 adapter contract
+
+Adapter callbacks are trusted application code on FX, never native upcalls. PasswordField is screened before adapter
+selection; it publishes no automation ID or text. Logical children inherit owner sensitivity/exclusion and mutation
+policy. A declared real Node child passes normal policy and cannot be disguised as a logical key. Every published
+name, text, application ID and action metadata passes the central redactor and bounds. Snapshot semantics retain no
+application keys, sessions or callbacks. Duplicate IDs are checked after privacy without logging either value.
+Selection index admission captures the internal child incarnation, not an authorization-bearing application ID;
+removal rejects the queued action as stale and state/policy is rechecked before the effect. Container conflict slots,
+existing action limits/deadlines and provider-owned invocation cleanup apply to all new commands. Selection reads
+use immutable snapshots and never schedule FX work. Candidate option checks release their temporary subscriptions;
+failed candidates do not adopt options. Live collisions use controlled bridge shutdown. Expansion limits are
+recoverable through event-driven subscriptions, with no timer, unbounded executor or retry loop.

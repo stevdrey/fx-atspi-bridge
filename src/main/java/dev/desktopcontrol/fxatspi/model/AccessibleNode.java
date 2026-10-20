@@ -15,6 +15,7 @@
  */
 package dev.desktopcontrol.fxatspi.model;
 
+import dev.desktopcontrol.fxatspi.adapter.SemanticAction;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -27,7 +28,20 @@ import java.util.Set;
 public record AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                              boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
                              List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted,
-                             Geometry geometry) {
+                             Geometry geometry, Semantics semantics) {
+    /** Compatibility constructor for pre-semantic producers. */
+    public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
+                          boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
+                          List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted,
+                          Geometry geometry) {
+        this(id,name,role,text,editable,enabled,showing,focused,focusable,caret,ancestor,children,capabilities,
+                actionEligible,redacted,geometry,capabilities.contains(Capability.ACTION)
+                ? new Semantics("", List.of(new SemanticAction("click", "Activate button", "")), Set.of(), false) : Semantics.EMPTY);
+    }
+    public AccessibleNode semantics(Semantics value) {
+        return new AccessibleNode(id,name,role,text,editable,enabled,showing,focused,focusable,caret,ancestor,children,
+                capabilities,actionEligible,redacted,geometry,value);
+    }
     /** Compatibility constructor for producers without geometry. */
     public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                           boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
@@ -50,6 +64,7 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
         children = List.copyOf(children);
         capabilities = Set.copyOf(capabilities); // no copy when the caller already passes an immutable set
         geometry = Objects.requireNonNull(geometry);
+        semantics = Objects.requireNonNull(semantics);
     }
 
     /** Longest published string, in UTF-16 units. */

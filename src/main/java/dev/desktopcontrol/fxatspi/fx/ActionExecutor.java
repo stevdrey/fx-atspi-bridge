@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi.fx;
 
 import dev.desktopcontrol.fxatspi.BridgeOptions;
+import dev.desktopcontrol.fxatspi.adapter.AdapterCommand;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
@@ -39,12 +40,34 @@ import javafx.stage.Window;
  */
 public final class ActionExecutor implements ActionPort {
     private final TargetRegistry registry;
+    private SceneObserver observer;
 
     private final Supplier<BridgeOptions> options;
     private final BiPredicate<String, Capability> projection;
     public ActionExecutor(TargetRegistry registry) { this(registry, BridgeOptions::defaults, (id, capability) -> true); }
     public ActionExecutor(TargetRegistry registry, Supplier<BridgeOptions> options, BiPredicate<String, Capability> projection) {
         this.registry = registry; this.options = options; this.projection = projection;
+    }
+    public ActionExecutor(TargetRegistry registry, SceneObserver observer) {
+        this(registry, observer::options, observer::permits); this.observer = observer;
+    }
+    @Override public boolean selectionTargetEligible(String parent, String child) {
+        if (observer == null) return true;
+        var owner = observer.ownerFor(child);
+        return owner != null && policy(owner,Capability.SELECTION) && observer.selectable(parent,child);
+    }
+    @Override public boolean selectionSetEligible(String parent, boolean clear) {
+        if (observer == null) return true;
+        for (var child : observer.selectionChildren(parent,clear)) if (!selectionTargetEligible(parent,child)) return false;
+        return true;
+    }
+    @Override public boolean execute(String id, AdapterCommand command, String childId) {
+        if (observer == null || !observer.adapted(id)) return ActionPort.super.execute(id,command,childId);
+        var capability = command instanceof AdapterCommand.SetText ? Capability.EDITABLE_TEXT
+                : command instanceof AdapterCommand.Activate ? Capability.ACTION : Capability.SELECTION;
+        var owner = observer.ownerFor(id);
+        if (owner == null || !eligible(owner) || !policy(owner,capability) || !observer.permits(id,capability)) return false;
+        return observer.execute(id,command,childId);
     }
     @Override public boolean isLive(String id) { return registry.target(id) != null; }
     @Override public boolean permits(String id, String sender, Capability capability) {
@@ -59,7 +82,7 @@ public final class ActionExecutor implements ActionPort {
             // Exclusion and sensitivity both cover the whole subtree below a matching node.
             for (var ancestor = node; ancestor != null; ancestor = ancestor.getParent())
                 if (current.excludedNodes().test(ancestor) || current.sensitiveNodes().test(ancestor)) return false;
-            return capability == Capability.ACTION ? current.pressAllowed().test(node) : current.textWriteAllowed().test(node);
+            return capability != Capability.EDITABLE_TEXT ? current.pressAllowed().test(node) : current.textWriteAllowed().test(node);
         } catch (RuntimeException failure) { return false; }
     }
 

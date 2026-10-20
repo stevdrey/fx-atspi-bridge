@@ -76,3 +76,28 @@ new valid SCREEN rectangle, for frames when it changes and for other nodes when 
 [SC-09](../specs/issue-9.md) and the README for units, clipping, unavailable/error and backend contracts.
 
 Preserve legacy `install()` and `install(Consumer<String>)`; add options through additive API. Keep internal AT-SPI object paths distinct from application-defined stable automation IDs; reject/report duplicates deterministically. IDs are not authorization. Adapt `AccessibleRole`, query/accessibility actions where suitable through public APIs; verify each control's semantics rather than assuming universal support. Custom adapters must define properties, supported actions, listener disposal, redaction and threading. Table/tree virtualization needs logical item identity, lazy bounded exposure and separate qualification.
+
+### SC-08 implemented contract
+
+The public adapter package contains FX-only sessions/projections/child factories and typed commands. Node/Window
+observation remains incremental; custom adapters precede builtins and PasswordField bypasses adapter selection.
+Logical child wrappers are identity-based and held only by the FX registry/observer; published Semantics contains
+sanitized strings, action metadata and state enums only. Application IDs are distinct from internal incarnations;
+a change-driven index validates touched IDs as a batch (old entries removed before new entries inserted).
+AutomationIds notifies the live bridge through a bounded FX-only internal port without allocating property maps or
+listeners for ordinary nodes with no ID. Lifecycle disposal unregisters that port. Candidate option preflight owns
+and disposes a temporary observer without changing native state; duplicates reject the candidate. Live duplicate
+collisions stop both owners through normal nonblocking cleanup.
+
+Adapters own at most 256 tracked observables/cleanup jobs each. Per-collection limits default to 1000 (1..10000),
+with 10000 total logical targets and depth 64. Expansion errors/cycles/capacity failures publish an inert root and
+release descendants. Existing root subscriptions permit recovery on a future batch; there is no periodic retry.
+List occurrence tokens follow public list-change permutations, not value equality. Selection captures an internal
+child reference at admission and resolves its application key only after FX synchronization and policy checks.
+Provider conflict ownership is derived from immutable ancestry; no registry read occurs on the provider owner.
+Menus, tabs and context menus inherit owner policy; declared real Node children additionally use their own policy.
+No additional native queues, arenas, timers or invocation ownership are introduced.
+Standalone ContextMenu owners sit outside the popup's exported ancestry. Their owner Node/Window properties are
+observed; on a changed batch, only live standalone popup expansions are revalidated for inclusion and owner policy.
+A sensitive/excluded/password anchor removes the whole popup, including content-sized Window geometry. Popup
+revalidation introduces no work for idle scenes and never scans the ordinary scene tree.

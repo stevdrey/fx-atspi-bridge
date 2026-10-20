@@ -1,0 +1,9 @@
+{
+  "command": "./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon",
+  "jdk": "Zulu 27+35",
+  "javafx": "27",
+  "tests": 226,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0
+}

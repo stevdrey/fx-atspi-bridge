@@ -15,10 +15,14 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import dev.desktopcontrol.fxatspi.adapter.ControlAdapter;
+import java.util.List;
 import java.util.Objects;
+import java.util.function.BiFunction;
 import java.util.Set;
 import java.util.function.Predicate;
 import javafx.scene.Node;
+import javafx.scene.control.Control;
 import javafx.stage.Window;
 
 /**
@@ -29,7 +33,7 @@ import javafx.stage.Window;
  */
 public final class BridgeOptions {
     /** Source of a published string. */
-    public enum ContentKind { APPLICATION_NAME, WINDOW_NAME, NODE_NAME, NODE_TEXT }
+    public enum ContentKind { APPLICATION_NAME, WINDOW_NAME, NODE_NAME, NODE_TEXT, AUTOMATION_ID, ACTION_METADATA }
     /**
      * Transforms a publishable value. Never receives password names, contents or caret values.
      * Null/throwing results fail closed. Results are bounded to 32,768 UTF-16 units without splitting a pair.
@@ -44,6 +48,9 @@ public final class BridgeOptions {
     private static final Redactor DEFAULT_REDACTOR = (kind, sensitive, value) -> sensitive
             ? kind == ContentKind.NODE_NAME ? "[redacted]" : "" : value;
     private static final BridgeOptions DEFAULTS = new BridgeOptions(new Builder());
+    private final List<ControlAdapter<?>> adapters;
+    private final int maxSemanticChildren;
+    private final BiFunction<Control, Object, String> itemTextProvider;
     private final String applicationName;
     private final Predicate<Window> includedWindows;
     private final Predicate<Node> excludedNodes, sensitiveNodes, pressAllowed, textWriteAllowed;
@@ -52,6 +59,11 @@ public final class BridgeOptions {
     private final ActionLimits actionLimits;
 
     private BridgeOptions(Builder builder) {
+        adapters = List.copyOf(builder.adapters);
+        if (adapters.size() > 64) throw new IllegalArgumentException("Too many adapters");
+        maxSemanticChildren = builder.maxSemanticChildren;
+        if (maxSemanticChildren < 1 || maxSemanticChildren > 10000) throw new IllegalArgumentException("Invalid semantic child limit");
+        itemTextProvider = builder.itemTextProvider;
         applicationName = Objects.requireNonNull(builder.applicationName, "applicationName");
         if (applicationName.length() > 32768) throw new IllegalArgumentException("Application name exceeds limit");
         includedWindows = Objects.requireNonNull(builder.includedWindows, "includedWindows");
@@ -74,6 +86,10 @@ public final class BridgeOptions {
     public static Builder builder() { return new Builder(); }
     public static BridgeOptions defaults() { return DEFAULTS; }
     public Builder toBuilder() { return new Builder(this); }
+    public List<ControlAdapter<?>> adapters() { return adapters; }
+    public int maxSemanticChildren() { return maxSemanticChildren; }
+    /** Null uses Strings/converters and generic positional names; callbacks belong to FX. */
+    public BiFunction<Control, Object, String> itemTextProvider() { return itemTextProvider; }
     public String applicationName() { return applicationName; }
     public Predicate<Window> includedWindows() { return includedWindows; }
     public Predicate<Node> excludedNodes() { return excludedNodes; }
@@ -87,6 +103,9 @@ public final class BridgeOptions {
     public Redactor redactor() { return redactor; }
     /** Builder retains callbacks, not their results. No callback runs while building options. */
     public static final class Builder {
+        private List<ControlAdapter<?>> adapters = List.of();
+        private int maxSemanticChildren = 1000;
+        private BiFunction<Control, Object, String> itemTextProvider;
         private String applicationName = "JavaFX AT-SPI Lab";
         private Predicate<Window> includedWindows = ALL_WINDOWS;
         private Predicate<Node> excludedNodes = NO_NODES, sensitiveNodes = NO_NODES,
@@ -96,11 +115,15 @@ public final class BridgeOptions {
         private ActionLimits actionLimits = ActionLimits.defaults();
         private Builder() {}
         private Builder(BridgeOptions options) {
+            adapters = options.adapters; maxSemanticChildren = options.maxSemanticChildren; itemTextProvider = options.itemTextProvider;
             applicationName = options.applicationName; includedWindows = options.includedWindows;
             excludedNodes = options.excludedNodes; sensitiveNodes = options.sensitiveNodes;
             pressAllowed = options.pressAllowed; textWriteAllowed = options.textWriteAllowed;
             redactor = options.redactor; actionSenders = options.actionSenders; actionLimits = options.actionLimits;
         }
+        public Builder adapters(List<ControlAdapter<?>> value) { adapters = List.copyOf(value); return this; }
+        public Builder maxSemanticChildren(int value) { maxSemanticChildren = value; return this; }
+        public Builder itemTextProvider(BiFunction<Control, Object, String> value) { itemTextProvider = Objects.requireNonNull(value); return this; }
         public Builder applicationName(String value) { applicationName = value; return this; }
         public Builder includedWindows(Predicate<Window> value) { includedWindows = value; return this; }
         public Builder excludedNodes(Predicate<Node> value) { excludedNodes = value; return this; }

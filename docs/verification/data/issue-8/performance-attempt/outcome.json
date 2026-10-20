@@ -1,0 +1,9 @@
+{
+  "status": "Rejected by unchanged SC-01 validation guard",
+  "firstCell": "n100-d10-off-r1",
+  "processExitCode": 3,
+  "completedValidCells": 0,
+  "bridgeInstalledInRejectedCell": false,
+  "usablePerformanceComparison": false,
+  "remaining": "Repeat the paired collection with the benchmark window visible and the compositor unthrottled; do not use this rejected attempt as timing evidence."
+}

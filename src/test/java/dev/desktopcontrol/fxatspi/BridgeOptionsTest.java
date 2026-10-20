@@ -56,4 +56,11 @@ class BridgeOptionsTest {
         assertThrows(NullPointerException.class, () -> BridgeOptions.builder().actionLimits(null).build());
         assertThrows(IllegalArgumentException.class, () -> BridgeOptions.builder().applicationName("a".repeat(32769)).build());
     }
+    @Test void semanticLimitsAreValidatedAndCopied() {
+        assertEquals(1000,BridgeOptions.defaults().maxSemanticChildren());
+        assertEquals(17,BridgeOptions.builder().maxSemanticChildren(17).build().toBuilder().build().maxSemanticChildren());
+        assertThrows(IllegalArgumentException.class,() -> BridgeOptions.builder().maxSemanticChildren(0).build());
+        assertThrows(IllegalArgumentException.class,() -> BridgeOptions.builder().maxSemanticChildren(10001).build());
+    }
+
 }
