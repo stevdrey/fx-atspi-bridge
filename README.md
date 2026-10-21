@@ -197,10 +197,17 @@ exported through another adapter. Additional physical subscriptions are shared a
 Geometry is unavailable when the source node belongs to a different window from its exported semantic frame.
 Independent ContextMenus on adapted controls remain exported; only identified represented popups are suppressed.
 A still-showing standalone menu excluded through its observed anchor's sensitivity is reconsidered when the anchor changes.
+For menus shown with a Window owner and no ownerNode, the owner Scene's root is the policy/action anchor. A protected
+or undetermined anchor excludes the whole popup, including its content-sized geometry; owner Scene/root changes are observed.
+All exported children inherit their semantic parent's effective enabled/showing state, including real Nodes and ordinary
+descendants. Unavailable descendants remain discoverable with stable references, but remote mutations are denied and
+hidden geometry is unavailable. Failed ancestors also block descendant mutations.
 
 Call `context.observe(observable)` for subscriptions or `context.invalidate()` for an application event on FX.
 Use `context.onDispose(cleanup)` for additional resources. The bridge removes subscriptions and runs cleanup even
 if opening a session fails; session close is called once on removal, exclusion, adapter replacement or shutdown.
+Adapter registration changes compare reference identities in order, without calling application equals/hashCode.
+Distinct equal instances or reordered references replace sessions; the same instances in the same order preserve them.
 All callbacks must be fast and nonblocking. Adapters are trusted application code; central redaction, sender policy,
 state/modality checks and bounded admission apply to every adapter. A `PasswordField` session is never opened.
 

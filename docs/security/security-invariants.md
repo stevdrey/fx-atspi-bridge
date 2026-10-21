@@ -53,3 +53,10 @@ including retirement of already-exported physical aliases; never steal the share
 ordinary physical traversal. Partial reservations follow actual descriptor/session/owner disposal and recovery.
 After central redaction, automation IDs allow empty suppression but reject nonempty blank or oversized output before
 uniqueness indexing. Such output uses the fixed empty/inert projection path rather than collision-driven shutdown.
+
+Window-owned ContextMenus resolve their anchor from ownerNode or ownerWindow.scene.root; a missing or protected
+anchor excludes the popup window and its geometry. Shared real-child observations rebind on owner Scene/root changes.
+Adapter replacement uses ordered reference identity, never application equals/hashCode, and disposes old/provisional
+sessions through their existing ownership paths. Effective enabled/showing propagates through every exported edge,
+including real/generic descendants. Project dirty ancestors first, reuse sanitized parent state, and deny observer-backed
+generic activation/text mutation as well as adapter commands when the effective projection is unavailable.

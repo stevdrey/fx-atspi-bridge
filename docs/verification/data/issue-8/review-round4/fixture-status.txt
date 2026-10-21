@@ -1,0 +1,3 @@
+FX AT-SPI Lab ready: :1.26 /org/a11y/atspi/accessible/root
+AT-SPI2 listo: controles publicados sin sudo ni capturas.
+Error AT-SPI: duplicate automation ID

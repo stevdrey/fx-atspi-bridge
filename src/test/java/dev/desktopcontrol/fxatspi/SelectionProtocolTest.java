@@ -68,11 +68,20 @@ class SelectionProtocolTest {
             public boolean press(String id) { return false; }
             public boolean setText(String id,String value) { return false; }
             public boolean isLive(String id) { return current.get().get(id) != null; }
+            public boolean permits(String id,String sender,Capability capability) {
+                var item = current.get().get(id); return item != null && item.permits(capability);
+            }
             public long actionRevision(String id) { return current.get().get(id).semantics().actionRevision(); }
             public boolean selectionTargetEligible(String parent,String child) { return eligible.get(); }
             public boolean selectionSetEligible(String parent,boolean clear) { return eligible.get(); }
             public boolean execute(String id,AdapterCommand command,String childId) {
-                effect.set(command instanceof AdapterCommand.Activate(var index) ? "action-" + index : childId); return true;
+                effect.set(switch (command) {
+                    case AdapterCommand.Activate(var index) -> "action-" + index;
+                    case AdapterCommand.SetText(var value) -> "text-" + value;
+                    case AdapterCommand.SelectAll _ -> "select-all";
+                    case AdapterCommand.ClearSelection _ -> "clear";
+                    default -> childId;
+                }); return true;
             }
         };
         provider = new AtSpiProvider(_ -> {},current::get,port,_ -> bus.address(),false,tasks::add);
@@ -179,5 +188,57 @@ class SelectionProtocolTest {
             actions(1,List.of("A","B"),"After"); work.run();
             assertEquals("(true,)",output(process)); assertEquals("action-1",effect.get());
         } finally { process.destroyForcibly(); }
+    }
+
+    private static AccessibleNode availability(AccessibleNode item, boolean enabled, boolean showing) {
+        return new AccessibleNode(item.id(),item.name(),item.role(),item.text(),item.editable(),enabled,showing,item.focused(),
+                item.focusable(),item.caret(),item.ancestor(),item.children(),item.capabilities(),enabled && showing,
+                item.redacted(),item.geometry(),item.semantics());
+    }
+    private void unavailable(boolean hidden) {
+        var nodes = new HashMap<>(current.get().nodes());
+        nodes.put("list",availability(nodes.get("list"),hidden,!hidden)); current.set(new Snapshot(nodes));
+    }
+
+    @Test void queuedActionsAndTextWritesDenyEffectiveUnavailabilityWithoutEffects() throws Exception {
+        for (var hidden : List.of(false,true)) {
+            actions(1,List.of("A"),"Owner");
+            var process = request("list","org.a11y.atspi.Action.DoAction","0");
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work); unavailable(hidden); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+            } finally { process.destroyForcibly(); }
+            var nodes = new HashMap<>(snapshot(List.of()).nodes());
+            nodes.put("list",new AccessibleNode("list","Editor",Role.ENTRY,"Initial",true,true,true,false,false,0,
+                    "root",List.of(),Set.of(Capability.TEXT,Capability.EDITABLE_TEXT)));
+            current.set(new Snapshot(nodes)); provider.refresh();
+            var deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(5); var ready = false;
+            while (System.nanoTime()<deadline) if (output(request("list","org.freedesktop.DBus.Introspectable.Introspect")).contains("SetTextContents")) {
+                ready=true; break;
+            }
+            assertTrue(ready);
+            process = request("list","org.a11y.atspi.EditableText.SetTextContents","Forbidden");
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work); unavailable(hidden); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+            } finally { process.destroyForcibly(); }
+        }
+    }
+
+    @Test void queuedSelectionAndBulkDenyUnavailableSemanticContainer() throws Exception {
+        for (var method : List.of("SelectChild","SelectAll","ClearSelection")) {
+            current.set(snapshot(List.of("a","b"))); provider.refresh();
+            var deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(5); var ready = false;
+            while (System.nanoTime()<deadline) if (output(request("list","org.freedesktop.DBus.Introspectable.Introspect")).contains("SelectChild")) {
+                ready=true; break;
+            }
+            assertTrue(ready);
+            var process = method.equals("SelectChild") ? request("list","org.a11y.atspi.Selection."+method,"0")
+                    : request("list","org.a11y.atspi.Selection."+method);
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work); unavailable(true); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+            } finally { process.destroyForcibly(); }
+        }
     }
 }

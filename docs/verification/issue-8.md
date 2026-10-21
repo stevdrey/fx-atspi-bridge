@@ -252,6 +252,8 @@ issue-1/issue-16 verification changes remain outside this patch.
 
 ## PR #41 — third review round (four comments)
 
+This section records the follow-up published at `d3eafc7`; the fourth review round is recorded below.
+
 The follow-up to `a674526` reserves all nonconflicting declared real Nodes before rejecting a semantic owner
 collision. The existing owner keeps the shared Node; the failing expansion remains empty/inert and retires physical
 aliases of its other reserved Nodes, including previously published aliases. Partial reservations use the existing
@@ -288,3 +290,49 @@ press-disallowed controls. No timeout, privacy rule or resource limit was weaken
 hashes. Desktop results and fixed fixture status are retained alongside it; JavaFX test fixtures terminated before
 the independent QA run. Historical performance evidence remains attached to its recorded revision; no quick/full
 matrix or memory characterization was repeated, and no benchmark budget was changed. Local #1/#16 changes are excluded.
+
+## PR #41 — fourth review round (three comments)
+
+The follow-up to `d3eafc7` centralizes ContextMenu anchoring on ownerNode, falling back to ownerWindow.scene.root.
+Protected or undetermined anchors exclude the entire popup, including its content-sized geometry. Authorization and
+shared real-child observations use the same anchor, with subscriptions rebound on owner Scene/root changes. Observed
+sensitivity changes recover still-showing popups; excluded content retains the explicit updateOptions reinclusion contract.
+Adapter registrations now compare ordered reference identities, without application equals/hashCode. Distinct equal
+instances or reordered references use existing replacement/disposal/reference renewal; identical registrations preserve sessions.
+
+All exported children now inherit effective enabled/showing from their sanitized parent record, including real adapted
+Nodes, ordinary Button/TextField descendants and mixed logical/real chains. Dirty ancestors project first; availability
+changes invalidate direct children, reusing the model instead of reading ancestor sessions for every descendant. Failed
+ancestors leave descendants inert. Ordinary availability changes preserve references and interfaces, govern hidden
+geometry and block observer-backed generic activation/text mutation as well as existing adapter/selection paths.
+Public APIs and the action coordinator are unchanged; registry-only executors retain their previous behavior.
+
+Actual final checks:
+
+- `./gradlew test --tests '*SemanticObserverTest' --tests '*SceneObserverTest' --tests '*ActionExecutorTest' --tests '*SelectionProtocolTest' --no-daemon` — **Passed**, 92 focused FX/protocol regressions.
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 258 Java/native tests, zero failures/errors/skips. The invalid-signal native failure-path test emits its expected fixed GLib diagnostic. Actual suites, counts and FX/protocol test names are in `review-round4/java-check.json`.
+- `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip; rerun after the final probe change.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-review-round4-final-qa` — **Passed**, 22 independent libatspi scenarios on Fedora 44 / GNOME / Wayland, libatspi 2.60.7. All previous 19 scenarios remain enabled. New cases verify a Window-owned popup's geometry, sensitivity exclusion and observed recovery; real-child inherited enabled/showing and individual/bulk selection denial/recovery; and replacement of a distinct equal consumer-module adapter with a renewed reference. Two Unicode caret events were received.
+
+The popup FX regressions cover null ownerNode, root sensitivity/exclusion/password protection, missing scene, root and
+whole-Scene replacement, recovery, privacy-safe reference retirement/events and real popup children exported through
+another adapter. Removal and close release the extra shared subscriptions. Adapter regressions distinguish preflight
+opens/closes/disposals from live sessions, test equal-instance reorder and replacement, hostile equals/hashCode, same-order
+no-op updates and retired-listener cleanup. Availability regressions dirty a child before its parent, cover mixed real/
+logical/ordinary descendants, events, geometry, stable references, generic and adapted action/text effects, selection and
+bulk denial, failed-ancestor recovery and zero work on unchanged synchronization. Private-bus regressions hold actions,
+text writes and individual/bulk selection before execution, then revoke effective availability and assert AccessDenied
+with no effect and balanced native ownership.
+
+One development popup test exposed JavaFX PopupWindow.hide's failure when its owner Scene is null during teardown;
+the fixture now restores an empty Scene after asserting missing-anchor exclusion. An initial desktop attempt reached
+the new adapter case before its asynchronous updateOptions completion message. An isolated diagnostic confirmed the
+replacement and renewed reference; the probe now awaits that explicit completion with a five-second bound. The final
+complete run passed with unchanged runtime code and effect assertions. The initial desktop outcome is retained in
+`review-round4/development-attempt.json`. No application timeout, privacy rule or resource limit was weakened.
+
+`review-round4/environment.json` pins base commit `d3eafc7`, final main/test/probe source hashes and installed JAR hashes;
+every recorded hash matched the tested files. Desktop results and fixed fixture status are retained alongside it, covered
+by the updated evidence manifest. JavaFX test fixtures terminated before independent desktop QA. The earlier performance
+collections remain evidence only for their recorded revisions; no complete quick/full matrix or memory characterization
+was repeated, and no budget changed. Existing local #1/#16 verification changes are preserved outside this patch.

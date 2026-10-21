@@ -100,3 +100,23 @@ Acceptance covers mixed conflicting/free claims and physical traversal orders, s
 snapshots/events/IDs/geometry, recovery/disposal, blank-ID redaction and boundary values, dynamic menu names, both split
 actions and disabled/hidden/sensitive/modal denials. Extend consumer-module demo and independent libatspi QA; run focused,
 full Java and Python checks, preserve historical benchmarks and local #1/#16 changes, then publish/verify CI/reply/resolve.
+
+### Fourth PR #41 review follow-up
+
+ContextMenu resolves its privacy/action anchor from ownerNode, or from ownerWindow.scene.root when no ownerNode exists.
+Exclude the whole popup, including geometry, for an excluded/sensitive/password anchor or an undetermined anchor.
+Use the same resolver for policy and shared physical observations, rebinding on owner scene/root changes. Sensitivity
+recovers from observed properties; reinclusion after exclusion retains the updateOptions contract.
+Compare adapter registrations by reference identity in list order, without calling application equals/hashCode.
+Distinct instances or reordered references replace sessions; the same identities/order preserve them. Preflight
+sessions remain separately owned and disposed, and replacement keeps the existing reference renewal contract.
+Every exported descendant inherits effective enabled/showing from its parent, including real adapted Nodes, ordinary
+Buttons/TextFields and their children. Project pending ancestors first and propagate availability changes through
+direct children using the current sanitized model, not repeated session reads. Failed ancestors make descendants
+inert; ordinary availability changes preserve references/interfaces and govern geometry and action eligibility.
+Observer-backed generic activation/text writes must also enforce the effective permission; registry-only executors
+keep their existing contract. No public API or action-coordinator changes.
+Acceptance includes Window-owned popups with null ownerNode, scene/root and privacy transitions, equal/hostile-equals
+adapter replacement/reorder/no-op updates and cleanup, mixed descendants, availability events, queued actions/text/
+selection and bulk denial/recovery. Run focused/full Java, Python and expanded independent libatspi QA; preserve
+historical benchmarks and local #1/#16 files, then publish, await CI, reply and resolve the three threads.

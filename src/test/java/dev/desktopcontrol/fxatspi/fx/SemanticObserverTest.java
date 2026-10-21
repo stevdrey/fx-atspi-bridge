@@ -56,6 +56,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Control;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.TextField;
@@ -955,6 +956,199 @@ class SemanticObserverTest {
             assertFalse(h.actions.execute(h.registry.targetId(split),new AdapterCommand.Activate(0),null));
             assertFalse(h.actions.execute(h.registry.targetId(split),new AdapterCommand.Activate(1),null));
             assertEquals(0,fired.get());
+        } return null;
+    }); }
+
+    @Test void windowOwnedPopupUsesOwnerSceneRootPrivacyAndRecoversSafely() throws Exception { fx(() -> {
+        var button = new Button("Anchor");
+        var options = BridgeOptions.builder().sensitiveNodes(node -> "sensitive-root".equals(node.getId()))
+                .excludedNodes(node -> "excluded-root".equals(node.getId())).build();
+        var popup = new ContextMenu(new MenuItem("SC08_SECRET_WINDOW_MENU")); AutomationIds.set(popup,"SC08_SECRET_POPUP_ID");
+        popup.setAutoHide(false);
+        try (var h = new Harness(options,button)) {
+            var window = (Stage) button.getScene().getWindow(); var scene = window.getScene(); var root = scene.getRoot();
+            root.setId("sensitive-root");
+            popup.show(window,window.getX()+20,window.getY()+20); h.flush();
+            assertEquals(null,popup.getOwnerNode()); assertTrue(popup.isShowing());
+            assertFalse(h.snapshot.toString().contains("SC08_SECRET")); assertEquals(null,h.registry.targetId(popup));
+            root.setId(null); h.flush(); assertNotNull(h.registry.targetId(popup));
+            assertNotEquals(Geometry.UNAVAILABLE,h.snapshot.get(h.registry.targetId(popup)).geometry());
+            var before = h.snapshot; var old = h.registry.targetId(popup);
+            root.setId("excluded-root"); h.flush(); assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+            assertFalse(h.actions.isLive(old)); assertEquals(null,h.registry.targetId(popup));
+            assertFalse(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream()
+                    .anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+            root.setId(null); h.observer.updateOptions(options,1); h.flush(); assertNotNull(h.registry.targetId(popup));
+            var password = new PasswordField(); password.setText("SC08_SECRET_PASSWORD_ROOT");
+            scene.setRoot(password); h.flush(); assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+            assertEquals(null,h.registry.targetId(popup));
+            scene.setRoot(new VBox(button)); h.flush(); assertNotNull(h.registry.targetId(popup));
+            var replacement = new VBox(); replacement.setId("sensitive-root");
+            window.setScene(new Scene(replacement,400,300)); h.flush();
+            assertFalse(h.snapshot.toString().contains("SC08_SECRET")); assertEquals(null,h.registry.targetId(popup));
+            replacement.setId(null); h.flush(); assertNotNull(h.registry.targetId(popup));
+            window.setScene(null); h.flush(); assertEquals(null,h.registry.targetId(popup));
+            window.setScene(new Scene(new VBox(),400,300)); // JavaFX popup input-method cleanup requires an owner Scene.
+            popup.hide(); h.flush(); h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+        } return null;
+    }); }
+
+    @Test void realPopupChildrenRebindOwnerWindowSceneRootObservations() throws Exception { fx(() -> {
+        var source = new Stage(); var original = new VBox(new Button("Source"));
+        source.setScene(new Scene(original,300,200)); source.show();
+        var field = new TextField("SC08_SECRET_POPUP_CHILD"); field.setAccessibleText("Popup child");
+        var popup = new ContextMenu(new CustomMenuItem(field,false)); popup.setAutoHide(false);
+        popup.show(source,source.getX()+20,source.getY()+20);
+        var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .sensitiveNodes(node -> "sensitive-root".equals(node.getId())).build();
+        try (var h = new Harness(options,new Owner(field))) {
+            var id = h.named("Popup child").id(); assertTrue(h.observer.physicalSubscriptions()>0);
+            var replacement = new VBox(); replacement.setId("sensitive-root");
+            source.setScene(new Scene(replacement,300,200)); h.flush();
+            assertFalse(h.snapshot.toString().contains("SC08_SECRET_POPUP_CHILD")); assertFalse(h.actions.isLive(id));
+            assertEquals(0,h.observer.physicalSubscriptions());
+            replacement.setId(null); h.observer.updateOptions(options,1); h.flush();
+            assertNotNull(h.named("Popup child")); assertTrue(h.observer.physicalSubscriptions()>0);
+            var nextRoot = new VBox(); nextRoot.setId("sensitive-root");
+            source.getScene().setRoot(nextRoot); h.flush(); assertFalse(h.snapshot.toString().contains("SC08_SECRET_POPUP_CHILD"));
+            assertEquals(0,h.observer.physicalSubscriptions());
+            h.close(); popup.hide(); source.hide(); assertTree(h.snapshot);
+        } return null;
+    }); }
+
+    @Test void adapterReplacementUsesOrderedIdentityAndDisposesProvisionalSessions() throws Exception { fx(() -> {
+        class EqualAdapter implements ControlAdapter<Label> {
+            final String tag;
+            final boolean hostile;
+            final SimpleObjectProperty<String> name;
+            int opens, closes, disposals, effects;
+            EqualAdapter(String tag,boolean hostile) { this.tag=tag; this.hostile=hostile; name=new SimpleObjectProperty<>(tag); }
+            public Class<Label> targetType() { return Label.class; }
+            public boolean equals(Object other) { if (hostile) throw new AssertionError("equals must not run"); return other instanceof EqualAdapter; }
+            public int hashCode() { throw new AssertionError("hashCode must not run"); }
+            public AdapterSession open(Label node,AdapterContext context) {
+                opens++; context.observe(name); context.onDispose(() -> disposals++);
+                return new AdapterSession() {
+                    boolean closed;
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PUSH_BUTTON,name.get()).actions("activate"); }
+                    public boolean execute(AdapterCommand command) { effects++; return true; }
+                    public void close() { assertFalse(closed); closed=true; closes++; }
+                };
+            }
+        }
+        var a = new EqualAdapter("A",false); var b = new EqualAdapter("B",false); var c = new EqualAdapter("C",false);
+        var hostile = new EqualAdapter("Hostile",true); var label = new Label();
+        var options = BridgeOptions.builder().adapters(List.of(a,b)).build();
+        try (var h = new Harness(options,label)) {
+            var old = h.named("A").id(); var reordered = options.toBuilder().adapters(List.of(b,a)).build();
+            h.observer.validateOptions(reordered); assertEquals(1,b.opens); assertEquals(1,b.closes); assertEquals(1,b.disposals);
+            assertEquals(0,a.closes); assertTrue(h.actions.isLive(old));
+            h.observer.updateOptions(reordered,1); h.flush(); assertFalse(h.actions.isLive(old));
+            assertEquals(1,a.closes); assertEquals(1,a.disposals); assertEquals(2,b.opens); assertEquals(1,b.closes);
+            var current = h.named("B").id(); assertTrue(h.actions.execute(current,new AdapterCommand.Activate(0),null));
+            assertEquals(1,b.effects); assertEquals(0,a.effects);
+            var projections = h.observer.projections(); a.name.set("Retired A"); h.flush(); assertEquals(projections,h.observer.projections());
+            h.observer.updateOptions(reordered.toBuilder().adapters(new ArrayList<>(List.of(b,a))).build(),2); h.flush();
+            assertEquals(current,h.named("B").id()); assertEquals(2,b.opens); assertEquals(1,b.closes);
+            h.observer.updateOptions(options.toBuilder().adapters(List.of(c,a)).build(),3); h.flush();
+            assertEquals(2,b.closes); assertEquals(2,b.disposals); assertNotNull(h.named("C"));
+            h.observer.updateOptions(options.toBuilder().adapters(List.of(hostile,a)).build(),4); h.flush();
+            current = h.named("Hostile").id();
+            h.observer.updateOptions(options.toBuilder().adapters(new ArrayList<>(List.of(hostile,a))).build(),5); h.flush();
+            assertEquals(current,h.named("Hostile").id()); assertEquals(1,hostile.opens);
+            assertTrue(h.actions.execute(current,new AdapterCommand.Activate(0),null)); assertEquals(1,hostile.effects);
+            h.close(); assertEquals(hostile.opens,hostile.closes); assertEquals(hostile.opens,hostile.disposals);
+            var queued = h.scheduled.size(); hostile.name.set("Detached"); assertEquals(queued,h.scheduled.size());
+        } return null;
+    }); }
+
+    @Test void semanticAvailabilityGovernsRealAndOrdinaryDescendantsInParentOrder() throws Exception { fx(() -> {
+        class AvailableOwner extends Control {
+            final SimpleObjectProperty<Boolean> enabled = new SimpleObjectProperty<>(true);
+            final SimpleObjectProperty<Boolean> shown = new SimpleObjectProperty<>(true);
+            final SimpleObjectProperty<Boolean> broken = new SimpleObjectProperty<>(false);
+        }
+        var owner = new AvailableOwner(); var effects = new AtomicInteger(); var clicked = new AtomicInteger();
+        var button = new Button("Real button"); button.setOnAction(_ -> clicked.incrementAndGet());
+        var field = new TextField("Original"); field.setAccessibleText("Real field");
+        var check = new CheckBox("Real check"); var choice = new Label("Real choice");
+        var nestedButton = new Button("Nested button"); nestedButton.setOnAction(_ -> clicked.incrementAndGet());
+        var nestedField = new TextField("Nested original"); nestedField.setAccessibleText("Nested field");
+        var box = new VBox(nestedButton,nestedField); box.setAccessibleText("Real box");
+        var source = new Source(new VBox(button,field,check,choice,box));
+        var branchKey = new Object(); var choiceKey = new Object();
+        var adapter = new ControlAdapter<AvailableOwner>() {
+            public Class<AvailableOwner> targetType() { return AvailableOwner.class; }
+            public AdapterSession open(AvailableOwner node,AdapterContext context) {
+                context.observe(node.enabled); context.observe(node.shown); context.observe(node.broken);
+                return new AdapterSession() {
+                    public SemanticProjection read() {
+                        if (node.broken.get()) throw new IllegalStateException("fixed test failure");
+                        return SemanticProjection.of(SemanticRole.LIST,"Available owner").selection(true)
+                                .available(node.enabled.get(),node.shown.get());
+                    }
+                    public List<SemanticChild> children() { return List.of(SemanticChild.node(button),SemanticChild.node(field),
+                            SemanticChild.node(check),SemanticChild.node(choice),SemanticChild.logical(branchKey,_ -> new AdapterSession() {
+                                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PANEL,"Logical branch"); }
+                                public List<SemanticChild> children() { return List.of(SemanticChild.node(box)); }
+                            }),SemanticChild.logical(choiceKey,_ -> new AdapterSession() {
+                                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,"Logical choice")
+                                        .states(Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED)); }
+                            })); }
+                    public boolean execute(AdapterCommand command) { effects.incrementAndGet(); return true; }
+                };
+            }
+        };
+        var itemAdapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,node.getText())
+                            .states(Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED)); }
+                };
+            }
+        };
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter,itemAdapter)).build(),owner,source)) {
+            var root = h.named("Available owner").id(); var child = h.named("Real choice").id();
+            var names = List.of("Real button","Real field","Real check","Real choice","Logical branch","Real box","Nested button","Nested field","Logical choice");
+            var ids = names.stream().map(name -> h.named(name).id()).toList();
+            for (var hidden : List.of(false,true)) {
+                var before = h.snapshot;
+                // Make a descendant dirty first; a later parent invalidation must still be projected before it.
+                field.setText("Pending change");
+                if (hidden) owner.shown.set(false); else owner.enabled.set(false);
+                h.flush();
+                for (var id : ids) {
+                    var node = h.snapshot.get(id); assertNotNull(node); assertFalse(node.actionEligible());
+                    if (hidden) { assertFalse(node.showing()); assertEquals(Geometry.UNAVAILABLE,node.geometry()); }
+                    else assertFalse(node.enabled());
+                }
+                assertFalse(h.actions.press(h.registry.targetId(button)));
+                assertFalse(h.actions.press(h.registry.targetId(nestedButton)));
+                assertFalse(h.actions.setText(h.registry.targetId(field),"Forbidden"));
+                assertFalse(h.actions.setText(h.registry.targetId(nestedField),"Forbidden"));
+                assertFalse(h.actions.execute(h.registry.targetId(check),new AdapterCommand.Activate(0),null));
+                assertFalse(h.actions.selectionTargetEligible(root,child));
+                assertFalse(h.actions.selectionSetEligible(root,false)); assertFalse(h.actions.selectionSetEligible(root,true));
+                assertFalse(h.actions.execute(root,new AdapterCommand.Select(null,true),child));
+                assertFalse(h.actions.execute(root,new AdapterCommand.SelectAll(),null));
+                assertFalse(h.actions.execute(root,new AdapterCommand.ClearSelection(),null));
+                assertEquals(0,effects.get()); assertEquals(0,clicked.get()); assertEquals("Pending change",field.getText());
+                var changes = SnapshotDiff.diff(before,h.snapshot,h.snapshot.nodes().keySet());
+                assertTrue(changes.contains(new SnapshotDiff.State(h.registry.targetId(button),hidden ? "showing" : "enabled",false)));
+                owner.enabled.set(true); owner.shown.set(true); h.flush();
+                assertEquals(ids,names.stream().map(name -> h.named(name).id()).toList());
+                for (var id : ids) { assertTrue(h.snapshot.get(id).enabled()); assertTrue(h.snapshot.get(id).showing()); }
+                assertTree(h.snapshot);
+            }
+            assertTrue(h.actions.press(h.registry.targetId(button))); assertTrue(h.actions.setText(h.registry.targetId(field),"Allowed"));
+            assertTrue(h.actions.execute(root,new AdapterCommand.Select(null,true),child));
+            owner.broken.set(true); h.flush();
+            for (var name : names) { var node = h.named(name); assertFalse(node.enabled()); assertFalse(node.showing()); assertFalse(node.actionEligible()); }
+            assertFalse(h.actions.press(h.registry.targetId(button))); assertFalse(h.actions.setText(h.registry.targetId(field),"Forbidden"));
+            owner.broken.set(false); h.flush(); assertTrue(h.named("Real button").actionEligible());
+            var projections = h.observer.projections(); var publications = h.observer.publications(); h.flush();
+            assertEquals(projections,h.observer.projections()); assertEquals(publications,h.observer.publications());
         } return null;
     }); }
 

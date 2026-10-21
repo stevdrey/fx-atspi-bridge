@@ -27,9 +27,11 @@ import dev.desktopcontrol.fxatspi.adapter.SemanticRole;
 import dev.desktopcontrol.fxatspi.adapter.SemanticChild;
 import dev.desktopcontrol.fxatspi.adapter.SemanticState;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.BooleanProperty;
@@ -75,6 +77,8 @@ public final class SemanticsApp extends Application {
     public static final class SelectionProxy extends Control {
         final SelectionItem item;
         final BooleanProperty ownsItem = new SimpleBooleanProperty(true);
+        final BooleanProperty semanticEnabled = new SimpleBooleanProperty(true);
+        final BooleanProperty semanticShowing = new SimpleBooleanProperty(true);
         SelectionProxy(SelectionItem item) {
             this.item = item; setPrefSize(260,28);
             setSkin(new SkinBase<SelectionProxy>(this) {{ getChildren().add(new Label("Real-node selection proxy")); }});
@@ -89,8 +93,10 @@ public final class SemanticsApp extends Application {
         public Class<SelectionProxy> targetType() { return SelectionProxy.class; }
         public AdapterSession open(SelectionProxy proxy,AdapterContext context) {
             context.observe(proxy.ownsItem);
+            context.observe(proxy.semanticEnabled); context.observe(proxy.semanticShowing);
             return new AdapterSession() {
-                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Real-node selection").selection(true); }
+                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Real-node selection").selection(true)
+                        .available(proxy.semanticEnabled.get(),proxy.semanticShowing.get()); }
                 public List<SemanticChild> children() { return proxy.ownsItem.get() ? List.of(SemanticChild.node(proxy.item)) : List.of(); }
                 public boolean execute(AdapterCommand command) {
                     if (command instanceof AdapterCommand.Select(var child,var selected) && child == proxy.item) { proxy.item.selected.set(selected); return true; }
@@ -115,7 +121,7 @@ public final class SemanticsApp extends Application {
         final IntegerProperty value = new SimpleIntegerProperty();
         Counter() { var label = new Label(); label.textProperty().bind(value.asString("Counter: %d")); getChildren().add(label); }
     }
-    public static final class CounterAdapter implements ControlAdapter<Counter> {
+    public record CounterAdapter() implements ControlAdapter<Counter> {
         @Override public Class<Counter> targetType() { return Counter.class; }
         @Override public AdapterSession open(Counter counter, AdapterContext context) {
             context.observe(counter.value); context.onDispose(DISPOSALS::incrementAndGet);
@@ -175,6 +181,10 @@ public final class SemanticsApp extends Application {
         var source = id(new SourceGroup(realItem),"real-source"); var proxy = id(new SelectionProxy(realItem),"real-selection");
         var ownership = id(new Button("Toggle semantic ownership"),"toggle-real-ownership");
         ownership.setOnAction(_ -> proxy.ownsItem.set(!proxy.ownsItem.get()));
+        var semanticEnabled = id(new Button("Toggle semantic enabled"),"toggle-semantic-enabled");
+        semanticEnabled.setOnAction(_ -> proxy.semanticEnabled.set(!proxy.semanticEnabled.get()));
+        var semanticShowing = id(new Button("Toggle semantic showing"),"toggle-semantic-showing");
+        semanticShowing.setOnAction(_ -> proxy.semanticShowing.set(!proxy.semanticShowing.get()));
         var visibleSource = id(new Button("Toggle source visibility"),"toggle-source-visible");
         visibleSource.setOnAction(_ -> source.setVisible(!source.isVisible()));
         var sensitiveSource = id(new Button("Toggle source privacy"),"toggle-source-sensitive");
@@ -192,23 +202,45 @@ public final class SemanticsApp extends Application {
             showContext.setId("sensitive".equals(showContext.getId()) ? null : "sensitive");
             result.setText("Context showing: " + context.isShowing());
         });
+        var popupOwner = new Stage(); popupOwner.initOwner(stage); popupOwner.setTitle("Window popup owner");
+        var popupRoot = new VBox(new Label("Window popup owner root")); popupOwner.setScene(new Scene(popupRoot,240,100));
+        var windowItem = new MenuItem("Window popup command"); AutomationIds.set(windowItem,"window-popup-item");
+        var windowPopup = new ContextMenu(windowItem); windowPopup.setAutoHide(false); AutomationIds.set(windowPopup,"window-popup");
+        windowItem.setOnAction(_ -> { result.setText("Window popup command"); popupOwner.hide(); });
+        var showWindowPopup = id(new Button("Show window popup"),"show-window-popup");
+        showWindowPopup.setOnAction(_ -> { popupOwner.show(); windowPopup.show(popupOwner,popupOwner.getX()+20,popupOwner.getY()+20); });
+        var windowPrivacy = id(new Button("Toggle window popup privacy"),"toggle-window-popup-privacy");
+        windowPrivacy.setOnAction(_ -> {
+            popupRoot.setId("sensitive".equals(popupRoot.getId()) ? null : "sensitive");
+            result.setText("Window popup showing: " + windowPopup.isShowing());
+        });
         var counter = id(new Counter(),"custom");
         var password = id(new PasswordField(),"password-id-must-not-publish"); password.setText("SC08_SECRET_PASSWORD");
         var sensitive = id(new ComboBox<String>(FXCollections.observableArrayList("SC08_SECRET_CHOICE")),"sensitive-id");
         sensitive.setId("sensitive"); sensitive.setValue("SC08_SECRET_VALUE");
         var rename = id(new Button("Rename ID"),"rename"); rename.setOnAction(_ -> AutomationIds.set(checked,"check-renamed"));
         var remove = id(new Button("Remove custom"),"remove-custom");
+        var replaceAdapter = id(new Button("Replace equal adapter"),"replace-adapter");
         var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,new HBox(8,combo,menuButton,split,splitResult),tabs,contextButtons,
                 new HBox(8,editable,caretOne,caretTwo),proxy,source,new HBox(8,visibleSource,sensitiveSource,ownership),
-                new HBox(8,showContext,contextPrivacy),counter,password,sensitive,result,rename,remove);
+                new HBox(8,semanticEnabled,semanticShowing),new HBox(8,showContext,contextPrivacy),
+                new HBox(8,showWindowPopup,windowPrivacy),counter,password,sensitive,result,rename,new HBox(8,remove,replaceAdapter));
         remove.setOnAction(_ -> { box.getChildren().remove(counter); result.setText("Adapter disposals: " + DISPOSALS.get()); });
         var duplicate = id(new Button("Duplicate IDs"),"duplicate"); duplicate.setOnAction(_ -> AutomationIds.set(radioA,"check-renamed"));
         box.getChildren().add(duplicate); box.setPadding(new Insets(12));
         stage.setTitle("SC08 Semantic Lab"); stage.setScene(new Scene(box,620,720)); stage.show();
         editable.getEditor().setText("a😀b"); editable.getEditor().positionCaret(0);
-        if (!getParameters().getRaw().contains("--no-atspi")) bridge = FxAtSpiBridge.installConfigured(BridgeOptions.builder()
+        var options = BridgeOptions.builder()
                 .applicationName("SC08 Semantic Lab").adapters(List.of(new CounterAdapter(),new SelectionProxyAdapter(),new SelectionItemAdapter()))
-                .sensitiveNodes(node -> "sensitive".equals(node.getId())).build());
+                .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+        if (!getParameters().getRaw().contains("--no-atspi")) {
+            bridge = FxAtSpiBridge.installConfigured(options);
+            replaceAdapter.setOnAction(_ -> {
+                var replacements = new ArrayList<>(options.adapters()); replacements.set(0,new CounterAdapter());
+                bridge.updateOptions(options.toBuilder().adapters(replacements).build()).whenComplete((ignored,failure) ->
+                        Platform.runLater(() -> result.setText(failure == null ? "Adapters replaced" : "Adapter update failed")));
+            });
+        } else replaceAdapter.setDisable(true);
     }
     @Override public void stop() {
         if (bridge != null) bridge.close();

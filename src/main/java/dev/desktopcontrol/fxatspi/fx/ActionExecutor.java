@@ -91,6 +91,7 @@ public final class ActionExecutor implements ActionPort {
     /** Fires an enabled button-like target. */
     @Override public boolean press(String id) {
         if (!(registry.target(id) instanceof ButtonBase button) || !eligible(button) || !policy(button, Capability.ACTION)) return false;
+        if (observer != null && !observer.permits(id,Capability.ACTION)) return false;
         button.fire();
         return true;
     }
@@ -99,6 +100,7 @@ public final class ActionExecutor implements ActionPort {
     @Override public boolean setText(String id, String value) {
         if (!(registry.target(id) instanceof TextInputControl text) || text instanceof PasswordField) return false;
         if (!text.isEditable() || !eligible(text) || !policy(text, Capability.EDITABLE_TEXT)) return false;
+        if (observer != null && !observer.permits(id,Capability.EDITABLE_TEXT)) return false;
         text.setText(value);
         return true;
     }

@@ -236,6 +236,28 @@ def run(launcher, out):
             found = tree(app)
             assert found['split-result'].get_name() == 'Primary 2'
             results['cases'].append('split-primary-popup-and-menu-actions')
+            assert Atspi.Action.do_action(found['show-window-popup'], 0)
+            settle()
+            found = tree(app)
+            assert 'window-popup' in found and 'window-popup-item' in found
+            original_popup = found['window-popup']
+            rectangle = Atspi.Component.get_extents(original_popup, Atspi.CoordType.SCREEN)
+            assert rectangle.width > 0 and rectangle.height > 0
+            assert Atspi.Action.do_action(found['toggle-window-popup-privacy'], 0)
+            settle()
+            found = tree(app)
+            assert 'window-popup' not in found and 'window-popup-item' not in found
+            assert found['result'].get_name() == 'Window popup showing: true'
+            assert Atspi.Action.do_action(found['toggle-window-popup-privacy'], 0)
+            settle()
+            found = tree(app)
+            assert found['window-popup'] != original_popup and 'window-popup-item' in found
+            assert Atspi.Action.do_action(found['window-popup-item'], 0)
+            settle()
+            found = tree(app)
+            assert found['result'].get_name() == 'Window popup command'
+            assert app.get_child_count() == 1
+            results['cases'].append('window-owned-popup-scene-root-privacy-recovery')
             assert Atspi.Text.get_text(found['editable-combo'], 0, -1) == 'a😀b'
             assert Atspi.Action.do_action(found['caret-two'], 0)
             settle()
@@ -294,12 +316,46 @@ def run(launcher, out):
             assert 'real-item' in found
             assert Atspi.Selection.get_n_selected_children(found['real-selection']) == 0
             results['cases'].append('real-node-physical-ancestor-privacy-and-bulk-denial')
+            original_item = found['real-item']
+            for suffix, state in (('enabled', Atspi.StateType.ENABLED), ('showing', Atspi.StateType.SHOWING)):
+                assert Atspi.Action.do_action(found['toggle-semantic-' + suffix], 0)
+                settle()
+                found = tree(app)
+                assert found['real-item'] == original_item
+                assert not found['real-item'].get_state_set().contains(state)
+                for method, args in ((Atspi.Selection.select_child, (0,)), (Atspi.Selection.select_all, ()), (Atspi.Selection.clear_selection, ())):
+                    try:
+                        method(found['real-selection'], *args)
+                        raise AssertionError('semantically unavailable selection accepted')
+                    except GLib.Error:
+                        pass
+                assert Atspi.Action.do_action(found['toggle-semantic-' + suffix], 0)
+                settle()
+                found = tree(app)
+                assert found['real-item'] == original_item and found['real-item'].get_state_set().contains(state)
+                assert Atspi.Selection.select_child(found['real-selection'], 0)
+                assert Atspi.Selection.clear_selection(found['real-selection'])
+            results['cases'].append('real-node-inherits-semantic-availability-and-recovers')
             settle()
             found = tree(app)
             assert Atspi.Action.do_action(found['custom'], 0)
             settle()
             found = tree(app)
             assert Atspi.Text.get_text(found['custom'], 0, -1) == '1'
+            original_counter = found['custom']
+            assert Atspi.Action.do_action(found['replace-adapter'], 0)
+            # updateOptions completes after provider adoption and an FX delivery, independently of DoAction's reply.
+            deadline = time.monotonic() + 5
+            while True:
+                settle()
+                found = tree(app)
+                status = found['result'].get_name()
+                if status == 'Adapters replaced':
+                    break
+                if status == 'Adapter update failed' or time.monotonic() >= deadline:
+                    raise AssertionError(f'adapter completion: {status!r}')
+            assert found['custom'] != original_counter and Atspi.Text.get_text(found['custom'], 0, -1) == '1'
+            results['cases'].append('equal-adapter-instance-replacement-renews-reference')
             assert Atspi.Action.do_action(found['remove-custom'], 0)
             settle()
             found = tree(app)

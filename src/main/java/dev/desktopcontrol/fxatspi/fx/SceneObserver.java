@@ -34,6 +34,7 @@ import dev.desktopcontrol.fxatspi.model.NodeStore;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -186,7 +187,7 @@ public final class SceneObserver {
     /** FX-only explicit invalidation of captured policy state, with a publication barrier even for an unchanged tree. */
     public void updateOptions(BridgeOptions value, long revision) {
         var renew = customRedaction(options) || customRedaction(value);
-        var replaceAdapters = !options.adapters().equals(value.adapters());
+        var replaceAdapters = !sameAdapters(options.adapters(),value.adapters());
         options = value;
         if (replaceAdapters) {
             for (var entry : List.copyOf(observed.values())) if (entry.attached && entry.target instanceof Logical) detach(entry);
@@ -203,6 +204,12 @@ public final class SceneObserver {
         }
         touched.add(Snapshot.ROOT_ID);
         flush();
+    }
+
+    private static boolean sameAdapters(List<ControlAdapter<?>> first, List<ControlAdapter<?>> second) {
+        if (first.size() != second.size()) return false;
+        for (var index = 0; index < first.size(); index++) if (first.get(index) != second.get(index)) return false;
+        return true;
     }
 
     /** Only sanitized, successfully projected nodes authorize an FX mutation. */
@@ -236,13 +243,22 @@ public final class SceneObserver {
                 if (!options.includedWindows().test(popup)) return false;
                 var owner = popup.getOwnerWindow();
                 if (owner == null || !options.includedWindows().test(owner)) return false;
-                for (var node = popup.getOwnerNode(); node != null; node = node.getParent())
+                var anchor = popupAnchor(popup);
+                if (anchor == null) return false;
+                for (var node = anchor; node != null; node = node.getParent())
                     if (options.excludedNodes().test(node) || options.sensitiveNodes().test(node) || node instanceof PasswordField) return false;
                 return true;
             }
             return candidate instanceof Window window ? options.includedWindows().test(window)
                     : candidate instanceof Node node ? !options.excludedNodes().test(node) : true;
         } catch (RuntimeException failure) { projectionFailures++; return false; } // never log callback data
+    }
+
+    private static Node popupAnchor(ContextMenu popup) {
+        if (popup.getOwnerNode() != null) return popup.getOwnerNode();
+        var window = popup.getOwnerWindow();
+        var scene = window == null ? null : window.getScene();
+        return scene == null ? null : scene.getRoot();
     }
 
     private record PhysicalState(boolean included, boolean sensitive, boolean visible) {}
@@ -360,9 +376,7 @@ public final class SceneObserver {
         for (var current = entry; current != null; current = current.parent) {
             if (current.target instanceof Node node) return node;
             if (current.target instanceof ContextMenu popup) {
-                if (popup.getOwnerNode() != null) return popup.getOwnerNode();
-                var window = popup.getOwnerWindow();
-                return window == null || window.getScene() == null ? null : window.getScene().getRoot();
+                return popupAnchor(popup);
             }
         }
         return null;
@@ -509,8 +523,12 @@ public final class SceneObserver {
                         physicalWindowProperties(next,window);
                         if (window instanceof ContextMenu popup) {
                             next.add(popup.ownerNodeProperty()); next.add(popup.ownerWindowProperty());
-                            physicalProperties(next,popup.getOwnerNode());
-                            if (popup.getOwnerWindow() != null) physicalWindowProperties(next,popup.getOwnerWindow());
+                            physicalProperties(next,popupAnchor(popup));
+                            var owner = popup.getOwnerWindow();
+                            if (owner != null) {
+                                physicalWindowProperties(next,owner); next.add(owner.sceneProperty());
+                                if (owner.getScene() != null) next.add(owner.getScene().rootProperty());
+                            }
                         }
                     }
                 }
@@ -825,11 +843,16 @@ public final class SceneObserver {
             }
         }
         try {
-            while (!dirty.isEmpty()) {
-                var iterator = dirty.iterator();
-                var entry = iterator.next();
-                iterator.remove();
-                if (!entry.attached) continue;
+            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+            var pending = new ArrayDeque<Observed>();
+            while (!dirty.isEmpty() || !pending.isEmpty()) {
+                if (pending.isEmpty()) {
+                    var entry = dirty.iterator().next(); pending.push(entry);
+                    for (var parent = entry.parent; parent != null && (!prepared.contains(parent) || dirty.contains(parent)); parent = parent.parent)
+                        pending.push(parent);
+                }
+                var entry = pending.pop(); prepared.add(entry);
+                if (!dirty.remove(entry) || !entry.attached) continue;
                 AccessibleNode node;
                 var failed = false;
                 var sensitive = false;
@@ -888,6 +911,14 @@ public final class SceneObserver {
                     touched.add(entry.id);
                     if (entry.parent != null && (previous == null || previous.semantics().states().contains(SemanticState.SELECTED)
                             != node.semantics().states().contains(SemanticState.SELECTED))) touched.add(entry.parent.id);
+                }
+                if (previous == null || previous.enabled() != node.enabled() || previous.showing() != node.showing()) {
+                    for (var child : entry.children) {
+                        var descendant = observed.get(child);
+                        if (descendant != null && descendant.parent == entry) {
+                            showing.remove(descendant); dirty.add(descendant);
+                        }
+                    }
                 }
                 if (!sensitive && previous != null && entry.target instanceof Node && !previous.geometry().equals(node.geometry())) {
                     // Sensitive children publish this node's box as their own.
@@ -1279,15 +1310,25 @@ public final class SceneObserver {
         var known = showing.get(entry);
         if (known != null) return known;
         boolean value = switch (entry.target) {
-            case Window window -> window.isShowing();
-            case Node node -> node.isVisible() & (entry.parent == null || showing(entry.parent))
+            case Window window -> window.isShowing() && parentShowing(entry);
+            case Node node -> node.isVisible() & parentShowing(entry)
                     && (!entry.realNode || physicalState(node).visible() && node.getScene() != null
                     && node.getScene().getWindow() != null && node.getScene().getWindow().isShowing());
-            case Logical _ -> entry.parent == null || showing(entry.parent);
+            case Logical _ -> parentShowing(entry);
             default -> true;
         };
         showing.put(entry, value);
         return value;
+    }
+
+    private boolean parentShowing(Observed entry) {
+        var parent = entry.parent == null ? null : model.get(entry.parent.id);
+        return entry.parent == null || parent != null && parent.showing();
+    }
+
+    private boolean parentEnabled(Observed entry) {
+        var parent = entry.parent == null ? null : model.get(entry.parent.id);
+        return entry.parent == null || parent != null && parent.enabled();
     }
 
     /**
@@ -1323,12 +1364,13 @@ public final class SceneObserver {
         return switch (entry.target) {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
-                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
-                        Snapshot.ROOT_ID, children, COMPONENT, window.isShowing(), false, geometry.project(window));
+                var shows = showing(entry); var enabled = parentEnabled(entry);
+                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, enabled, shows, window.isFocused(), false, 0,
+                        Snapshot.ROOT_ID, children, COMPONENT, enabled && shows, false, shows ? geometry.project(window) : Geometry.UNAVAILABLE);
             }
             case Node node -> {
                 var shows = showing(entry);
-                yield projectNode(node, entry.id, entry.parent.id, shows, children, sensitive, nodeGeometry(entry, node, shows, sensitive));
+                yield projectNode(node, entry.id, entry.parent.id, parentEnabled(entry), shows, children, sensitive, nodeGeometry(entry, node, shows, sensitive));
             }
             default -> new AccessibleNode(Snapshot.ROOT_ID, redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
@@ -1366,19 +1408,13 @@ public final class SceneObserver {
         if (hasText) capabilities.add(Capability.TEXT);
         var editable = raw.editable() && !transformed && anchor != null && options.textWriteAllowed().test(anchor);
         if (editable) capabilities.add(Capability.EDITABLE_TEXT);
-        var enabled = raw.enabled() && (anchor == null || !anchor.isDisabled());
+        var enabled = raw.enabled() && (anchor == null || !anchor.isDisabled()) && parentEnabled(entry);
         var shows = raw.showing() && showing(entry);
-        if (entry.target instanceof Logical) for (var ancestor = entry.parent; ancestor != null; ancestor = ancestor.parent) {
-            if (ancestor.failed || ancestor.expansionFailed) { enabled = false; shows = false; }
-            if (ancestor.session != null) {
-                var parent = ancestor.session.read(); enabled &= parent.enabled(); shows &= parent.showing();
-            }
-        }
         var scene = anchor == null ? null : anchor.getScene();
         var window = scene == null ? entry.target instanceof Window target ? target : null : scene.getWindow();
         var blocked = window == null || modal.computeIfAbsent(window,ActionExecutor::blockedByModal);
         var bounds = entry.target instanceof Node node ? nodeGeometry(entry,node,shows,sensitive)
-                : entry.target instanceof Window target ? geometry.project(target) : Geometry.UNAVAILABLE;
+                : entry.target instanceof Window target && shows ? geometry.project(target) : Geometry.UNAVAILABLE;
         var states = sensitive ? Set.<SemanticState>of() : raw.states();
         var id = raw.automationId();
         return new AccessibleNode(entry.id,name,Role.valueOf(raw.role().name()),text,editable,enabled,shows,entry.target instanceof Node source ? source.isFocused() : raw.focused(),
@@ -1410,7 +1446,7 @@ public final class SceneObserver {
         return geometry.substitute(node, box.target, box != entry.parent, showing);
     }
 
-    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive, Geometry bounds) {
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean parentEnabled, boolean showing, List<String> children, boolean sensitive, Geometry bounds) {
         var password = node instanceof PasswordField;
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
@@ -1435,7 +1471,7 @@ public final class SceneObserver {
         var capabilities = node instanceof ButtonBase && !sensitive && options.pressAllowed().test(node) ? ACTION
                 : input != null ? writable ? TEXT_INPUT : TEXT : COMPONENT;
         var focusable = node instanceof ButtonBase || node instanceof TextInputControl;
-        var enabled = !node.isDisabled();
+        var enabled = !node.isDisabled() && parentEnabled;
         var focused = node.isFocused();
         var scene = node.getScene();
         var window = scene == null ? null : scene.getWindow();
