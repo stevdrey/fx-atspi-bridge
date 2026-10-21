@@ -35,6 +35,7 @@ import dev.desktopcontrol.fxatspi.adapter.SemanticRole;
 import dev.desktopcontrol.fxatspi.adapter.SemanticState;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
+import dev.desktopcontrol.fxatspi.model.Geometry;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
@@ -54,6 +55,10 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Control;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.TextField;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Side;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -68,6 +73,7 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import javafx.stage.Modality;
 import javafx.stage.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -75,6 +81,26 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class SemanticObserverTest {
+    static final class Source extends Control {
+        Source(Node child) { getChildren().add(child); }
+        void content(Node child) { getChildren().setAll(child); }
+    }
+    static final class Owner extends Control {
+        final SimpleObjectProperty<Node> child = new SimpleObjectProperty<>();
+        Owner(Node child) { this.child.set(child); }
+    }
+    static ControlAdapter<Owner> ownerAdapter() {
+        return new ControlAdapter<>() {
+            public Class<Owner> targetType() { return Owner.class; }
+            public AdapterSession open(Owner node, AdapterContext context) {
+                context.observe(node.child);
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Owner").selection(true); }
+                    public List<SemanticChild> children() { return node.child.get() == null ? List.of() : List.of(SemanticChild.node(node.child.get())); }
+                };
+            }
+        };
+    }
     @BeforeAll static void toolkit() throws Exception {
         var started = new CountDownLatch(1);
         try { Platform.startup(started::countDown); }
@@ -304,6 +330,203 @@ class SemanticObserverTest {
             popup.hide();
         }
         return null;
+    }); }
+
+    @Test void editableComboCaretUsesCodePointsAndPublishesCaretOnlyChanges() throws Exception { fx(() -> {
+        var combo = new ComboBox<String>(); combo.setEditable(true);
+        try (var h = new Harness(BridgeOptions.defaults(),combo)) {
+            combo.getEditor().setText("a😀b"); combo.getEditor().positionCaret(3); h.flush();
+            var id = h.role(Role.COMBO_BOX).id(); assertEquals(2,h.snapshot.get(id).caret());
+            var before = h.snapshot; combo.getEditor().positionCaret(1); h.flush();
+            assertEquals(1,h.snapshot.get(id).caret());
+            assertTrue(SnapshotDiff.diff(before,h.snapshot,Set.of(id)).contains(new SnapshotDiff.Caret(id,1)));
+            h.observer.updateOptions(BridgeOptions.builder().redactor((kind,sensitive,value) ->
+                    kind == BridgeOptions.ContentKind.NODE_TEXT ? "protected" : value).build(),1);
+            assertEquals(0,h.role(Role.COMBO_BOX).caret()); assertFalse(h.role(Role.COMBO_BOX).editable());
+            h.close(); var publications = h.observer.publications();
+            combo.getEditor().positionCaret(0); h.flush(); assertEquals(publications,h.observer.publications());
+        } return null;
+    }); }
+
+    @Test void actionRevisionDetectsMaskedReordersButIgnoresUnrelatedState() throws Exception { fx(() -> {
+        var order = new SimpleObjectProperty<>(List.of("first","second"));
+        var adapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                context.observe(order); context.observe(node.textProperty());
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PUSH_BUTTON,node.getText())
+                            .actions(order.get().toArray(String[]::new)); }
+                };
+            }
+        };
+        var label = new Label("Actions");
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).redactor((kind,sensitive,value) ->
+                kind == BridgeOptions.ContentKind.ACTION_METADATA ? "masked" : value).build(),label)) {
+            var original = h.named("Actions");
+            label.setText("Renamed"); h.flush(); assertEquals(original.semantics().actionRevision(),h.named("Renamed").semantics().actionRevision());
+            order.set(List.of("second","first")); h.flush(); var reordered = h.named("Renamed");
+            assertEquals(original.id(),reordered.id()); assertEquals(original.semantics().actions(),reordered.semantics().actions());
+            assertNotEquals(original.semantics().actionRevision(),reordered.semantics().actionRevision());
+            order.set(List.of("replacement","first")); h.flush();
+            assertNotEquals(reordered.semantics().actionRevision(),h.named("Renamed").semantics().actionRevision());
+            assertFalse(h.snapshot.toString().contains("replacement"));
+            var prefix = "x".repeat(40000); order.set(List.of(prefix+"A","first")); h.flush();
+            var revision = h.named("Renamed").semantics().actionRevision();
+            order.set(List.of(prefix+"B","first")); h.flush();
+            assertNotEquals(revision,h.named("Renamed").semantics().actionRevision());
+        } return null;
+    }); }
+
+    @Test void realSelectionChildrenRequireTheirOwnPhysicalEligibility() throws Exception { fx(() -> {
+        var label = new Label("Item"); var source = new VBox(label); var hidden = new Source(source); var owner = new Owner(label);
+        var itemAdapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,node.getText())
+                            .states(Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED)); }
+                };
+            }
+        };
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter(),itemAdapter)).build(),owner,hidden)) {
+            var parent = h.named("Owner").id(); var child = h.named("Item").id();
+            assertTrue(h.actions.selectionTargetEligible(parent,child));
+            source.setVisible(false); h.flush(); assertFalse(h.actions.selectionTargetEligible(parent,child));
+            assertFalse(h.actions.selectionSetEligible(parent,false)); assertFalse(h.actions.selectionSetEligible(parent,true));
+            source.setVisible(true); source.setDisable(true); h.flush(); assertFalse(h.actions.selectionTargetEligible(parent,child));
+            source.setDisable(false); h.flush(); assertTrue(h.actions.selectionTargetEligible(parent,child));
+            var modal = new Stage(); modal.initOwner(label.getScene().getWindow()); modal.initModality(Modality.WINDOW_MODAL);
+            modal.setScene(new Scene(new VBox(new Button("Modal")))); modal.show(); h.flush();
+            assertFalse(h.actions.selectionTargetEligible(parent,child)); modal.hide(); h.flush();
+            assertTrue(h.actions.selectionTargetEligible(parent,child));
+        } return null;
+    }); }
+
+    @Test void realChildrenPreservePhysicalPrivacyAcrossChangesAndReleaseSharedWatches() throws Exception { fx(() -> {
+        var field = new TextField("physical-secret"); AutomationIds.set(field,"physical-secret-id");
+        var ancestry = new VBox(field); var source = new Source(ancestry); var owner = new Owner(field);
+        field.resize(180,28); owner.setPrefSize(220,40);
+        var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .sensitiveNodes(node -> "sensitive".equals(node.getId())).excludedNodes(node -> "excluded".equals(node.getId())).build();
+        try (var h = new Harness(options,owner,source)) {
+            var id = h.role(Role.ENTRY).id(); var before = h.snapshot;
+            assertNotNull(h.role(Role.ENTRY).geometry().window());
+            assertNotEquals(h.named("Owner").geometry().window(),h.role(Role.ENTRY).geometry().window());
+            var watches = h.observer.physicalSubscriptions(); assertTrue(watches > 0);
+            ancestry.setId("sensitive"); h.flush();
+            assertFalse(h.snapshot.toString().contains("physical-secret")); assertNotEquals(id,h.role(Role.ENTRY).id());
+            assertEquals(h.named("Owner").geometry().window(),h.role(Role.ENTRY).geometry().window());
+            assertFalse(h.actions.selectionSetEligible(h.named("Owner").id(),false));
+            assertFalse(h.actions.selectionSetEligible(h.named("Owner").id(),true));
+            assertTrue(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream().noneMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+            ancestry.setId(null); h.flush(); assertTrue(h.snapshot.toString().contains("physical-secret"));
+            ancestry.setId("excluded"); h.flush(); assertTrue(h.snapshot.nodes().values().stream().noneMatch(node -> node.role() == Role.ENTRY));
+            assertEquals(0,h.observer.physicalSubscriptions());
+            ancestry.setId(null); h.observer.updateOptions(options,1); h.flush(); assertNotNull(h.role(Role.ENTRY));
+            for (var index = 0; index < 30; index++) {
+                owner.child.set(null); h.flush(); assertEquals(0,h.observer.physicalSubscriptions());
+                owner.child.set(field); h.flush(); assertEquals(watches,h.observer.physicalSubscriptions());
+            }
+            var publications = h.observer.publications(); var projections = h.observer.projections();
+            h.flush(); h.flush(); assertEquals(publications,h.observer.publications()); assertEquals(projections,h.observer.projections());
+            h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+            ancestry.setId("sensitive"); assertTrue(h.scheduled.isEmpty());
+        } return null;
+    }); }
+
+    @Test void realChildrenCannotEscapeSourceWindowOrPasswordAncestry() throws Exception { fx(() -> {
+        var field = new TextField("source-secret"); var ancestry = new VBox(field); var source = new Source(ancestry); var owner = new Owner(field);
+        var excludedWindow = new Stage(); excludedWindow.setScene(new Scene(new VBox(source))); excludedWindow.show();
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .includedWindows(window -> window != excludedWindow).build(),owner)) {
+            assertFalse(h.snapshot.toString().contains("source-secret"));
+        }
+        excludedWindow.hide();
+        class PasswordSource extends PasswordField { PasswordSource(Node child) { getChildren().add(child); } }
+        ancestry.getChildren().clear(); var password = new PasswordSource(field);
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter())).build(),owner,password)) {
+            assertFalse(h.snapshot.toString().contains("source-secret")); assertNotNull(h.named("[password]"));
+        } return null;
+    }); }
+
+    @Test void independentMenusOnAdaptedControlsAreExportedWithoutDuplicatingTheirPopups() throws Exception { fx(() -> {
+        var combo = new ComboBox<String>(FXCollections.observableArrayList("Choice"));
+        var button = new MenuButton("Button",null,new MenuItem("Builtin button item"));
+        var menu = new Menu("File"); menu.getItems().add(new MenuItem("Builtin bar item")); var bar = new MenuBar(menu);
+        try (var h = new Harness(BridgeOptions.defaults(),combo,button,bar)) {
+            for (var anchor : List.of(combo,button,bar)) {
+                var popup = new ContextMenu(new MenuItem("Independent")); popup.show(anchor,Side.BOTTOM,0,0); h.flush();
+                assertNotNull(h.named("Independent"));
+                h.observer.updateOptions(BridgeOptions.defaults(),1); h.flush(); assertNotNull(h.named("Independent"));
+                popup.hide(); h.flush();
+            }
+            combo.show(); h.flush(); assertEquals(1,h.snapshot.get("root").children().size()); combo.hide(); h.flush();
+            button.show(); h.flush(); assertEquals(1,h.snapshot.get("root").children().size());
+            assertEquals(1,h.snapshot.nodes().values().stream().filter(node -> node.name().equals("Builtin button item")).count());
+            button.hide(); menu.show(); h.flush(); assertEquals(1,h.snapshot.get("root").children().size()); menu.hide();
+        } return null;
+    }); }
+
+    @Test void realSelectionUsesItsSourceWindowModalityRatherThanOnlyTheContainerWindow() throws Exception { fx(() -> {
+        var label = new Label("Other window item"); var source = new Stage();
+        source.setScene(new Scene(new VBox(new Source(label)),300,200)); source.show();
+        var owner = new Owner(label);
+        var itemAdapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,node.getText())
+                            .states(Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED)); }
+                };
+            }
+        };
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter(),itemAdapter)).build(),owner)) {
+            var parent = h.named("Owner").id(); var child = h.named("Other window item").id();
+            assertEquals(Geometry.UNAVAILABLE,h.snapshot.get(child).geometry());
+            assertTrue(h.actions.selectionTargetEligible(parent,child));
+            var modal = new Stage(); modal.initOwner(source); modal.initModality(Modality.WINDOW_MODAL);
+            modal.setScene(new Scene(new VBox(new Button("Source modal")))); modal.show(); h.flush();
+            assertTrue(h.snapshot.get(parent).actionEligible());
+            assertFalse(h.actions.selectionTargetEligible(parent,child));
+            assertFalse(h.actions.selectionSetEligible(parent,false)); assertFalse(h.actions.selectionSetEligible(parent,true));
+            modal.hide(); h.flush(); assertTrue(h.actions.selectionTargetEligible(parent,child));
+            source.hide(); h.flush(); assertFalse(h.actions.selectionTargetEligible(parent,child));
+        } return null;
+    }); }
+
+    @Test void physicalWatchesAreSharedAndRebindWhenAnAncestorMoves() throws Exception { fx(() -> {
+        var one = new TextField("first-physical-secret"); var two = new TextField("second-physical-secret");
+        var ancestry = new VBox(one,two); var source = new Source(ancestry); var destination = new Source(new VBox());
+        var first = new Owner(one); var second = new Owner(two);
+        var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+        try (var h = new Harness(options,first,second,source,destination)) {
+            var shared = h.observer.physicalSubscriptions();
+            second.child.set(null); h.flush(); assertEquals(shared-2,h.observer.physicalSubscriptions());
+            second.child.set(two); h.flush(); assertEquals(shared,h.observer.physicalSubscriptions());
+            destination.setId("sensitive"); destination.content(ancestry); h.flush();
+            assertEquals(shared,h.observer.physicalSubscriptions());
+            assertFalse(h.snapshot.toString().contains("physical-secret"));
+            source.setId("old-source"); h.flush();
+            assertFalse(h.snapshot.toString().contains("physical-secret"));
+            destination.setId(null); h.flush(); assertTrue(h.snapshot.toString().contains("first-physical-secret"));
+            first.child.set(null); second.child.set(null); h.flush(); assertEquals(0,h.observer.physicalSubscriptions());
+        } return null;
+    }); }
+
+    @Test void realChildrenRecheckSourceWindowInclusionWhenItsObservedPropertiesChange() throws Exception { fx(() -> {
+        var field = new TextField("window-policy-secret"); var source = new Stage(); source.setTitle("public");
+        source.setScene(new Scene(new VBox(new Source(field)),300,200)); source.show();
+        var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .includedWindows(window -> !(window instanceof Stage stage) || !"private".equals(stage.getTitle())).build();
+        try (var h = new Harness(options,new Owner(field))) {
+            assertTrue(h.snapshot.toString().contains("window-policy-secret"));
+            source.setTitle("private"); h.flush(); assertFalse(h.snapshot.toString().contains("window-policy-secret"));
+            assertEquals(0,h.observer.physicalSubscriptions());
+            source.setTitle("public"); h.observer.updateOptions(options,1); h.flush();
+            assertTrue(h.snapshot.toString().contains("window-policy-secret"));
+        } return null;
     }); }
 
 }

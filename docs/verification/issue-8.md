@@ -2,6 +2,8 @@
 
 [Issue #8](https://github.com/stevdrey/fx-atspi-bridge/issues/8), implementation based on `10017b3`.
 Date: 2026-10-20 (Costa Rica). Spec: [issue-8](../specs/issue-8.md).
+The original checks/performance below describe code `959b643` through evidence commit `a1184fa`.
+The later PR review corrections change Java sources and have separate evidence at the end of this report.
 
 ## Environment and provenance
 
@@ -14,10 +16,10 @@ mixed-monitor, Orca or cross-distribution compatibility claim. No desktop config
 
 Each retained measurement environment records SHA-256 hashes of every distribution JAR and every main Java source,
 including the consumer example. Early rejected attempts record the pre-implementation head and exact uncommitted
-source hashes; successful cells record `81ba6a7`, whose Java sources match code commit `959b643` and the current tree.
+source hashes; successful cells record `81ba6a7`, whose Java sources match code commit `959b643` through `a1184fa`.
 The unrelated pre-existing issue-1/issue-16 verification changes are preserved outside this PR.
 
-## Functional checks
+## Original implementation functional checks
 
 - `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 226 Java/native tests, zero skips; example distribution and publication metadata generated. Counts are retained in `data/issue-8/java-check.json`.
 - `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip. The sandbox denies temporary Unix socket binds; the successful run used the normal host permissions needed by those tests.
@@ -43,7 +45,7 @@ assertion intermittently received a late geometry/focus notification; its assert
 was used. No timeout, capacity, screen-throttling guard or performance budget was relaxed.
 
 GitHub Actions [Build and test #128](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/39506618374) also
-**passed** on code commit `959b643`. Subsequent verification-only commits do not change the measured Java sources.
+**passed** on code commit `959b643`. Verification-only commits through `a1184fa` do not change the measured Java sources.
 
 ## SC-01 comparison
 
@@ -171,3 +173,38 @@ cells. The one provisional install-heap budget exceedance is explicit and also o
 The PR is presented for review with that limitation; no release was published. The complete quick/full dirty=1/100 matrix,
 native memory attribution, Orca and native-Wayland certification were not performed. These results do not replace the
 separate full-baseline and memory characterization work.
+
+## PR #41 — five review corrections
+
+The review follow-up preserves public installation/adapter signatures. It adds physical eligibility to real selection
+children (including source-window modality and bulk operations), an internal action-list revision captured at admission,
+physical ancestor/source-window privacy and shared dependency subscriptions, represented-popup identity checks, and
+Unicode caret observation for editable combos. Original action metadata is SHA-256 fingerprinted only on FX using
+fixed scratch storage; only a numeric revision enters snapshots, so redaction cannot hide a changed action list.
+Protected/failed children remain in bulk-policy checks even when their published selection states have been removed.
+
+Actual final checks:
+
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 238 Java/native tests, zero failures/errors/skips. The invalid-signal native failure-path test emits its expected fixed GLib diagnostic. Counts, suites and regression names are in `review-corrections/java-check.json`.
+- `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip; host permissions allow the temporary Unix sockets used by the suite.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-review-final-qa` — **Passed**, 15 independent libatspi scenarios on Fedora/GNOME/Wayland. The expanded checks cover independent ContextMenus on combo/menu button/menu bar, editable-combo code-point caret and two caret events, real-node hidden selection denials (individual/select-all/clear), physical-ancestor redaction, protected bulk denial and recovery. Existing collision, menu, selection and disposal scenarios remain enabled.
+
+FX regressions additionally cover a child blocked by its source window's modal while its semantic container stays
+eligible in another window; changed source-window inclusion; password ancestry; sensitivity/exclusion transitions and
+privacy-safe reference retirement; cross-window geometry unavailability; shared physical listeners and ancestor
+reparenting. Thirty removal/reinclusion cycles return the subscription index to zero on each removal and to the same
+size on recovery; close removes it, and unchanged synchronizations add no publications or projections.
+
+Private-bus regressions hold requests before execution, then change selection eligibility or action revision. Reordered,
+replaced and redaction-masked actions return AccessDenied with no effect, while unrelated projection changes remain
+executable. Teardown asserts balanced invocation, export and introspection acquisition/release. The FX fingerprint
+test also changes metadata beyond 40,000 UTF-16 units, verifying bounded-buffer processing beyond the published bounds.
+
+During validation, the new popup regression caught the standard combo popup's absent ownerNode; detection now uses
+the public content Window identity and a dedicated active-combo index. A protocol test was corrected to await actual
+native Action interface registration rather than just snapshot adoption. No timeout, privacy rule or assertion was weakened.
+
+`review-corrections/environment.json` pins final main/test source hashes, the QA script and installed JARs. Final desktop
+results and fixed fixture status are retained alongside it. No JavaFX tests or other task fixtures overlap that QA run.
+The earlier SC-01 timings are historical evidence for their recorded code, not performance qualification of this follow-up.
+No complete quick/full matrix or memory attribution was rerun, and no performance budget was changed.

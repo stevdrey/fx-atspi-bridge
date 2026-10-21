@@ -24,11 +24,16 @@ import dev.desktopcontrol.fxatspi.adapter.AdapterSession;
 import dev.desktopcontrol.fxatspi.adapter.ControlAdapter;
 import dev.desktopcontrol.fxatspi.adapter.SemanticProjection;
 import dev.desktopcontrol.fxatspi.adapter.SemanticRole;
+import dev.desktopcontrol.fxatspi.adapter.SemanticChild;
+import dev.desktopcontrol.fxatspi.adapter.SemanticState;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Application;
 import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Side;
@@ -39,6 +44,9 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Control;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.SkinBase;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
@@ -59,6 +67,48 @@ import javafx.stage.Stage;
 public final class SemanticsApp extends Application {
     private FxAtSpiBridge bridge;
     private static final AtomicInteger DISPOSALS = new AtomicInteger();
+    public static final class SelectionItem extends Label {
+        final BooleanProperty selected = new SimpleBooleanProperty();
+        SelectionItem() { super("Real selectable item"); }
+    }
+    public static final class SelectionProxy extends Control {
+        final SelectionItem item;
+        SelectionProxy(SelectionItem item) {
+            this.item = item; setPrefSize(260,28);
+            setSkin(new SkinBase<SelectionProxy>(this) {{ getChildren().add(new Label("Real-node selection proxy")); }});
+        }
+    }
+    public static final class SourceGroup extends Control {
+        SourceGroup(SelectionItem item) {
+            setPrefSize(260,28);
+            setSkin(new SkinBase<SourceGroup>(this) {{ getChildren().add(item); }});
+        }
+    }
+    public static final class SelectionProxyAdapter implements ControlAdapter<SelectionProxy> {
+        public Class<SelectionProxy> targetType() { return SelectionProxy.class; }
+        public AdapterSession open(SelectionProxy proxy,AdapterContext context) {
+            return new AdapterSession() {
+                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Real-node selection").selection(true); }
+                public List<SemanticChild> children() { return List.of(SemanticChild.node(proxy.item)); }
+                public boolean execute(AdapterCommand command) {
+                    if (command instanceof AdapterCommand.Select(var child,var selected) && child == proxy.item) { proxy.item.selected.set(selected); return true; }
+                    if (command instanceof AdapterCommand.SelectAll) { proxy.item.selected.set(true); return true; }
+                    if (command instanceof AdapterCommand.ClearSelection) { proxy.item.selected.set(false); return true; }
+                    return false;
+                }
+            };
+        }
+    }
+    public static final class SelectionItemAdapter implements ControlAdapter<SelectionItem> {
+        public Class<SelectionItem> targetType() { return SelectionItem.class; }
+        public AdapterSession open(SelectionItem item,AdapterContext context) {
+            context.observe(item.selected); context.observe(item.textProperty());
+            return new AdapterSession() {
+                public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,item.getText())
+                        .states(item.selected.get() ? Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED) : Set.of(SemanticState.SELECTABLE)); }
+            };
+        }
+    }
     public static final class Counter extends VBox {
         final IntegerProperty value = new SimpleIntegerProperty();
         Counter() { var label = new Label(); label.textProperty().bind(value.asString("Counter: %d")); getChildren().add(label); }
@@ -100,6 +150,28 @@ public final class SemanticsApp extends Application {
         var subitem = new MenuItem("Subitem"); AutomationIds.set(subitem,"subitem"); submenu.getItems().add(subitem);
         var menu = new Menu("File"); AutomationIds.set(menu,"menu-file"); menu.getItems().addAll(execute,menuCheck,menuRadio,submenu);
         var bar = id(new MenuBar(menu),"menu-bar");
+        var menuButton = id(new MenuButton("Menu button",null,new MenuItem("Button action")),"menu-button");
+        var contextButtons = new HBox(8);
+        for (var anchor : List.of(combo,menuButton,bar)) {
+            var suffix = anchor == combo ? "combo" : anchor == menuButton ? "button" : "bar";
+            var item = new MenuItem("Independent " + suffix); AutomationIds.set(item,"context-item-"+suffix);
+            var popup = new ContextMenu(item); AutomationIds.set(popup,"context-"+suffix);
+            var show = id(new Button("Context on " + suffix),"show-context-"+suffix);
+            show.setOnAction(_ -> popup.show(anchor,Side.BOTTOM,0,0)); contextButtons.getChildren().add(show);
+        }
+        var editable = id(new ComboBox<String>(),"editable-combo"); editable.setEditable(true);
+        var caretOne = id(new Button("Caret 1"),"caret-one"); caretOne.setOnAction(_ -> editable.getEditor().positionCaret(1));
+        var caretTwo = id(new Button("Caret 2"),"caret-two"); caretTwo.setOnAction(_ -> editable.getEditor().positionCaret(3));
+        var realItem = id(new SelectionItem(),"real-item");
+        var source = new SourceGroup(realItem); var proxy = id(new SelectionProxy(realItem),"real-selection");
+        var visibleSource = id(new Button("Toggle source visibility"),"toggle-source-visible");
+        visibleSource.setOnAction(_ -> source.setVisible(!source.isVisible()));
+        var sensitiveSource = id(new Button("Toggle source privacy"),"toggle-source-sensitive");
+        sensitiveSource.setOnAction(_ -> {
+            var sensitiveNow = !"sensitive".equals(source.getId()); source.setId(sensitiveNow ? "sensitive" : null);
+            realItem.setText(sensitiveNow ? "SC08_SECRET_REAL" : "Real selectable item");
+            AutomationIds.set(realItem,sensitiveNow ? "SC08_SECRET_REAL_ID" : "real-item");
+        });
         var popupItem = new MenuItem("Context action"); AutomationIds.set(popupItem,"context-action");
         var context = new ContextMenu(popupItem); AutomationIds.set(context,"context-menu");
         var showContext = id(new Button("Show context"),"show-context");
@@ -110,13 +182,16 @@ public final class SemanticsApp extends Application {
         sensitive.setId("sensitive"); sensitive.setValue("SC08_SECRET_VALUE");
         var rename = id(new Button("Rename ID"),"rename"); rename.setOnAction(_ -> AutomationIds.set(checked,"check-renamed"));
         var remove = id(new Button("Remove custom"),"remove-custom");
-        var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,combo,tabs,showContext,counter,password,sensitive,result,rename,remove);
+        var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,new HBox(8,combo,menuButton),tabs,contextButtons,
+                new HBox(8,editable,caretOne,caretTwo),proxy,source,new HBox(8,visibleSource,sensitiveSource),
+                showContext,counter,password,sensitive,result,rename,remove);
         remove.setOnAction(_ -> { box.getChildren().remove(counter); result.setText("Adapter disposals: " + DISPOSALS.get()); });
         var duplicate = id(new Button("Duplicate IDs"),"duplicate"); duplicate.setOnAction(_ -> AutomationIds.set(radioA,"check-renamed"));
         box.getChildren().add(duplicate); box.setPadding(new Insets(12));
         stage.setTitle("SC08 Semantic Lab"); stage.setScene(new Scene(box,620,720)); stage.show();
+        editable.getEditor().setText("a😀b"); editable.getEditor().positionCaret(0);
         if (!getParameters().getRaw().contains("--no-atspi")) bridge = FxAtSpiBridge.installConfigured(BridgeOptions.builder()
-                .applicationName("SC08 Semantic Lab").adapters(List.of(new CounterAdapter()))
+                .applicationName("SC08 Semantic Lab").adapters(List.of(new CounterAdapter(),new SelectionProxyAdapter(),new SelectionItemAdapter()))
                 .sensitiveNodes(node -> "sensitive".equals(node.getId())).build());
     }
     @Override public void stop() {

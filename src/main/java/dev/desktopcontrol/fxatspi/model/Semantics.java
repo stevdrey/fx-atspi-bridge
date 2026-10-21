@@ -22,7 +22,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /** Sanitized transport data only. No application keys, callbacks, sessions or JavaFX objects. */
-public record Semantics(String automationId, List<SemanticAction> actions, Set<SemanticState> states, boolean selection) {
+public record Semantics(String automationId, List<SemanticAction> actions, Set<SemanticState> states, boolean selection,
+                        long actionRevision) {
+    public Semantics(String automationId, List<SemanticAction> actions, Set<SemanticState> states, boolean selection) {
+        this(automationId, actions, states, selection, 0);
+    }
     public static final Semantics EMPTY = new Semantics("", List.of(), Set.of(), false);
     public Semantics {
         Objects.requireNonNull(automationId);

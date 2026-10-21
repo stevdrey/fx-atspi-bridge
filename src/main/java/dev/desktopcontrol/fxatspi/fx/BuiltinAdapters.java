@@ -131,6 +131,7 @@ final class BuiltinAdapters {
                 context.observe(combo.valueProperty()); context.observe(combo.showingProperty());
                 context.observe(combo.converterProperty()); context.observe(combo.editableProperty());
                 context.observe(combo.getEditor().textProperty()); context.observe(combo.getEditor().editableProperty());
+                context.observe(combo.getEditor().caretPositionProperty());
             }
         }
         @SuppressWarnings("unchecked") private void watch(ObservableList<?> value, boolean add) {
@@ -201,8 +202,9 @@ final class BuiltinAdapters {
                 if (combo.isShowing()) states.add(SemanticState.EXPANDED);
                 var value = combo.getValue();
                 var text = combo.isEditable() ? combo.getEditor().getText() : label(value, -1);
+                var caret = combo.isEditable() ? text.codePointCount(0, Math.min(combo.getEditor().getCaretPosition(), text.length())) : 0;
                 return SemanticProjection.of(SemanticRole.COMBO_BOX, "").states(states).selection(false)
-                        .actions("toggle-popup").text(text, combo.isEditable() && combo.getEditor().isEditable(), 0);
+                        .actions("toggle-popup").text(text, combo.isEditable() && combo.getEditor().isEditable(), caret);
             }
             return SemanticProjection.of(SemanticRole.LIST, "").selection(multiple);
         }

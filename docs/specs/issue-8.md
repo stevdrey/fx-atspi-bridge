@@ -38,9 +38,24 @@ Additive public API, except AccessibleId now represents configured automation ID
 | --- | --- | --- |
 | Adapter session, logical key/factory and occurrence tokens | FX observer/parent session | Removal, exclusion, replacement, failure or bridge close; no provider reference |
 | Context observables and cleanup registrations | FX adapter context | Independent once-only disposal, including partial open failure |
+| Additional physical property dependencies and original-action digests | FX observer | Identity-shared listeners removed on reassignment/removal/exclusion/close; only fixed-size digests retained, no original strings |
 | Automation ID index and change port subscription | FX observer | Changes update touched IDs; close unregisters the port and clears maps |
 | Selection invocation, reply and queued command | Existing provider/coordinator | Existing bounded deadlines, answer/unref once; stop/bus loss drains pending work |
 | GVariant arguments/replies, introspection and native registrations | Existing FFM/provider owner | Existing temporary-child release, schema cache and deregistration/arena teardown; no new arena or native thread |
 
 Standalone context menus anchored to sensitive/excluded/password nodes are excluded, including their content-sized
 Window geometry. Non-sensitive menu windows retain a real coordinate frame even though their role is MENU.
+
+## PR #41 review corrections
+
+Real adapter Node children retain both semantic-owner and physical-ancestor privacy, source-window inclusion and
+physical action eligibility. Additional physical subscriptions are identity-shared, FX-owned and removed with their
+dependents; no idle polling is added. Password descendants cannot be exported through another adapter.
+Queued DoAction captures an internal action-list revision and denies execution if it changes after FX synchronization.
+Revision comparison includes original ordered metadata (FX-only SHA-256, bounded scratch storage) and published
+metadata, so redaction cannot hide a reorder. Public adapter commands remain unchanged.
+Suppress only identifiable represented popups; unrelated ContextMenus on adapted controls remain discoverable.
+Editable combo caret is observed and uses code-point offsets, with existing protected-text caret rules.
+Acceptance includes queued and bulk selection denials, masked action reorders, physical privacy transitions and
+subscription cleanup/churn, independent context menus and Unicode caret events. Historical performance artifacts
+remain evidence only for their recorded revision; do not retune budgets or repeat the full quick/full matrix.

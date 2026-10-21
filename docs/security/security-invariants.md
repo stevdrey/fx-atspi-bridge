@@ -32,3 +32,11 @@ existing action limits/deadlines and provider-owned invocation cleanup apply to 
 use immutable snapshots and never schedule FX work. Candidate option checks release their temporary subscriptions;
 failed candidates do not adopt options. Live collisions use controlled bridge shutdown. Expansion limits are
 recoverable through event-driven subscriptions, with no timer, unbounded executor or retry loop.
+
+Declared real children combine semantic-owner privacy with physical ancestors and source-window inclusion; password
+descendants are excluded. Physical visibility/modal eligibility is required for real selection children, including bulk
+operations; logical offscreen selection retains its container contract. Additional physical dependencies are shared by
+identity on FX and detached on removal, reparenting, exclusion or close. Cross-window geometry is unavailable.
+Queued activations compare their admitted action-list revision after FX synchronization. Ordered original metadata is
+fingerprinted in bounded scratch storage on FX, including changes masked by redaction; only a numeric revision enters
+snapshots. Raw metadata fingerprints and application keys never cross to native protocol state.

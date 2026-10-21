@@ -711,8 +711,12 @@ final class AtSpiProvider {
                 if (item == null) throw Rejected.STALE;
                 if (index < 0 || index >= item.semantics().actions().size()) throw new Rejected("Action index out of range");
                 requireCapability(item, Capability.ACTION);
+                var revision = item.semantics().actionRevision();
                 mutate(invocation, id, Ffm.string(sender), item, Capability.ACTION,
-                        () -> actions.execute(id,new AdapterCommand.Activate(index),null));
+                        () -> {
+                            if (actions.actionRevision(id) != revision) throw Rejected.DENIED;
+                            return actions.execute(id,new AdapterCommand.Activate(index),null);
+                        });
                 return;
             }
             if (api.endsWith("EditableText") && name.equals("SetTextContents")) {

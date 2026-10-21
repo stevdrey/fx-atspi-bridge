@@ -1,0 +1,198 @@
+{
+  "tests": 238,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "command": "./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon",
+  "status": "Passed",
+  "suites": [
+    {
+      "name": "dev.desktopcontrol.fxatspi.BridgeOptionsTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ActionLimitsTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ComponentTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ConfigurationTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.BridgeLifecycleTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.CommandCoordinatorTest",
+      "tests": 32,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.FfmTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ModalActionTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.AtSpiTextTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ProviderLifecycleTest",
+      "tests": 29,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.ProviderWakeupTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.SelectionProtocolTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.StatusDispatcherTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.UpdateCompletionTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.fx.ActionExecutorTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.fx.SceneObserverTest",
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.model.GeometryTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.fx.SemanticObserverTest",
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.model.ModelTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.model.NodeStoreTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.protocol.SnapshotDiffTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "name": "dev.desktopcontrol.fxatspi.protocol.AtSpiObjectsTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "reviewRegressionTests": {
+    "dev.desktopcontrol.fxatspi.SelectionProtocolTest": [
+      "queuedActionAllowsUnrelatedProjectionChanges()",
+      "queuedRemovalReturnsStaleWithoutEffects()",
+      "queuedActionsDenyReordersReplacementsAndMaskedChanges()",
+      "readsUseSnapshotsAndValidateAsymmetricIndicesWithoutQueueingFx()",
+      "queuedIndexKeepsItsOriginalChildAcrossPermutationAndContainerConflicts()",
+      "queuedSelectionAndBulkOperationsRecheckChildEligibility()"
+    ],
+    "dev.desktopcontrol.fxatspi.fx.SemanticObserverTest": [
+      "privacyAppliesToAllAdapterOutputAndPasswordsNeverOpen()",
+      "tabsObserveOnlyActiveContentAndRespectDisabledTabs()",
+      "sensitiveContextMenusAreExcludedIncludingContentSizedWindowGeometry()",
+      "comboValueIsIndependentOfSelectedItemsAndPolicyBlocksSelection()",
+      "semanticCycleFailsClosed()",
+      "duplicatesRejectInitialAndCandidateButLiveCollisionCloses()",
+      "externalAdapterDisposesEvenAfterOpenFailureAndCannotBypassPolicy()",
+      "actionRevisionDetectsMaskedReordersButIgnoresUnrelatedState()",
+      "realChildrenRecheckSourceWindowInclusionWhenItsObservedPropertiesChange()",
+      "realChildrenPreservePhysicalPrivacyAcrossChangesAndReleaseSharedWatches()",
+      "realChildrenCannotEscapeSourceWindowOrPasswordAncestry()",
+      "independentMenusOnAdaptedControlsAreExportedWithoutDuplicatingTheirPopups()",
+      "logicalIdsAreRedactedOnceAndOpenFailuresReleaseSubscriptions()",
+      "realSelectionChildrenRequireTheirOwnPhysicalEligibility()",
+      "checkAndRadioSemanticsAndEvents()",
+      "menuRequiresOpenAncestorsAndHonorsDisable()",
+      "oversizedCollectionIsInertAndRecoversWithoutRetainingChildren()",
+      "automationIdDoesNotChangeIncarnationAndHasNoCssFallback()",
+      "realSelectionUsesItsSourceWindowModalityRatherThanOnlyTheContainerWindow()",
+      "editableComboCaretUsesCodePointsAndPublishesCaretOnlyChanges()",
+      "physicalWatchesAreSharedAndRebindWhenAnAncestorMoves()",
+      "occurrenceIdentityPermutationSelectionAndStaleness()"
+    ]
+  }
+}

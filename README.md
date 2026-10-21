@@ -155,6 +155,11 @@ activation; `textWriteAllowed` controls text mutation. Offscreen logical items c
 visible container. Unsupported selection operations (for example SelectAll in single-selection mode) return false;
 policy/state denials retain the documented AccessDenied error.
 
+Queued activations also retain an internal revision of the ordered action metadata. If actions change before FX
+execution, the request returns AccessDenied rather than invoking a different action at the same index. This detects
+changes hidden by metadata redaction. Adapters must observe/invalidate changing action metadata and distinguish actions
+whose meaning changes; unrelated projection changes do not invalidate the action list.
+
 `BridgeOptions.builder().maxSemanticChildren(1000)` configures the per-collection limit (1..10,000; default 1,000).
 The bridge additionally limits logical objects to 10,000, semantic depth to 64, actions per object to 16 and
 subscriptions/cleanup registrations per adapter context to 256 each. Cycles and duplicate child keys fail closed.
@@ -174,6 +179,11 @@ before builtins; passwords always bypass adapter selection. Sessions read raw FX
 with stable identity keys, and execute admitted commands. Keys and factories never enter provider snapshots.
 Use `SemanticChild.node(node)` for actual JavaFX nodes so their own policy and password protections still apply;
 logical keys are scoped to their parent's lifetime and use object identity. Nodes cannot be disguised as logical keys.
+Real children retain exclusion/sensitivity from both semantic owners and physical ancestors, plus source-window inclusion.
+Their physical visibility and modality are checked before individual or bulk selection. Password descendants cannot be
+exported through another adapter. Additional physical subscriptions are shared and disposed with their dependent children.
+Geometry is unavailable when the source node belongs to a different window from its exported semantic frame.
+Independent ContextMenus on adapted controls remain exported; only identified represented popups are suppressed.
 
 Call `context.observe(observable)` for subscriptions or `context.invalidate()` for an application event on FX.
 Use `context.onDispose(cleanup)` for additional resources. The bridge removes subscriptions and runs cleanup even

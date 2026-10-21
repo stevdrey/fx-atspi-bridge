@@ -27,6 +27,9 @@ public interface ActionPort {
     /** FX-side current policy and projection check; no transport or native objects cross this boundary. */
     default boolean permits(String id, String sender, Capability capability) { return true; }
 
+    /** Current FX-owned action-list revision; no original metadata crosses this boundary. */
+    default long actionRevision(String id) { return 0; }
+
     /** Current child policy for a selection request, checked on FX after synchronization. */
     default boolean selectionTargetEligible(String parent, String child) { return true; }
     /** Current policy for every selectable child affected by a bulk selection. */

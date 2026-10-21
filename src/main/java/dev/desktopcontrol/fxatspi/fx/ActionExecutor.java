@@ -54,8 +54,10 @@ public final class ActionExecutor implements ActionPort {
     @Override public boolean selectionTargetEligible(String parent, String child) {
         if (observer == null) return true;
         var owner = observer.ownerFor(child);
-        return owner != null && policy(owner,Capability.SELECTION) && observer.selectable(parent,child);
+        return owner != null && policy(owner,Capability.SELECTION) && observer.selectable(parent,child)
+                && (!(registry.target(child) instanceof Node node) || eligible(node));
     }
+    @Override public long actionRevision(String id) { return observer == null ? 0 : observer.actionRevision(id); }
     @Override public boolean selectionSetEligible(String parent, boolean clear) {
         if (observer == null) return true;
         for (var child : observer.selectionChildren(parent,clear)) if (!selectionTargetEligible(parent,child)) return false;

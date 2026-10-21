@@ -46,7 +46,7 @@ def tree(app):
         node.clear_cache()
         identity = node.get_accessible_id()
         name = node.get_name()
-        if 'SC08_SECRET' in name or 'password-id-must-not-publish' in identity or identity == 'sensitive-id':
+        if 'SC08_SECRET' in name or 'SC08_SECRET' in identity or 'password-id-must-not-publish' in identity or identity == 'sensitive-id':
             raise AssertionError('privacy metadata leak')
         if identity:
             if identity in found:
@@ -179,6 +179,61 @@ def run(launcher, out):
             assert rectangle.width > 0 and rectangle.height > 0
             assert Atspi.Action.do_action(found['context-action'], 0)
             results['cases'].append('context-menu')
+            for suffix in ('combo', 'button', 'bar'):
+                settle()
+                found = tree(app)
+                assert Atspi.Action.do_action(found['show-context-' + suffix], 0)
+                settle()
+                found = tree(app)
+                assert 'context-' + suffix in found and 'context-item-' + suffix in found
+                assert Atspi.Action.do_action(found['context-item-' + suffix], 0)
+            results['cases'].append('independent-context-menus-on-adapted-controls')
+            settle()
+            found = tree(app)
+            assert Atspi.Text.get_text(found['editable-combo'], 0, -1) == 'a😀b'
+            assert Atspi.Action.do_action(found['caret-two'], 0)
+            settle()
+            found = tree(app)
+            assert Atspi.Text.get_caret_offset(found['editable-combo']) == 2
+            assert Atspi.Action.do_action(found['caret-one'], 0)
+            settle()
+            found = tree(app)
+            assert Atspi.Text.get_caret_offset(found['editable-combo']) == 1
+            assert counts['text-caret-moved'] > 0
+            results['cases'].append('editable-combo-unicode-caret-and-events')
+            assert Atspi.Selection.select_child(found['real-selection'], 0)
+            assert Atspi.Action.do_action(found['toggle-source-visible'], 0)
+            settle()
+            found = tree(app)
+            for method, args in ((Atspi.Selection.select_child, (0,)), (Atspi.Selection.select_all, ()), (Atspi.Selection.clear_selection, ())):
+                try:
+                    method(found['real-selection'], *args)
+                    raise AssertionError('hidden real child selection accepted')
+                except GLib.Error:
+                    pass
+            assert Atspi.Action.do_action(found['toggle-source-visible'], 0)
+            settle()
+            found = tree(app)
+            assert Atspi.Selection.clear_selection(found['real-selection'])
+            results['cases'].append('real-node-selection-physical-visibility')
+            assert Atspi.Action.do_action(found['toggle-source-sensitive'], 0)
+            settle()
+            found = tree(app)
+            assert 'real-item' not in found
+            protected = found['real-selection'].get_child_at_index(0)
+            assert protected.get_name() == '[redacted]'
+            for method in (Atspi.Selection.select_all, Atspi.Selection.clear_selection):
+                try:
+                    method(found['real-selection'])
+                    raise AssertionError('protected real child bulk selection accepted')
+                except GLib.Error:
+                    pass
+            assert Atspi.Action.do_action(found['toggle-source-sensitive'], 0)
+            settle()
+            found = tree(app)
+            assert 'real-item' in found
+            assert Atspi.Selection.get_n_selected_children(found['real-selection']) == 0
+            results['cases'].append('real-node-physical-ancestor-privacy-and-bulk-denial')
             settle()
             found = tree(app)
             assert Atspi.Action.do_action(found['custom'], 0)

@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.desktopcontrol.fxatspi.adapter.AdapterCommand;
 import dev.desktopcontrol.fxatspi.adapter.SemanticState;
+import dev.desktopcontrol.fxatspi.adapter.SemanticAction;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
@@ -34,6 +35,7 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,7 @@ class SelectionProtocolTest {
     private final ArrayBlockingQueue<Runnable> tasks = new ArrayBlockingQueue<>(8);
     private final AtomicReference<Snapshot> current = new AtomicReference<>();
     private final AtomicReference<String> effect = new AtomicReference<>();
+    private final AtomicBoolean eligible = new AtomicBoolean(true);
     private static AccessibleNode node(String id, Role role, String parent, List<String> children, Set<Capability> capabilities) {
         return new AccessibleNode(id,id,role,"",false,true,true,false,false,0,parent,children,capabilities);
     }
@@ -65,7 +68,12 @@ class SelectionProtocolTest {
             public boolean press(String id) { return false; }
             public boolean setText(String id,String value) { return false; }
             public boolean isLive(String id) { return current.get().get(id) != null; }
-            public boolean execute(String id,AdapterCommand command,String childId) { effect.set(childId); return true; }
+            public long actionRevision(String id) { return current.get().get(id).semantics().actionRevision(); }
+            public boolean selectionTargetEligible(String parent,String child) { return eligible.get(); }
+            public boolean selectionSetEligible(String parent,boolean clear) { return eligible.get(); }
+            public boolean execute(String id,AdapterCommand command,String childId) {
+                effect.set(command instanceof AdapterCommand.Activate(var index) ? "action-" + index : childId); return true;
+            }
         };
         provider = new AtSpiProvider(_ -> {},current::get,port,_ -> bus.address(),false,tasks::add);
         provider.start();
@@ -117,5 +125,59 @@ class SelectionProtocolTest {
             current.set(snapshot(List.of("b"))); work.run();
             assertTrue(output(first).contains("UnknownObject")); assertEquals(null,effect.get());
         } finally { first.destroyForcibly(); }
+    }
+
+    @Test void queuedSelectionAndBulkOperationsRecheckChildEligibility() throws Exception {
+        for (var method : List.of("SelectChild","SelectAll","ClearSelection")) {
+            eligible.set(true);
+            var process = method.equals("SelectChild") ? request("list","org.a11y.atspi.Selection."+method,"0")
+                    : request("list","org.a11y.atspi.Selection."+method);
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work);
+                eligible.set(false); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+            } finally { process.destroyForcibly(); }
+        }
+    }
+
+    private void actions(long revision,List<String> names,String label) throws Exception {
+        var nodes = new HashMap<>(snapshot(List.of("a","b")).nodes());
+        nodes.put("list",new AccessibleNode("list",label,Role.PUSH_BUTTON,"",false,true,true,false,false,0,
+                "root",List.of(),Set.of(Capability.ACTION)).semantics(new Semantics("",names.stream().map(SemanticAction::of).toList(),Set.of(),false,revision)));
+        current.set(new Snapshot(nodes)); provider.refresh();
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (provider.publishedSnapshot().get("list").semantics().actionRevision() != revision && System.nanoTime() < deadline) Thread.sleep(5);
+        assertEquals(revision,provider.publishedSnapshot().get("list").semantics().actionRevision());
+        // Snapshot adoption precedes native interface registration; wait for the actual exported interface too.
+        var ready = false;
+        while (System.nanoTime() < deadline) {
+            if (output(request("list","org.freedesktop.DBus.Introspectable.Introspect")).contains("DoAction")) { ready = true; break; }
+        }
+        assertTrue(ready,"Action interface must be registered before the request");
+    }
+
+    @Test void queuedActionsDenyReordersReplacementsAndMaskedChanges() throws Exception {
+        var revision = 1L;
+        for (var after : List.of(List.of("B","A"),List.of("replacement","B"),List.of("masked","masked"))) {
+            var before = after.getFirst().equals("masked") ? after : List.of("A","B");
+            actions(revision,before,"Action owner");
+            var process = request("list","org.a11y.atspi.Action.DoAction","0");
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work);
+                actions(++revision,after,"Action owner"); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+            } finally { process.destroyForcibly(); }
+            revision++;
+        }
+    }
+
+    @Test void queuedActionAllowsUnrelatedProjectionChanges() throws Exception {
+        actions(1,List.of("A","B"),"Before");
+        var process = request("list","org.a11y.atspi.Action.DoAction","1");
+        try {
+            var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work);
+            actions(1,List.of("A","B"),"After"); work.run();
+            assertEquals("(true,)",output(process)); assertEquals("action-1",effect.get());
+        } finally { process.destroyForcibly(); }
     }
 }
