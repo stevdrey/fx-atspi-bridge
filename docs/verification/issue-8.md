@@ -176,6 +176,8 @@ separate full-baseline and memory characterization work.
 
 ## PR #41 — five review corrections
 
+This section records the earlier follow-up published at `556a2f2`; the next section records the second review round.
+
 The review follow-up preserves public installation/adapter signatures. It adds physical eligibility to real selection
 children (including source-window modality and bulk operations), an internal action-list revision captured at admission,
 physical ancestor/source-window privacy and shared dependency subscriptions, represented-popup identity checks, and
@@ -208,3 +210,40 @@ native Action interface registration rather than just snapshot adoption. No time
 results and fixed fixture status are retained alongside it. No JavaFX tests or other task fixtures overlap that QA run.
 The earlier SC-01 timings are historical evidence for their recorded code, not performance qualification of this follow-up.
 No complete quick/full matrix or memory attribution was rerun, and no performance budget was changed.
+
+## PR #41 — second review round (three comments)
+
+The follow-up to `556a2f2` gives real semantic edges precedence over ordinary physical traversal. Both parent records
+are reconciled on reassignment; releasing a semantic edge or removing its owner restores an eligible physical edge
+without retiring a still-live Node. An FX identity index reserves real Nodes even while owner sensitivity or a failed
+expansion hides them. Sensitive sessions read bounded child descriptors to reserve those Nodes, without opening
+logical factories. Reservations leave with actual descriptor removal, session replacement or owner disposal; multiple
+semantic owners fail the conflicting expansion closed. This prevents physical traversal from re-exposing protected aliases.
+
+Showing excluded standalone ContextMenus remain window candidates for re-evaluation when an observed owner changes.
+Their contents have no retained subscriptions; hiding the window or closing the observer releases the candidate.
+Logical replacements retire outgoing owned subtrees before capacity admission. Pending siblings reserve their slots
+through nested attachment; attachment consumes a reservation and cancellation releases it. The unchanged 10,000 cap
+continues to make genuine overflows inert while unaffected child incarnations survive valid replacements.
+
+Actual final checks:
+
+- `./gradlew test --tests '*SemanticObserverTest' --no-daemon` — **Passed**, 30 FX regressions. The expanded checks cover both initial traversal orders, direct and nested physical aliases, physical restructuring/reparenting, descriptor release and owner removal, bidirectional snapshot and child-event consistency, sensitive/failing owner reservations, and cleanup. The 10,000-object tests cover a one-for-one replacement, nested replacement, pending sibling capacity, unchanged-reference selection, and genuine overflow/recovery.
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 246 Java/native tests, zero failures/errors/skips. The invalid-signal failure-path test emits its expected fixed GLib diagnostic. Actual suites and FX test names are retained in `review-round2/java-check.json`.
+- `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-review-round2-qa` — **Passed**, 17 independent libatspi scenarios on Fedora 44 / GNOME / Wayland, libatspi 2.60.7. The fixture now places the real selectable item inside an ordinary VBox. The probe verifies semantic parent consistency, release/reclaim without changing the accessible reference, and recovery of a still-showing menu after owner sensitivity changes. All previous scenarios remain enabled; two Unicode caret events were received.
+
+Twenty sensitivity/removal/recovery cycles leave the popup showing throughout, restore exactly one popup frame and
+add no publications or projections on unchanged synchronization. Hiding it prevents later owner changes from restoring
+a vanished popup; close removes the owner listeners. Real-edge release/removal returns the extra physical subscription
+index to zero. These are functional idle/churn checks, not new latency/allocation or memory qualification.
+
+One development run timed out in the pre-existing editable-combo caret test while simple host command responses also
+stalled. Its unchanged 20-second timeout was retained. The isolated caret retry, subsequent 30-test FX run and final
+246-test full run all passed. No application timeout or assertion was weakened.
+
+`review-round2/environment.json` records base commit `556a2f2`, exact final main/test/probe source hashes and installed
+JAR hashes. The desktop results and fixed fixture status are retained alongside it; JavaFX test fixtures had terminated
+before the independent desktop run. Historical SC-01 artifacts and their budgets remain unchanged and qualify only
+their recorded revisions. The full quick/full matrix and pending memory characterization were not repeated. Local
+issue-1/issue-16 verification changes remain outside this patch.

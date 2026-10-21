@@ -177,6 +177,18 @@ def run(launcher, out):
             assert 'context-action' in found
             rectangle = Atspi.Component.get_extents(found['context-menu'], Atspi.CoordType.SCREEN)
             assert rectangle.width > 0 and rectangle.height > 0
+            original_menu = found['context-menu']
+            assert Atspi.Action.do_action(found['toggle-context-sensitive'], 0)
+            settle()
+            found = tree(app)
+            assert 'context-menu' not in found and 'context-action' not in found
+            assert found['result'].get_name() == 'Context showing: true'
+            assert Atspi.Action.do_action(found['toggle-context-sensitive'], 0)
+            settle()
+            found = tree(app)
+            assert found['context-menu'] != original_menu and 'context-action' in found
+            assert found['result'].get_name() == 'Context showing: true'
+            results['cases'].append('showing-context-menu-owner-privacy-recovery')
             assert Atspi.Action.do_action(found['context-action'], 0)
             results['cases'].append('context-menu')
             for suffix in ('combo', 'button', 'bar'):
@@ -201,6 +213,20 @@ def run(launcher, out):
             assert Atspi.Text.get_caret_offset(found['editable-combo']) == 1
             assert counts['text-caret-moved'] > 0
             results['cases'].append('editable-combo-unicode-caret-and-events')
+            original_item = found['real-item']
+            assert original_item.get_parent() == found['real-selection']
+            assert found['real-source'].get_child_count() == 0
+            assert Atspi.Action.do_action(found['toggle-real-ownership'], 0)
+            settle()
+            found = tree(app)
+            assert found['real-item'] == original_item and original_item.get_parent() == found['real-source']
+            assert found['real-selection'].get_child_count() == 0
+            assert Atspi.Action.do_action(found['toggle-real-ownership'], 0)
+            settle()
+            found = tree(app)
+            assert found['real-item'] == original_item and original_item.get_parent() == found['real-selection']
+            assert found['real-source'].get_child_count() == 0
+            results['cases'].append('semantic-ownership-and-physical-release-preserve-reference')
             assert Atspi.Selection.select_child(found['real-selection'], 0)
             assert Atspi.Action.do_action(found['toggle-source-visible'], 0)
             settle()

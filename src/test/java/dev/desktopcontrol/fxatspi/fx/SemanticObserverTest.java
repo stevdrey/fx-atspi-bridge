@@ -40,6 +40,7 @@ import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -137,6 +138,16 @@ class SemanticObserverTest {
         AccessibleNode named(String name) { return snapshot.nodes().values().stream().filter(n -> n.name().equals(name)).findFirst().orElseThrow(); }
         AccessibleNode role(Role role) { return snapshot.nodes().values().stream().filter(n -> n.role() == role).findFirst().orElseThrow(); }
         @Override public void close() { observer.close(); }
+    }
+    static void assertTree(Snapshot snapshot) {
+        var references = new HashMap<String,Integer>();
+        for (var node : snapshot.nodes().values()) for (var child : node.children()) {
+            assertNotNull(snapshot.get(child));
+            assertEquals(node.id(),snapshot.get(child).ancestor());
+            references.merge(child,1,Integer::sum);
+        }
+        for (var node : snapshot.nodes().values()) if (!node.id().equals(Snapshot.ROOT_ID))
+            assertEquals(1,references.get(node.id()),"Every non-root node has exactly one exported parent");
     }
     @Test void automationIdDoesNotChangeIncarnationAndHasNoCssFallback() throws Exception { fx(() -> {
         var button = new Button("Run"); button.setId("css-only");
@@ -526,6 +537,218 @@ class SemanticObserverTest {
             assertEquals(0,h.observer.physicalSubscriptions());
             source.setTitle("public"); h.observer.updateOptions(options,1); h.flush();
             assertTrue(h.snapshot.toString().contains("window-policy-secret"));
+        } return null;
+    }); }
+
+    @Test void semanticOwnershipWinsBothTraversalOrdersAndPhysicalRestructures() throws Exception { fx(() -> {
+        for (var semanticFirst : List.of(true,false)) {
+            var field = new Button("Owned node"); var physical = new VBox(field); physical.setAccessibleText("Physical");
+            var destination = new VBox(); destination.setAccessibleText("Destination");
+            var owner = new Owner(field);
+            try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter())).build(),
+                    semanticFirst ? owner : physical,semanticFirst ? physical : owner,destination)) {
+                var id = h.named("Owned node").id(); var ownerId = h.named("Owner").id();
+                assertEquals(List.of(id),h.snapshot.get(ownerId).children()); assertTree(h.snapshot);
+                var former = h.named("Physical").id();
+                physical.getChildren().add(new Label("Sibling")); h.flush();
+                assertEquals(ownerId,h.snapshot.get(id).ancestor()); assertTree(h.snapshot);
+                destination.getChildren().add(field); h.flush();
+                assertEquals(ownerId,h.snapshot.get(id).ancestor()); assertTree(h.snapshot);
+                var before = h.snapshot;
+                owner.child.set(null); h.flush();
+                var restored = h.named("Destination").id();
+                assertEquals(id,h.named("Owned node").id()); assertEquals(restored,h.snapshot.get(id).ancestor());
+                assertFalse(h.snapshot.get(former).children().contains(id)); assertTree(h.snapshot);
+                var changes = SnapshotDiff.diff(before,h.snapshot,h.snapshot.nodes().keySet());
+                assertTrue(changes.contains(new SnapshotDiff.ChildRemoved(ownerId,0,id)));
+                assertTrue(changes.contains(new SnapshotDiff.ChildAdded(restored,0,id)));
+                assertEquals(0,h.observer.physicalSubscriptions());
+                before = h.snapshot;
+                owner.child.set(field); h.flush();
+                assertEquals(id,h.named("Owned node").id()); assertEquals(ownerId,h.snapshot.get(id).ancestor());
+                changes = SnapshotDiff.diff(before,h.snapshot,h.snapshot.nodes().keySet());
+                assertTrue(changes.contains(new SnapshotDiff.ChildRemoved(restored,0,id)));
+                assertTrue(changes.contains(new SnapshotDiff.ChildAdded(ownerId,0,id))); assertTree(h.snapshot);
+            }
+            List.copyOf(Window.getWindows()).forEach(Window::hide);
+        } return null;
+    }); }
+
+    @Test void removingSemanticOwnerRestoresItsRealChildToThePhysicalTree() throws Exception { fx(() -> {
+        var field = new Button("Surviving node"); var physical = new VBox(field); physical.setAccessibleText("Physical");
+        var owner = new Owner(field);
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(ownerAdapter())).build(),owner,physical)) {
+            var id = h.named("Surviving node").id(); var ownerId = h.named("Owner").id();
+            var before = h.snapshot;
+            ((VBox) owner.getParent()).getChildren().remove(owner); h.flush();
+            assertEquals(id,h.named("Surviving node").id()); assertFalse(h.actions.isLive(ownerId));
+            assertEquals(h.named("Physical").id(),h.snapshot.get(id).ancestor()); assertTree(h.snapshot);
+            assertTrue(h.actions.press(id)); assertEquals(0,h.observer.physicalSubscriptions());
+            assertFalse(SnapshotDiff.diff(before,h.snapshot,Set.of(id)).contains(new SnapshotDiff.Removed(id)));
+        } return null;
+    }); }
+
+    @Test void sensitiveSemanticOwnerReservesRealChildrenUntilTheirActualRelease() throws Exception { fx(() -> {
+        for (var semanticFirst : List.of(true,false)) {
+            var field = new TextField("semantic-owner-secret"); field.setAccessibleText("semantic-owner-secret");
+            AutomationIds.set(field,"semantic-secret-id");
+            var physical = new VBox(field); physical.setAccessibleText("Public physical parent");
+            var owner = new Owner(field); owner.setId("sensitive");
+            var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                    .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+            try (var h = new Harness(options,semanticFirst ? owner : physical,semanticFirst ? physical : owner)) {
+                assertFalse(h.snapshot.toString().contains("secret")); assertTree(h.snapshot);
+                owner.setId(null); h.flush();
+                var id = h.named("semantic-owner-secret").id();
+                assertEquals(h.named("Owner").id(),h.snapshot.get(id).ancestor()); assertTree(h.snapshot);
+                var before = h.snapshot;
+                owner.setId("sensitive"); h.flush(); assertFalse(h.snapshot.toString().contains("secret"));
+                assertFalse(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream()
+                        .anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+                assertFalse(h.actions.isLive(id)); assertTree(h.snapshot);
+                // Unrelated physical restructuring must not reclaim a node hidden by its semantic owner's privacy.
+                physical.getChildren().add(new Label("Unrelated")); h.flush();
+                assertFalse(h.snapshot.toString().contains("secret")); assertTree(h.snapshot);
+                owner.child.set(null); h.flush();
+                assertNotNull(h.named("semantic-owner-secret"));
+                assertEquals(h.named("Public physical parent").id(),h.named("semantic-owner-secret").ancestor());
+                assertTree(h.snapshot);
+                owner.child.set(field); h.flush(); assertFalse(h.snapshot.toString().contains("secret"));
+                ((VBox) owner.getParent()).getChildren().remove(owner); h.flush();
+                assertNotNull(h.named("semantic-owner-secret")); assertTree(h.snapshot);
+                assertEquals(0,h.observer.physicalSubscriptions());
+            }
+            List.copyOf(Window.getWindows()).forEach(Window::hide);
+        } return null;
+    }); }
+
+    @Test void sensitiveSemanticClaimCanRetireAnEarlierDirectSibling() throws Exception { fx(() -> {
+        var field = new TextField("direct-secret"); var owner = new Owner(field); owner.setId("sensitive");
+        var options = BridgeOptions.builder().adapters(List.of(ownerAdapter()))
+                .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+        try (var h = new Harness(options,field,owner)) {
+            assertFalse(h.snapshot.toString().contains("direct-secret")); assertTree(h.snapshot);
+            owner.setId(null); h.flush();
+            var id = h.snapshot.get(h.registry.targetId(field)).id();
+            assertEquals(h.named("Owner").id(),h.snapshot.get(id).ancestor()); assertTree(h.snapshot);
+            owner.child.set(null); h.flush();
+            assertEquals(id,h.registry.targetId(field)); assertTree(h.snapshot);
+        } return null;
+    }); }
+
+    @Test void failedSemanticExpansionKeepsItsReservationUntilRecovery() throws Exception { fx(() -> {
+        var broken = new SimpleObjectProperty<>(false);
+        var delegate = ownerAdapter();
+        var adapter = new ControlAdapter<Owner>() {
+            public Class<Owner> targetType() { return Owner.class; }
+            public AdapterSession open(Owner owner,AdapterContext context) {
+                var session = delegate.open(owner,context); context.observe(broken);
+                return new AdapterSession() {
+                    public SemanticProjection read() { return session.read(); }
+                    public List<SemanticChild> children() {
+                        if (broken.get()) throw new IllegalStateException("fixed test failure");
+                        return session.children();
+                    }
+                };
+            }
+        };
+        var field = new TextField("failure-protected-content"); var owner = new Owner(field);
+        var physical = new VBox(field); physical.setAccessibleText("Physical");
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),owner,physical)) {
+            var old = h.registry.targetId(field);
+            broken.set(true); h.flush(); assertFalse(h.snapshot.toString().contains("failure-protected-content"));
+            physical.getChildren().add(new Label("Sibling")); h.flush(); assertFalse(h.actions.isLive(old));
+            assertFalse(h.snapshot.toString().contains("failure-protected-content")); assertTree(h.snapshot);
+            broken.set(false); h.flush();
+            var recovered = h.registry.targetId(field); assertNotEquals(old,recovered);
+            assertEquals(h.named("Owner").id(),h.snapshot.get(recovered).ancestor()); assertTree(h.snapshot);
+        } return null;
+    }); }
+
+    @Test void showingExcludedPopupRecoversOnObservedAnchorChangesWithoutReopening() throws Exception { fx(() -> {
+        var button = new Button("Anchor");
+        var popup = new ContextMenu(new MenuItem("Recovered menu item")); AutomationIds.set(popup,"recovering-popup");
+        var options = BridgeOptions.builder().sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+        try (var h = new Harness(options,button)) {
+            button.setId("sensitive"); popup.show(button,Side.BOTTOM,0,0); h.flush();
+            for (var cycle = 0; cycle < 20; cycle++) {
+                assertTrue(popup.isShowing()); assertEquals(1,h.snapshot.get(Snapshot.ROOT_ID).children().size());
+                assertFalse(h.snapshot.toString().contains("recovering-popup"));
+                button.setId(null); h.flush();
+                assertTrue(popup.isShowing()); assertNotNull(h.named("Recovered menu item"));
+                assertEquals(2,h.snapshot.get(Snapshot.ROOT_ID).children().size()); assertTree(h.snapshot);
+                var publications = h.observer.publications(); var projections = h.observer.projections();
+                h.flush(); assertEquals(publications,h.observer.publications()); assertEquals(projections,h.observer.projections());
+                button.setId("sensitive"); h.flush();
+            }
+            popup.hide(); h.flush(); button.setId(null); h.flush();
+            assertEquals(1,h.snapshot.get(Snapshot.ROOT_ID).children().size());
+            h.close(); var queued = h.scheduled.size(); button.setId("sensitive"); assertEquals(queued,h.scheduled.size());
+        } return null;
+    }); }
+
+    @Test void replacementAtGlobalLogicalLimitKeepsUnchangedReferencesAndSelection() throws Exception { fx(() -> {
+        var values = FXCollections.<String>observableArrayList();
+        for (var index = 0; index < 9999; index++) values.add("Item " + index);
+        var list = new ListView<>(values); list.setAccessibleText("Capacity");
+        var other = new ListView<String>(FXCollections.observableArrayList("Other"));
+        try (var h = new Harness(BridgeOptions.builder().maxSemanticChildren(10000).build(),list,other)) {
+            var root = h.named("Capacity"); var before = root.children(); var retained = before.get(5000);
+            var failures = h.observer.projectionFailures();
+            list.getItems().set(0,"Replacement"); h.flush();
+            var after = h.named("Capacity").children(); assertEquals(9999,after.size());
+            assertEquals(before.subList(1,before.size()),after.subList(1,after.size()));
+            assertFalse(h.actions.isLive(before.getFirst())); assertEquals(failures,h.observer.projectionFailures());
+            assertTrue(h.actions.execute(root.id(),new AdapterCommand.Select(null,true),retained)); h.flush();
+            assertEquals(5000,list.getSelectionModel().getSelectedIndex()); assertTree(h.snapshot);
+            list.getItems().add("Genuine global overflow"); h.flush();
+            var inert = h.snapshot.get(h.registry.targetId(list));
+            assertEquals(List.of(),inert.children()); assertFalse(inert.has(Capability.SELECTION));
+            list.getItems().removeLast(); h.flush(); assertEquals(9999,h.named("Capacity").children().size()); assertTree(h.snapshot);
+        } return null;
+    }); }
+
+    @Test void replacementCreditsOnlyRetiredLogicalSubtreesAtCapacity() throws Exception { fx(() -> {
+        var branch = new SimpleObjectProperty<>(new Object()); var retainedKey = new Object();
+        var leaves = FXCollections.<SemanticChild>observableArrayList();
+        for (var index = 0; index < 9999; index++) leaves.add(SemanticChild.logical(new Object(),_ -> new AdapterSession() {
+            public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,"Leaf"); }
+        }));
+        var closed = new AtomicInteger();
+        var adapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                context.observe(branch);
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Nested capacity").selection(true); }
+                    public List<SemanticChild> children() { return List.of(SemanticChild.logical(branch.get(),branchContext -> {
+                        branchContext.observe(leaves);
+                        return new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PANEL,"Branch"); }
+                        public List<SemanticChild> children() { return leaves; }
+                        public void close() { closed.incrementAndGet(); }
+                    }; }),SemanticChild.logical(retainedKey,_ -> new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,"Retained")
+                                .states(Set.of(SemanticState.SELECTABLE)); }
+                    })); }
+                    public boolean execute(AdapterCommand command) { return command instanceof AdapterCommand.Select(var key,boolean selected)
+                            && key == retainedKey && selected; }
+                };
+            }
+        };
+        try (var h = new Harness(BridgeOptions.builder().maxSemanticChildren(10000).adapters(List.of(adapter)).build(),new Label())) {
+            var parent = h.named("Nested capacity").id(); var retained = h.named("Retained").id();
+            // The first branch may not consume the slot already promised to its not-yet-attached sibling.
+            assertEquals(List.of(),h.snapshot.get(h.snapshot.get(parent).children().getFirst()).children());
+            assertTrue(h.snapshot.nodes().size() < 10000); assertTree(h.snapshot);
+            leaves.removeLast(); h.flush();
+            assertEquals(retained,h.named("Retained").id()); var old = h.named("Branch").id();
+            assertEquals(9998,h.named("Branch").children().size()); var failures = h.observer.projectionFailures();
+            branch.set(new Object()); h.flush();
+            assertEquals(9998,h.named("Branch").children().size()); assertNotEquals(old,h.named("Branch").id());
+            assertEquals(retained,h.named("Retained").id()); assertEquals(1,closed.get());
+            assertEquals(failures,h.observer.projectionFailures()); assertTree(h.snapshot);
+            assertTrue(h.actions.execute(parent,new AdapterCommand.Select(null,true),retained));
         } return null;
     }); }
 

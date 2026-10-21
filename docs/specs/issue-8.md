@@ -39,6 +39,7 @@ Additive public API, except AccessibleId now represents configured automation ID
 | Adapter session, logical key/factory and occurrence tokens | FX observer/parent session | Removal, exclusion, replacement, failure or bridge close; no provider reference |
 | Context observables and cleanup registrations | FX adapter context | Independent once-only disposal, including partial open failure |
 | Additional physical property dependencies and original-action digests | FX observer | Identity-shared listeners removed on reassignment/removal/exclusion/close; only fixed-size digests retained, no original strings |
+| Real-node ownership reservations, pending logical slots and excluded showing popup candidates | FX observer | Release with owner/session, pending attachment cancellation, window-list removal or close; no provider references or popup-content subscriptions |
 | Automation ID index and change port subscription | FX observer | Changes update touched IDs; close unregisters the port and clears maps |
 | Selection invocation, reply and queued command | Existing provider/coordinator | Existing bounded deadlines, answer/unref once; stop/bus loss drains pending work |
 | GVariant arguments/replies, introspection and native registrations | Existing FFM/provider owner | Existing temporary-child release, schema cache and deregistration/arena teardown; no new arena or native thread |
@@ -59,3 +60,25 @@ Editable combo caret is observed and uses code-point offsets, with existing prot
 Acceptance includes queued and bulk selection denials, masked action reorders, physical privacy transitions and
 subscription cleanup/churn, independent context menus and Unicode caret events. Historical performance artifacts
 remain evidence only for their recorded revision; do not retune budgets or repeat the full quick/full matrix.
+
+### Second PR #41 review follow-up
+
+Real semantic Node edges take precedence over ordinary physical traversal, independent of initial traversal order or
+later physical restructuring. Both sides of a reassignment publish consistent parent/child records; releasing a
+semantic edge restores an eligible ordinary physical edge in the same batch without retiring the live Node.
+An FX identity index reserves declared Nodes even when owner sensitivity/failure hides the expansion; reservations
+are released on actual descriptor removal, adapter replacement or owner disposal. Sensitive sessions may read bounded
+child descriptors to reserve real Nodes, without opening logical child factories. Multiple semantic owners of one
+Node fail the conflicting expansion closed. Ownership transitions must preserve central privacy in both traversal orders.
+Showing standalone ContextMenus excluded through an observed anchor's sensitivity are reconsidered on subsequent
+owner invalidations even while the popup remains showing. Retain only showing excluded popup candidates on FX;
+remove candidates when their window leaves the window list and clear them at close. Do not add polling or retain
+listeners on excluded popup contents.
+For the global 10,000 logical-object cap, retire outgoing owned subtrees before admitting replacement keys, leaving
+unchanged keys and their queued references intact. Genuine overflows still produce an inert expansion and recover
+through existing invalidations. Reserve the slots of not-yet-attached siblings while checking nested expansions;
+consume/release those reservations on attachment/cancellation. No transient attachment may exceed the cap.
+Acceptance: both physical/semantic traversal orders, physical reparent/restructure, semantic-edge release and owner
+removal, bidirectional snapshot/event consistency, still-showing popup hide/recovery through sensitivity changes,
+one-for-one and nested logical replacements at capacity, unchanged-item selection and genuine overflow/recovery.
+Record focused/full checks and independent libatspi QA; preserve earlier performance evidence and unrelated #1/#16 files.

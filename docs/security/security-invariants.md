@@ -40,3 +40,10 @@ identity on FX and detached on removal, reparenting, exclusion or close. Cross-w
 Queued activations compare their admitted action-list revision after FX synchronization. Ordered original metadata is
 fingerprinted in bounded scratch storage on FX, including changes masked by redaction; only a numeric revision enters
 snapshots. Raw metadata fingerprints and application keys never cross to native protocol state.
+
+Declared real-node ownership takes precedence over ordinary physical traversal. Owner-scoped FX reservations also
+cover real children hidden by sensitivity or a failed expansion; only an actual release or owner disposal permits
+physical fallback. Reassignments reconcile both parent records without retiring a still-live reference. Logical
+capacity checks release outgoing owned subtrees before admitting replacement keys; unaffected incarnations survive.
+Excluded showing standalone menus retain only a window candidate for owner-driven recovery, not content listeners;
+window-list removal and observer close release those candidates, and idle scenes schedule no recovery work.

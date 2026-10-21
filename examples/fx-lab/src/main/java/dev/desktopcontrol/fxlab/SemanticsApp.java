@@ -73,23 +73,24 @@ public final class SemanticsApp extends Application {
     }
     public static final class SelectionProxy extends Control {
         final SelectionItem item;
+        final BooleanProperty ownsItem = new SimpleBooleanProperty(true);
         SelectionProxy(SelectionItem item) {
             this.item = item; setPrefSize(260,28);
             setSkin(new SkinBase<SelectionProxy>(this) {{ getChildren().add(new Label("Real-node selection proxy")); }});
         }
     }
-    public static final class SourceGroup extends Control {
+    public static final class SourceGroup extends VBox {
         SourceGroup(SelectionItem item) {
-            setPrefSize(260,28);
-            setSkin(new SkinBase<SourceGroup>(this) {{ getChildren().add(item); }});
+            setPrefSize(260,28); getChildren().add(item);
         }
     }
     public static final class SelectionProxyAdapter implements ControlAdapter<SelectionProxy> {
         public Class<SelectionProxy> targetType() { return SelectionProxy.class; }
         public AdapterSession open(SelectionProxy proxy,AdapterContext context) {
+            context.observe(proxy.ownsItem);
             return new AdapterSession() {
                 public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Real-node selection").selection(true); }
-                public List<SemanticChild> children() { return List.of(SemanticChild.node(proxy.item)); }
+                public List<SemanticChild> children() { return proxy.ownsItem.get() ? List.of(SemanticChild.node(proxy.item)) : List.of(); }
                 public boolean execute(AdapterCommand command) {
                     if (command instanceof AdapterCommand.Select(var child,var selected) && child == proxy.item) { proxy.item.selected.set(selected); return true; }
                     if (command instanceof AdapterCommand.SelectAll) { proxy.item.selected.set(true); return true; }
@@ -163,7 +164,9 @@ public final class SemanticsApp extends Application {
         var caretOne = id(new Button("Caret 1"),"caret-one"); caretOne.setOnAction(_ -> editable.getEditor().positionCaret(1));
         var caretTwo = id(new Button("Caret 2"),"caret-two"); caretTwo.setOnAction(_ -> editable.getEditor().positionCaret(3));
         var realItem = id(new SelectionItem(),"real-item");
-        var source = new SourceGroup(realItem); var proxy = id(new SelectionProxy(realItem),"real-selection");
+        var source = id(new SourceGroup(realItem),"real-source"); var proxy = id(new SelectionProxy(realItem),"real-selection");
+        var ownership = id(new Button("Toggle semantic ownership"),"toggle-real-ownership");
+        ownership.setOnAction(_ -> proxy.ownsItem.set(!proxy.ownsItem.get()));
         var visibleSource = id(new Button("Toggle source visibility"),"toggle-source-visible");
         visibleSource.setOnAction(_ -> source.setVisible(!source.isVisible()));
         var sensitiveSource = id(new Button("Toggle source privacy"),"toggle-source-sensitive");
@@ -176,6 +179,11 @@ public final class SemanticsApp extends Application {
         var context = new ContextMenu(popupItem); AutomationIds.set(context,"context-menu");
         var showContext = id(new Button("Show context"),"show-context");
         showContext.setOnAction(_ -> context.show(showContext,Side.BOTTOM,0,0));
+        var contextPrivacy = id(new Button("Toggle context owner privacy"),"toggle-context-sensitive");
+        contextPrivacy.setOnAction(_ -> {
+            showContext.setId("sensitive".equals(showContext.getId()) ? null : "sensitive");
+            result.setText("Context showing: " + context.isShowing());
+        });
         var counter = id(new Counter(),"custom");
         var password = id(new PasswordField(),"password-id-must-not-publish"); password.setText("SC08_SECRET_PASSWORD");
         var sensitive = id(new ComboBox<String>(FXCollections.observableArrayList("SC08_SECRET_CHOICE")),"sensitive-id");
@@ -183,8 +191,8 @@ public final class SemanticsApp extends Application {
         var rename = id(new Button("Rename ID"),"rename"); rename.setOnAction(_ -> AutomationIds.set(checked,"check-renamed"));
         var remove = id(new Button("Remove custom"),"remove-custom");
         var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,new HBox(8,combo,menuButton),tabs,contextButtons,
-                new HBox(8,editable,caretOne,caretTwo),proxy,source,new HBox(8,visibleSource,sensitiveSource),
-                showContext,counter,password,sensitive,result,rename,remove);
+                new HBox(8,editable,caretOne,caretTwo),proxy,source,new HBox(8,visibleSource,sensitiveSource,ownership),
+                new HBox(8,showContext,contextPrivacy),counter,password,sensitive,result,rename,remove);
         remove.setOnAction(_ -> { box.getChildren().remove(counter); result.setText("Adapter disposals: " + DISPOSALS.get()); });
         var duplicate = id(new Button("Duplicate IDs"),"duplicate"); duplicate.setOnAction(_ -> AutomationIds.set(radioA,"check-renamed"));
         box.getChildren().add(duplicate); box.setPadding(new Insets(12));

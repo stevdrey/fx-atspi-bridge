@@ -180,10 +180,15 @@ with stable identity keys, and execute admitted commands. Keys and factories nev
 Use `SemanticChild.node(node)` for actual JavaFX nodes so their own policy and password protections still apply;
 logical keys are scoped to their parent's lifetime and use object identity. Nodes cannot be disguised as logical keys.
 Real children retain exclusion/sensitivity from both semantic owners and physical ancestors, plus source-window inclusion.
+Declared semantic ownership takes precedence over ordinary scene traversal. Releasing a real child restores an eligible
+ordinary physical edge without changing a still-live reference; a published removal still retires it. Sensitive or failed
+expansions retain their real-node reservations until the adapter releases them, so physical traversal cannot expose aliases.
+Declaring the same real Node under multiple semantic owners fails the conflicting expansion closed.
 Their physical visibility and modality are checked before individual or bulk selection. Password descendants cannot be
 exported through another adapter. Additional physical subscriptions are shared and disposed with their dependent children.
 Geometry is unavailable when the source node belongs to a different window from its exported semantic frame.
 Independent ContextMenus on adapted controls remain exported; only identified represented popups are suppressed.
+A still-showing standalone menu excluded through its observed anchor's sensitivity is reconsidered when the anchor changes.
 
 Call `context.observe(observable)` for subscriptions or `context.invalidate()` for an application event on FX.
 Use `context.onDispose(cleanup)` for additional resources. The bridge removes subscriptions and runs cleanup even

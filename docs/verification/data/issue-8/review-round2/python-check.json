@@ -1,0 +1,8 @@
+{
+  "status": "Passed",
+  "command": "python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'",
+  "tests": 219,
+  "skipped": 1,
+  "failures": 0,
+  "errors": 0
+}
