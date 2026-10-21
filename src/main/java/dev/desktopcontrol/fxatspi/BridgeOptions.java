@@ -123,7 +123,8 @@ public final class BridgeOptions {
         }
         public Builder adapters(List<ControlAdapter<?>> value) { adapters = List.copyOf(value); return this; }
         public Builder maxSemanticChildren(int value) { maxSemanticChildren = value; return this; }
-        public Builder itemTextProvider(BiFunction<Control, Object, String> value) { itemTextProvider = Objects.requireNonNull(value); return this; }
+        /** Null restores the default converter/positional names. */
+        public Builder itemTextProvider(BiFunction<Control, Object, String> value) { itemTextProvider = value; return this; }
         public Builder applicationName(String value) { applicationName = value; return this; }
         public Builder includedWindows(Predicate<Window> value) { includedWindows = value; return this; }
         public Builder excludedNodes(Predicate<Node> value) { excludedNodes = value; return this; }

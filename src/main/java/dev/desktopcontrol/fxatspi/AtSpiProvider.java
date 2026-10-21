@@ -746,6 +746,7 @@ final class AtSpiProvider {
                 case "GetApplicationBusAddress" -> "('',)"; // Shared accessibility bus, not a private peer bus.
                 case "GetName", "GetLocalizedName", "GetDescription", "GetKeyBinding" -> {
                     var index = ffi.integer(args,0);
+                    if (item == null) throw Rejected.STALE;
                     if (index < 0 || index >= item.semantics().actions().size()) throw new Rejected("Action index out of range");
                     var action = item.semantics().actions().get(index);
                     yield "(" + Ffm.quote(name.equals("GetKeyBinding") ? action.keyBinding()
@@ -837,17 +838,18 @@ final class AtSpiProvider {
         if (!item.has(capability)) throw Rejected.DENIED;
     }
     /**
+     * Selection serializes on its container. A direct child of a selection container shares that container's key,
+     * so activating an item cannot race a selection change; deeper descendants (tab content) keep their own key.
+     */
+    private String conflictTarget(AccessibleNode item, Capability capability) {
+        if (capability == Capability.SELECTION) return item.id();
+        var parent = snapshot.get().get(item.ancestor());
+        return parent != null && parent.has(Capability.SELECTION) ? parent.id() : item.id();
+    }
+    /**
      * Provider thread. Admission throws {@link Rejected} before any reference is taken; the caller answers it. Once
      * admitted, the invocation is retained under its action id until exactly one answer releases it.
      */
-    private String conflictTarget(String id) {
-        var item = snapshot.get().get(id);
-        while (item != null) {
-            if (item.has(Capability.SELECTION)) return item.id();
-            item = snapshot.get().get(item.ancestor());
-        }
-        return id;
-    }
     private void mutate(MemorySegment invocation, String target, String sender, AccessibleNode item,
                         Capability capability, CommandCoordinator.Mutation operation) {
         if (!running) throw Rejected.STOPPED;
@@ -855,7 +857,7 @@ final class AtSpiProvider {
         // editable state are decided on FX after refresh(), where the projection is current.
         if (!snapshot.get().permitsSender(sender) || !item.offers(capability)) throw Rejected.DENIED;
         // The FX task touches no native object: it revalidates, runs the action and posts a completion.
-        var command = commands.admit(conflictTarget(target), () -> {
+        var command = commands.admit(conflictTarget(item, capability), () -> {
             refresh();
             if (!actions.isLive(target)) throw Rejected.STALE;
             if (!actions.permits(target, sender, capability)) throw Rejected.DENIED;

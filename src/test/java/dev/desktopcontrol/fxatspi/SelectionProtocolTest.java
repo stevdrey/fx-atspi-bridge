@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.desktopcontrol.fxatspi.adapter.AdapterCommand;
@@ -126,6 +127,36 @@ class SelectionProtocolTest {
             current.set(snapshot(List.of("b","a"))); work.run();
             assertEquals("(true,)",output(first)); assertEquals("a",effect.get());
         } finally { first.destroyForcibly(); }
+    }
+    /** root → list (Selection) → item a (logical action) → deep, deep2 (component buttons inside a). */
+    private static Snapshot nestedSnapshot() {
+        var nodes = new HashMap<>(snapshot(List.of("a","b")).nodes());
+        nodes.put("a",node("a",Role.LIST_ITEM,"list",List.of("deep","deep2"),Set.of(Capability.ACTION)));
+        for (var id : List.of("deep","deep2")) nodes.put(id,node(id,Role.PUSH_BUTTON,"a",List.of(),Set.of(Capability.ACTION,Capability.COMPONENT)));
+        return new Snapshot(nodes);
+    }
+    private String waitForAction(String id) throws Exception {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            var reply = output(request(id,"org.freedesktop.DBus.Introspectable.Introspect"));
+            if (reply.contains("DoAction")) return reply;
+        }
+        return "";
+    }
+    @Test void onlyDirectChildrenShareTheirSelectionContainerConflictKey() throws Exception {
+        current.set(nestedSnapshot()); provider.refresh();
+        assertTrue(waitForAction("deep2").contains("DoAction"));
+        var deep = request("deep","org.a11y.atspi.Action.DoAction","0");
+        var selection = request("list","org.a11y.atspi.Selection.SelectChild","1");
+        try {
+            assertNotNull(tasks.poll(5,TimeUnit.SECONDS)); assertNotNull(tasks.poll(5,TimeUnit.SECONDS));
+            // The direct item serializes with its container; descendants below an item keep their own key.
+            // Both requests are sent before the 2 s queue deadline expires the pending commands.
+            var item = request("a","org.a11y.atspi.Action.DoAction","0");
+            var sibling = request("deep2","org.a11y.atspi.Action.DoAction","0");
+            assertTrue(output(item).contains("conflicts"));
+            assertFalse(output(sibling).contains("conflicts"));
+        } finally { deep.destroyForcibly(); selection.destroyForcibly(); }
     }
     @Test void queuedRemovalReturnsStaleWithoutEffects() throws Exception {
         var first = request("list","org.a11y.atspi.Selection.DeselectSelectedChild","0");

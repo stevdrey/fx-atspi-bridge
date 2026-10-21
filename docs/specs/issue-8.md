@@ -137,3 +137,15 @@ Keep public APIs unchanged. Verify initial/live failed reservations, physical tr
 filtered bulk no-effects and recovery, and deep real/mixed chains. Run focused/full checks, Python and existing desktop
 QA, record exact source/JAR hashes and actual results, then publish to PR #41 and await successful CI. Preserve local
 #1/#16 changes and historical performance evidence; do not extend performance/memory qualification.
+
+### Code-review follow-up (ten findings)
+
+Conflict slots: selection on its container; a direct child of a selection container shares that slot; deeper
+descendants (tab content) keep their own. Automation IDs: application duplicates are detected on pre-redaction
+values among nonempty candidates; colliding redacted candidates are suppressed (empty) while an unredacted holder
+keeps the value, recovering when unique, instead of stopping the bridge. Candidate preflight runs only when adapters,
+redactor, inclusion/exclusion/sensitivity predicates or the semantic child limit change. A window-list change rechecks
+real-edge inclusion without reprojecting their subtrees. A session over the 10,000-descriptor hard bound quarantines
+only its own window (documented cross-window residual). The static ID subscription is removable from any thread and is
+removed when FX cleanup is refused. Stale Action metadata reads answer UnknownObject; `itemTextProvider(null)` restores
+the default; bulk eligibility is checked once by the provider FX task. No other public API changes.

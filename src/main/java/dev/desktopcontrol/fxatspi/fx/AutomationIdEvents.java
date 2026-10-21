@@ -15,18 +15,21 @@
  */
 package dev.desktopcontrol.fxatspi.fx;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
-/** Internal FX-only notification port. No target registry or per-node properties are retained here. */
+/**
+ * Internal notification port. Changes are delivered on FX; removal is safe from any thread, so a bridge whose FX
+ * cleanup was refused can still drop its listener. No target registry or per-node properties are retained here.
+ */
 public final class AutomationIdEvents {
-    private static final List<Consumer<Object>> LISTENERS = new ArrayList<>();
+    private static final List<Consumer<Object>> LISTENERS = new CopyOnWriteArrayList<>();
     private AutomationIdEvents() {}
-    public static void add(Consumer<Object> listener) {
+    public static synchronized void add(Consumer<Object> listener) {
         if (LISTENERS.size() >= 4) throw new IllegalStateException("Automation observer limit");
         LISTENERS.add(listener);
     }
     public static void remove(Consumer<Object> listener) { LISTENERS.remove(listener); }
-    public static void changed(Object target) { for (var listener : List.copyOf(LISTENERS)) listener.accept(target); }
+    public static void changed(Object target) { for (var listener : LISTENERS) listener.accept(target); }
 }

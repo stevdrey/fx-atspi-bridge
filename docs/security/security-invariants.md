@@ -25,9 +25,12 @@ Adapter callbacks are trusted application code on FX, never native upcalls. Pass
 selection; it publishes no automation ID or text. Logical children inherit owner sensitivity/exclusion and mutation
 policy. A declared real Node child passes normal policy and cannot be disguised as a logical key. Every published
 name, text, application ID and action metadata passes the central redactor and bounds. Snapshot semantics retain no
-application keys, sessions or callbacks. Duplicate IDs are checked after privacy without logging either value.
+application keys, sessions or callbacks. Duplicate IDs are checked without logging either value: a repeated
+application ID among nonempty published candidates is a real duplicate (install/candidate rejection or live shutdown);
+distinct application IDs whose redacted values coincide publish the value only from an unredacted holder and an empty
+ID from every redacted holder, recovering when unique. Application IDs are retained only in FX-owned maps cleared on close.
 Selection index admission captures the internal child incarnation, not an authorization-bearing application ID;
-removal rejects the queued action as stale and state/policy is rechecked before the effect. Container conflict slots,
+removal rejects the queued action as stale and state/policy is rechecked before the effect. Container conflict slots (selection and direct children only),
 existing action limits/deadlines and provider-owned invocation cleanup apply to all new commands. Selection reads
 use immutable snapshots and never schedule FX work. Candidate option checks release their temporary subscriptions;
 failed candidates do not adopt options. Live collisions use controlled bridge shutdown. Expansion limits are
@@ -53,6 +56,11 @@ including retirement of already-exported physical aliases; never steal the share
 ordinary physical traversal. Partial reservations follow actual descriptor/session/owner disposal and recovery.
 After central redaction, automation IDs allow empty suppression but reject nonempty blank or oversized output before
 uniqueness indexing. Such output uses the fixed empty/inert projection path rather than collision-driven shutdown.
+
+A custom session exceeding the 10,000-descriptor hard bound makes its own window's projections inert; other windows
+keep publishing. Residual: a physical alias in another window beyond the inspected prefix is not identified.
+Bulk SelectAll/ClearSelection eligibility is decided once, in the provider's FX task, and denied as AccessDenied.
+A bridge whose FX cleanup is refused removes its static automation-ID subscription from the provider thread.
 
 Window-owned ContextMenus resolve their anchor from ownerNode or ownerWindow.scene.root; a missing or protected
 anchor excludes the popup window and its geometry. Shared real-child observations rebind on owner Scene/root changes.

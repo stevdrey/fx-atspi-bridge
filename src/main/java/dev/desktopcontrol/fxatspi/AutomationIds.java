@@ -35,17 +35,16 @@ public final class AutomationIds {
     public static String get(Node target) { checkThread(); return target.hasProperties() ? getValue(target.getProperties()) : ""; }
     public static String get(Window target) { checkThread(); return target.hasProperties() ? getValue(target.getProperties()) : ""; }
     public static String get(Tab target) { checkThread(); return target.hasProperties() ? getValue(target.getProperties()) : ""; }
+    /** MenuItem has no hasProperties(); its map is created lazily on first read. */
     public static String get(MenuItem target) { checkThread(); return getValue(target.getProperties()); }
     private static void checkThread() {
         if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Automation IDs belong to FX");
     }
+    /** Callers have already checked the FX thread. */
     private static void setValue(ObservableMap<Object, Object> properties, String value) {
-        checkThread();
         if (value != null && (value.isBlank() || value.length() > 256 || value.indexOf('\0') >= 0))
             throw new IllegalArgumentException("Invalid automation ID");
         if (value == null) properties.remove(KEY); else properties.put(KEY, value);
     }
-    private static String getValue(ObservableMap<Object, Object> properties) {
-        checkThread(); return Objects.toString(properties.get(KEY), "");
-    }
+    private static String getValue(ObservableMap<Object, Object> properties) { return Objects.toString(properties.get(KEY), ""); }
 }

@@ -74,7 +74,7 @@ Install and close the bridge on the JavaFX application thread. Only one bridge i
 
 `DoAction` and `SetTextContents` run on the JavaFX thread; the bridge never holds a lock while your handler runs, and the D-Bus side keeps answering reads from its latest snapshot even while a handler blocks in `showAndWait()`. Requests are bounded by `ActionLimits`: `install()` and `install(Consumer)` use `ActionLimits.defaults()` (16 outstanding actions, 2 nested, 2 s queue timeout, 2 s running reply timeout); pass your own with `FxAtSpiBridge.install(status, new ActionLimits(...))`. Out-of-range values are rejected when the record is created.
 
-Admission on the provider thread checks only stable policy (sender, offered interface, redaction), because its published snapshot can lag the screen. Immediately before acting, the bridge checks on the JavaFX thread, against a freshly synchronized projection, that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `org.freedesktop.DBus.Error.AccessDenied` with the fixed message `Action denied`. This changes the previous `false` response for state denials. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog.
+Admission on the provider thread checks only stable policy (sender, offered interface, redaction), because its published snapshot can lag the screen. Immediately before acting, the bridge checks on the JavaFX thread, against a freshly synchronized projection, that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `org.freedesktop.DBus.Error.AccessDenied` with the fixed message `Action denied`. This changes the previous `false` response for state denials. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog. Selection requests serialize on their container, and an action on a direct child of a selection container (a tab or list item) shares that container's slot; deeper descendants, such as controls inside tab content, keep their own slot.
 
 | Reply | D-Bus error | Meaning |
 |---|---|---|
@@ -135,11 +135,16 @@ IDs pass through `ContentKind.AUTOMATION_ID` redaction before application-wide u
 are never published or passed to callbacks. Sensitive IDs use the configured redactor (empty by default).
 A redacted ID may be empty for suppression; a nonempty blank result or more than 256 UTF-16 units makes the
 projection empty and inert. Invalid results do not enter the uniqueness index or cause duplicate-ID shutdown.
-Duplicate published IDs reject installation or a candidate `updateOptions` without adopting that candidate.
-A collision introduced by a later UI change stops the bridge, denies further work and emits a fixed diagnostic
-without the ID values. Correct the IDs and reinstall after `closed()` completes. IDs never authorize actions.
-Candidate updates create and dispose a temporary observation tree before adoption, so pure adapter/redactor
-callbacks can be called more than once; application callbacks must not mutate the UI or enter nested loops.
+A repeated application ID (before redaction) among published IDs rejects installation or a candidate
+`updateOptions` without adopting that candidate. A collision introduced by a later UI change stops the bridge,
+denies further work and emits a fixed diagnostic without the ID values. Correct the IDs and reinstall after
+`closed()` completes. Distinct application IDs that only coincide after redaction (for example a redactor that
+maps every sensitive ID to one placeholder) are not an application error: an unredacted holder keeps the value and
+every redacted holder publishes an empty ID until its value is unique again. IDs never authorize actions.
+Candidate updates that change adapters, the redactor, inclusion/exclusion/sensitivity predicates or the semantic
+child limit create and dispose a temporary observation tree before adoption, so pure adapter/redactor callbacks can
+be called more than once; application callbacks must not mutate the UI or enter nested loops. Other option changes
+skip that preflight.
 
 Checkboxes and radios expose checked/indeterminate states and semantic actions. Lists and combos expose logical
 items and `Selection`, including multiple selection for a `ListView` configured that way. Combo text reflects its

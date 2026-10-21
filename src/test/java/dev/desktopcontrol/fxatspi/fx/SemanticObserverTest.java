@@ -186,12 +186,82 @@ class SemanticObserverTest {
         assertThrows(IllegalArgumentException.class,() -> new Harness(BridgeOptions.defaults(),one,two));
         AutomationIds.set(two,"second");
         try (var h = new Harness(BridgeOptions.defaults(),one,two)) {
-            assertThrows(IllegalArgumentException.class,() -> h.observer.validateOptions(BridgeOptions.builder().redactor(
-                    (kind,sensitive,value) -> kind == BridgeOptions.ContentKind.AUTOMATION_ID ? "collision" : value).build()));
+            // Distinct application IDs that only coincide after redaction are suppressed, not rejected.
+            h.observer.validateOptions(BridgeOptions.builder().redactor(
+                    (kind,sensitive,value) -> kind == BridgeOptions.ContentKind.AUTOMATION_ID ? "collision" : value).build());
             assertTrue(h.observer.active()); assertEquals("same",h.named("One").semantics().automationId());
             var stopped = new AtomicInteger(); h.observer.onCollision(stopped::incrementAndGet);
             AutomationIds.set(two,"same"); assertThrows(IllegalArgumentException.class,h::flush);
             assertEquals(1,stopped.get()); assertFalse(h.observer.active()); assertEquals(0,h.registry.size());
+        } return null;
+    }); }
+    @Test void candidateRejectsApplicationDuplicateRevealedByInclusion() throws Exception { fx(() -> {
+        var one = new Button("One"); var two = new Button("Two"); two.setId("hidden");
+        AutomationIds.set(one,"same"); AutomationIds.set(two,"same");
+        try (var h = new Harness(BridgeOptions.builder().excludedNodes(node -> "hidden".equals(node.getId())).build(),one,two)) {
+            assertThrows(IllegalArgumentException.class,() -> h.observer.validateOptions(BridgeOptions.defaults()));
+            assertTrue(h.observer.active()); assertEquals("same",h.named("One").semantics().automationId());
+        } return null;
+    }); }
+    @Test void redactedCollisionsAreSuppressedWithoutStoppingTheBridge() throws Exception { fx(() -> {
+        var plain = new Button("Plain"); var first = new Button("First"); var second = new Button("Second");
+        first.getStyleClass().add("secret"); second.getStyleClass().add("secret");
+        AutomationIds.set(plain,"x"); AutomationIds.set(first,"first"); AutomationIds.set(second,"second");
+        var options = BridgeOptions.builder().sensitiveNodes(node -> node.getStyleClass().contains("secret"))
+                .redactor((kind,sensitive,value) -> kind == BridgeOptions.ContentKind.AUTOMATION_ID && sensitive ? "x" : value).build();
+        var box = new VBox(plain,first);
+        try (var h = new Harness(options,box)) {
+            var stopped = new AtomicInteger(); h.observer.onCollision(stopped::incrementAndGet);
+            // The untransformed holder keeps its value; the transformed one is suppressed until it is unique.
+            assertEquals("x",h.named("Plain").semantics().automationId()); assertEquals("",h.named("First").semantics().automationId());
+            box.getChildren().remove(plain); h.flush();
+            assertEquals("x",h.named("First").semantics().automationId());
+            box.getChildren().add(second); h.flush();
+            assertEquals("",h.named("First").semantics().automationId()); assertEquals("",h.named("Second").semantics().automationId());
+            box.getChildren().remove(second); h.flush();
+            assertEquals("x",h.named("First").semantics().automationId());
+            assertEquals(0,stopped.get()); assertTrue(h.observer.active());
+            // A repeated application ID is still a real duplicate.
+            AutomationIds.set(second,"first"); box.getChildren().add(second);
+            assertThrows(IllegalArgumentException.class,h::flush); assertEquals(1,stopped.get()); assertFalse(h.observer.active());
+        } return null;
+    }); }
+    @Test void unchangedIdentityOptionsSkipPreflight() throws Exception { fx(() -> {
+        var opens = new AtomicInteger();
+        var adapter = new ControlAdapter<ClaimOwner>() {
+            public Class<ClaimOwner> targetType() { return ClaimOwner.class; }
+            public AdapterSession open(ClaimOwner node,AdapterContext context) {
+                opens.incrementAndGet();
+                return () -> SemanticProjection.of(SemanticRole.LIST,"Counted");
+            }
+        };
+        var options = BridgeOptions.builder().adapters(List.of(adapter)).build();
+        try (var h = new Harness(options,new ClaimOwner())) {
+            var before = opens.get();
+            h.observer.validateOptions(options.toBuilder().pressAllowed(_ -> false).allowedActionSenders(Set.of(":1.7")).build());
+            assertEquals(before,opens.get());
+            h.observer.validateOptions(options.toBuilder().redactor((kind,sensitive,value) -> value).build());
+            assertEquals(before + 1,opens.get());
+        } return null;
+    }); }
+    @Test void releasedAutomationSubscriptionStopsSchedulingFromAnyThread() throws Exception {
+        var button = fx(() -> new Button("Released"));
+        var h = fx(() -> new Harness(BridgeOptions.defaults(),button));
+        try {
+            var release = new Thread(h.observer::releaseAutomationIds); release.start(); release.join();
+            assertTrue(fx(() -> { h.scheduled.clear(); AutomationIds.set(button,"after-release"); return h.scheduled.isEmpty(); }));
+        } finally { fx(() -> { h.close(); return null; }); }
+    }
+    @Test void secondaryWindowChangesDoNotReprojectTabContent() throws Exception { fx(() -> {
+        var content = new VBox(); for (var index = 0; index < 20; index++) content.getChildren().add(new Button("Content " + index));
+        var tabs = new TabPane(new Tab("Main",content));
+        try (var h = new Harness(BridgeOptions.defaults(),tabs)) {
+            assertNotNull(h.named("Content 19"));
+            var other = new Stage(); other.setScene(new Scene(new VBox(new Label("Other")),100,100));
+            var projections = h.observer.projections();
+            other.show(); h.flush(); other.hide(); h.flush();
+            assertTrue(h.observer.projections() - projections < 20,"Tab content must not be reprojected");
+            assertNotNull(h.named("Content 19")); assertTree(h.snapshot);
         } return null;
     }); }
     @Test void checkAndRadioSemanticsAndEvents() throws Exception { fx(() -> {
@@ -1239,6 +1309,33 @@ class SemanticObserverTest {
         assertEquals(1,closes.get()); return null;
     }); }
 
+    @Test void oversizedOwnerQuarantinesOnlyItsOwnWindow() throws Exception { fx(() -> {
+        class Oversized extends Control {}
+        var adapter = new ControlAdapter<Oversized>() {
+            public Class<Oversized> targetType() { return Oversized.class; }
+            public AdapterSession open(Oversized node,AdapterContext context) {
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Oversized owner"); }
+                    public List<SemanticChild> children() {
+                        return new AbstractList<>() {
+                            public int size() { return 10001; }
+                            public SemanticChild get(int index) { return SemanticChild.logical(index,_ -> () -> SemanticProjection.of(SemanticRole.LIST_ITEM,"")); }
+                        };
+                    }
+                };
+            }
+        };
+        var fired = new AtomicInteger(); var elsewhere = new Button("Elsewhere"); elsewhere.setOnAction(_ -> fired.incrementAndGet());
+        var other = new Stage(); other.setTitle("Other"); other.setScene(new Scene(new VBox(elsewhere),100,100)); other.show();
+        var local = new Button("Local");
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),new Oversized(),local)) {
+            assertTrue(h.actions.press(h.registry.targetId(elsewhere))); assertEquals(1,fired.get());
+            assertTrue(h.named("Elsewhere").permits(Capability.ACTION));
+            assertFalse(h.actions.press(h.registry.targetId(local)));
+            assertTrue(h.snapshot.nodes().values().stream().noneMatch(node -> node.name().equals("Local")));
+        } return null;
+    }); }
+
     @Test void filteredRealChildrenDenyBulkCallbacksAndRecoverAfterExplicitReinclusion() throws Exception { fx(() -> {
         class PasswordParent extends PasswordField { void content(Node node) { getChildren().add(node); } }
         for (var mode : List.of("node","ancestor","window","password")) {
@@ -1289,8 +1386,8 @@ class SemanticObserverTest {
                 h.flush(); assertEquals(parent,h.named("Bulk owner").id()); assertFalse(h.actions.isLive(old));
                 assertEquals(null,h.registry.targetId(excluded));
                 for (var command : pending) {
+                    // Bulk eligibility is decided once by the provider's FX task (SelectionProtocolTest covers its denial).
                     assertFalse(h.actions.selectionSetEligible(parent,command instanceof AdapterCommand.ClearSelection));
-                    assertFalse(h.actions.execute(parent,command,null));
                 }
                 assertEquals(0,effects.get()); assertTrue(allowed.isSelected()); assertTrue(excluded.isSelected());
                 excluded.setId(null); source.setId(null); sourceWindow.setTitle("Included");

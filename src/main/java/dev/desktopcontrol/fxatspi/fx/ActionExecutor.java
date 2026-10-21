@@ -70,8 +70,7 @@ public final class ActionExecutor implements ActionPort {
                 : command instanceof AdapterCommand.Activate ? Capability.ACTION : Capability.SELECTION;
         var owner = observer.ownerFor(id);
         if (owner == null || !eligible(owner) || !policy(owner,capability) || !observer.permits(id,capability)) return false;
-        if (command instanceof AdapterCommand.SelectAll && !selectionSetEligible(id,false)) return false;
-        if (command instanceof AdapterCommand.ClearSelection && !selectionSetEligible(id,true)) return false;
+        // Bulk child eligibility is decided once, by the provider's FX task, so its denial is AccessDenied.
         return observer.execute(id,command,childId);
     }
     @Override public boolean isLive(String id) { return registry.target(id) != null; }

@@ -382,3 +382,42 @@ cover exactly 64 edges, overflow, recovery, tree consistency, preserved root ref
 JAR hashes. Desktop QA and the standalone FX probe ran sequentially after JavaFX test fixtures terminated. Historical
 SC-01 evidence remains qualified only for its recorded revisions; no latency/allocation budget, complete quick/full
 matrix or pending memory characterization was changed or repeated. Local #1/#16 verification changes remain excluded.
+
+## PR #41 — code-review follow-up (ten findings)
+
+Corrections on top of `9a17f5b`, following the high-effort review of PR #41:
+
+1. Conflict slots no longer climb to the nearest Selection ancestor for every mutation. Only selection requests and
+   direct children of a selection container share the container slot, so controls inside TabPane content no longer
+   reject each other with "conflicts".
+2. Redacted automation-ID collisions are suppressed instead of stopping the bridge. Real application duplicates
+   (pre-redaction) still reject install/candidates and stop a live bridge.
+3. A window-list change (tooltips, popups, secondary stages) no longer reprojects every real-edge subtree; only the
+   inclusion of real edges and claimed Nodes is rechecked.
+4. Candidate preflight is skipped when no identity-affecting option changed.
+5. A session over the 10,000-descriptor bound quarantines only its own window.
+6. The static automation-ID subscription is a copy-on-write list, removable from any thread, and is released when
+   the FX executor refuses the bridge's cleanup.
+7. Action `GetName`/`GetDescription`/`GetKeyBinding` answer UnknownObject for a stale item. Over D-Bus this path is
+   reachable only in the publish/unexport race, so it has no private-bus regression.
+8. `itemTextProvider(null)` restores the default.
+9. Bulk selection eligibility is checked once, in the provider FX task (AccessDenied); `ActionExecutor.execute` no
+   longer repeats it. The earlier note about "observer-backed direct execution" is superseded.
+10. `AutomationIds` checks the FX thread once per call. `MenuItem` has no `hasProperties()`, so its getter still
+    reads the lazily created map.
+
+New regressions: `SelectionProtocolTest.onlyDirectChildrenShareTheirSelectionContainerConflictKey`,
+`SemanticObserverTest.candidateRejectsApplicationDuplicateRevealedByInclusion`,
+`redactedCollisionsAreSuppressedWithoutStoppingTheBridge`, `unchangedIdentityOptionsSkipPreflight`,
+`releasedAutomationSubscriptionStopsSchedulingFromAnyThread`, `secondaryWindowChangesDoNotReprojectTabContent`,
+`oversizedOwnerQuarantinesOnlyItsOwnWindow`, and `BridgeOptionsTest.itemTextProviderCanBeClearedBackToTheDefault`.
+`duplicatesRejectInitialAndCandidateButLiveCollisionCloses` now expects a redactor-only collision to be accepted, and
+`filteredRealChildrenDenyBulkCallbacksAndRecoverAfterExplicitReinclusion` no longer asserts the removed executor check.
+
+Actual checks (OpenJDK 27, Fedora 44):
+
+- `./gradlew test --tests '*SemanticObserverTest' --tests '*SelectionProtocolTest' --tests '*BridgeOptionsTest' --tests '*SceneObserverTest' --tests '*BridgeLifecycleTest' --tests '*ActionExecutorTest'` — **Passed**.
+- `./gradlew check` — **Passed**, 271 Java tests, zero failures/errors/skips.
+
+Not repeated in this round: Python unit tests, independent libatspi desktop QA, the installed-JAR probe and SC-01
+performance collections. Historical evidence remains qualified only for its recorded revisions.

@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -61,6 +62,11 @@ class BridgeOptionsTest {
         assertEquals(17,BridgeOptions.builder().maxSemanticChildren(17).build().toBuilder().build().maxSemanticChildren());
         assertThrows(IllegalArgumentException.class,() -> BridgeOptions.builder().maxSemanticChildren(0).build());
         assertThrows(IllegalArgumentException.class,() -> BridgeOptions.builder().maxSemanticChildren(10001).build());
+    }
+    @Test void itemTextProviderCanBeClearedBackToTheDefault() {
+        var custom = BridgeOptions.builder().itemTextProvider((owner,value) -> "item").build();
+        assertNotNull(custom.itemTextProvider());
+        assertNull(custom.toBuilder().itemTextProvider(null).build().itemTextProvider());
     }
 
 }

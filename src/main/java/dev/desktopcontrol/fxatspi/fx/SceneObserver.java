@@ -40,6 +40,7 @@ import java.util.Collections;
 import java.util.Collection;
 import java.util.IdentityHashMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
@@ -138,14 +139,22 @@ public final class SceneObserver {
     private final IdentityHashMap<Window, Boolean> modal = new IdentityHashMap<>();
     /** A subtree may be reached from several renewed ancestors; rotate each identity once per atomic flush. */
     private final Set<Observed> rotated = Collections.newSetFromMap(new IdentityHashMap<>());
-    private final Map<String, String> automationIndex = new HashMap<>();
-    private final Map<String, String> publishedAutomation = new HashMap<>();
+    /** Application IDs (before redaction) of entries with a nonempty candidate; a second holder is a real duplicate. */
+    private final Map<String, String> rawAutomationIndex = new HashMap<>();
+    private final Map<String, String> rawAutomation = new HashMap<>();
+    /** Redacted candidates by export id and their holders by value; collisions only between candidates are resolved here. */
+    private final Map<String, AutomationCandidate> automationCandidates = new HashMap<>();
+    private final Map<String, Set<String>> automationHolders = new HashMap<>();
+    private record AutomationCandidate(String value, boolean transformed) {}
     private int logicalCount, logicalReserved;
     private final IdentityHashMap<Object, List<Observed>> logicalKeys = new IdentityHashMap<>();
     /** Declared real edges also reserve nodes while owner privacy hides their expansion. FX identity only. */
     private final IdentityHashMap<Node, Observed> semanticOwners = new IdentityHashMap<>();
-    /** A bounded descriptor prefix cannot identify every physical alias of an oversized application session. */
-    private final Set<Observed> unidentifiedClaims = Collections.newSetFromMap(new IdentityHashMap<>());
+    /**
+     * A bounded descriptor prefix cannot identify every physical alias of an oversized application session. Each
+     * such owner fails its own frame (window) closed; other windows keep publishing.
+     */
+    private final IdentityHashMap<Observed, Object> unidentifiedClaims = new IdentityHashMap<>();
     private final ActionFingerprint actionFingerprint = new ActionFingerprint();
     /** Only real adapter edges need extra physical provenance; ordinary scene edges keep their fast path. */
     private final Set<Observed> realNodes = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -161,6 +170,8 @@ public final class SceneObserver {
     private Runnable collisionHandler = () -> {};
     private boolean initializing, observeIds;
     public void observeAutomationIds() { observeIds = true; }
+    /** Any thread: removes the static change subscription when FX cleanup can no longer run. Idempotent. */
+    public void releaseAutomationIds() { AutomationIdEvents.remove(idListener); }
     public void onCollision(Runnable handler) { collisionHandler = Objects.requireNonNull(handler); }
     private Sink sink;
     private boolean active, closed, scheduled;
@@ -180,6 +191,10 @@ public final class SceneObserver {
     public BridgeOptions options() { return options; }
     /** Candidate preflight owns and disposes all temporary subscriptions, without publishing to native state. */
     public void validateOptions(BridgeOptions candidate) {
+        // Only adapters, privacy, inclusion and expansion bounds can change which IDs are published.
+        if (sameAdapters(options.adapters(),candidate.adapters()) && options.redactor() == candidate.redactor()
+                && options.includedWindows() == candidate.includedWindows() && options.excludedNodes() == candidate.excludedNodes()
+                && options.sensitiveNodes() == candidate.sensitiveNodes() && options.maxSemanticChildren() == candidate.maxSemanticChildren()) return;
         var temporary = new SceneObserver(new TargetRegistry(), _ -> {}, candidate);
         try { temporary.start((snapshot, touched) -> true); }
         finally { temporary.close(); }
@@ -436,6 +451,9 @@ public final class SceneObserver {
         final Object target;
         String id;
         boolean renew, failed, expansionFailed;
+        /** Last projected application ID before redaction, and whether the redactor changed it. FX only. */
+        String rawAutomationId = "";
+        boolean automationTransformed;
         boolean builtin;
         byte[] actionDigest;
         List<SemanticAction> publishedActions = List.of();
@@ -773,7 +791,7 @@ public final class SceneObserver {
         inclusion.clear();
         modal.clear();
         rotated.clear();
-        registry.clear(); automationIndex.clear(); publishedAutomation.clear(); logicalCount = 0; logicalReserved = 0;
+        registry.clear(); rawAutomationIndex.clear(); rawAutomation.clear(); automationCandidates.clear(); automationHolders.clear(); logicalCount = 0; logicalReserved = 0;
         physicalState.clear(); physicalDirty.clear(); realNodes.clear();
         options = BridgeOptions.defaults(); // release application callback captures after disposal
     }
@@ -804,7 +822,16 @@ public final class SceneObserver {
         physicalState.clear();
         for (var entry : List.copyOf(physicalDirty)) if (entry.attached && entry.realNode) entry.bindPhysical();
         physicalDirty.clear();
-        if (windowsChanged) for (var entry : realNodes) { inclusion.add(entry); markSubtree(entry); }
+        // A window list change can only change source-window inclusion of real edges: recheck it without reprojecting
+        // their subtrees (visibility and modality have their own watches). Owners re-expand only when a claimed
+        // Node's inclusion no longer matches whether it is exported under them.
+        if (windowsChanged) {
+            inclusion.addAll(realNodes);
+            for (var owner : semanticOwnerEntries()) if (!owner.sensitive) for (var node : owner.nodeClaims) {
+                var exported = observed.get(node);
+                if (includedReal(node) != (exported != null && exported.parent == owner)) { restructured.add(owner); break; }
+            }
+        }
         for (var entry : List.copyOf(dirty)) if (entry.session != null) {
             try { if (entry.sensitive != sensitive(entry)) restructured.add(entry); }
             catch (RuntimeException failure) { restructured.add(entry); } // semanticChildren fails the expansion closed
@@ -856,6 +883,8 @@ public final class SceneObserver {
                 if (entry != null && entry.parent == removal.former() && !restorePhysical(entry, null)) detach(entry);
             }
         }
+        var unidentifiedFrames = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
+        unidentifiedFrames.addAll(unidentifiedClaims.values());
         try {
             var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
             var pending = new ArrayDeque<Observed>();
@@ -871,8 +900,10 @@ public final class SceneObserver {
                 var failed = false;
                 var sensitive = false;
                 projections++;
+                entry.rawAutomationId = ""; entry.automationTransformed = false;
                 try {
-                    if (!unidentifiedClaims.isEmpty()) throw new IllegalStateException("Unidentified semantic aliases");
+                    if (!unidentifiedFrames.isEmpty() && unidentifiedFrames.contains(frameOf(entry)))
+                        throw new IllegalStateException("Unidentified semantic aliases");
                     entry.readGeometry();
                     sensitive = sensitive(entry);
                     if (entry.physicalFailed) throw new IllegalStateException("Physical observation unavailable");
@@ -885,6 +916,7 @@ public final class SceneObserver {
                         if (!rawId.isEmpty()) {
                             var id = redact(ContentKind.AUTOMATION_ID,sensitive,rawId);
                             if (id.length() > 256 || !id.isEmpty() && id.isBlank()) throw new IllegalArgumentException("Invalid automation ID");
+                            entry.rawAutomationId = rawId; entry.automationTransformed = !id.equals(rawId);
                             node = node.semantics(new Semantics(id,node.semantics().actions(),node.semantics().states(),node.semantics().selection(),node.semantics().actionRevision()));
                         }
                     }
@@ -904,6 +936,7 @@ public final class SceneObserver {
                     }
                 }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
+                    entry.rawAutomationId = ""; entry.automationTransformed = false;
                     projectionFailures++;
                     retry.add(entry);
                     failed = true;
@@ -945,27 +978,61 @@ public final class SceneObserver {
             }
         } finally { showing.clear(); sensitivity.clear(); physicalState.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
-        // Remove all old IDs before inserting new ones: atomic swaps in one batch are valid.
+        indexAutomationIds();
+        var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
+        touched.clear();
+        publications++;
+        if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
+    }
+
+    /**
+     * Indexes the touched IDs. A repeated application ID with a nonempty published candidate is a real duplicate and
+     * stops observation. Distinct application IDs whose redacted candidates coincide are not an application error:
+     * an untransformed holder keeps the value and every transformed holder publishes an empty ID until it is unique.
+     * Old entries are removed before new ones are inserted, so atomic swaps in one batch are valid.
+     */
+    private void indexAutomationIds() {
+        var affected = new HashSet<String>();
         for (var id : touched) {
-            var previous = publishedAutomation.remove(id);
-            if (previous != null) automationIndex.remove(previous,id);
+            var raw = rawAutomation.remove(id);
+            if (raw != null) rawAutomationIndex.remove(raw,id);
+            var candidate = automationCandidates.remove(id);
+            if (candidate != null) { removeHolder(candidate.value(),id); affected.add(candidate.value()); }
         }
-        for (var id : touched) {
+        for (var id : List.copyOf(touched)) {
             var item = model.get(id);
-            if (item == null || item.semantics().automationId().isEmpty()) continue;
-            var stable = item.semantics().automationId();
-            var conflict = automationIndex.putIfAbsent(stable,id);
+            var entry = item == null ? null : observed.get(registry.target(id));
+            if (entry == null || entry.rawAutomationId.isEmpty() || item.semantics().automationId().isEmpty()) continue;
+            var conflict = rawAutomationIndex.putIfAbsent(entry.rawAutomationId,id);
             if (conflict != null && !conflict.equals(id)) {
                 if (!initializing) collisionHandler.run();
                 close();
                 throw new AutomationIdCollision();
             }
-            publishedAutomation.put(id,stable);
+            rawAutomation.put(id,entry.rawAutomationId);
+            var value = item.semantics().automationId();
+            automationCandidates.put(id,new AutomationCandidate(value,entry.automationTransformed));
+            automationHolders.computeIfAbsent(value,_ -> new HashSet<>()).add(id);
+            affected.add(value);
         }
-        var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
-        touched.clear();
-        publications++;
-        if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
+        for (var value : affected) {
+            var holders = automationHolders.get(value);
+            if (holders == null) continue;
+            for (var id : holders) {
+                var publish = holders.size() == 1 || !automationCandidates.get(id).transformed();
+                var item = model.get(id);
+                var published = publish ? value : "";
+                if (item.semantics().automationId().equals(published)) continue;
+                var semantics = item.semantics();
+                model.put(id,item.semantics(new Semantics(published,semantics.actions(),semantics.states(),semantics.selection(),semantics.actionRevision())));
+                touched.add(id);
+            }
+        }
+    }
+
+    private void removeHolder(String value, String id) {
+        var holders = automationHolders.get(value);
+        if (holders != null && holders.remove(id) && holders.isEmpty()) automationHolders.remove(value);
     }
 
     /**
@@ -1071,6 +1138,12 @@ public final class SceneObserver {
         markSubtree(entry);
     }
 
+    private Set<Observed> semanticOwnerEntries() {
+        var owners = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+        for (var owner : semanticOwners.values()) if (owner.attached) owners.add(owner);
+        return owners;
+    }
+
     private boolean ownedChild(Object target, Observed parent) {
         var child = observed.get(target);
         return child != null && child.parent == parent;
@@ -1106,9 +1179,23 @@ public final class SceneObserver {
     }
 
     private void unidentifiedClaims(Observed entry, boolean value) {
-        var before = unidentifiedClaims.isEmpty();
-        if (value) unidentifiedClaims.add(entry); else unidentifiedClaims.remove(entry);
-        if (active && before != unidentifiedClaims.isEmpty()) dirty.addAll(observed.values());
+        var frame = frameOf(entry);
+        var previous = value ? unidentifiedClaims.put(entry, frame) : unidentifiedClaims.remove(entry);
+        if (!active || previous == (value ? frame : null)) return;
+        if (previous != null) markFrame(previous);
+        if (value) markFrame(frame);
+    }
+
+    /** The window target containing {@code entry} in the observed tree, or the application root without one. */
+    private static Object frameOf(Observed entry) {
+        for (var current = entry; current != null; current = current.parent)
+            if (current.target instanceof Window) return current.target;
+        return APPLICATION;
+    }
+
+    private void markFrame(Object frame) {
+        var entry = observed.get(frame);
+        if (entry != null) markSubtree(entry);
     }
 
     private void claimNodes(Observed entry, Set<Node> claims, Collection<?> exported) {
