@@ -74,7 +74,7 @@ Install and close the bridge on the JavaFX application thread. Only one bridge i
 
 `DoAction` and `SetTextContents` run on the JavaFX thread; the bridge never holds a lock while your handler runs, and the D-Bus side keeps answering reads from its latest snapshot even while a handler blocks in `showAndWait()`. Requests are bounded by `ActionLimits`: `install()` and `install(Consumer)` use `ActionLimits.defaults()` (16 outstanding actions, 2 nested, 2 s queue timeout, 2 s running reply timeout); pass your own with `FxAtSpiBridge.install(status, new ActionLimits(...))`. Out-of-range values are rejected when the record is created.
 
-Admission on the provider thread checks only stable policy (sender, offered interface, redaction), because its published snapshot can lag the screen. Immediately before acting, the bridge checks on the JavaFX thread, against a freshly synchronized projection, that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `org.freedesktop.DBus.Error.AccessDenied` with the fixed message `Action denied`. This changes the previous `false` response for state denials. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog.
+Admission on the provider thread checks only stable policy (sender, offered interface, redaction), because its published snapshot can lag the screen. Immediately before acting, the bridge checks on the JavaFX thread, against a freshly synchronized projection, that the control is still live, enabled, visible in a showing window, not blocked by a modal window, and (for text) editable and not a password field; otherwise the reply is `org.freedesktop.DBus.Error.AccessDenied` with the fixed message `Action denied`. This changes the previous `false` response for state denials. While an action is running, a second action on the same control is rejected; a control in the dialog it opened can still be activated, so a client can confirm or cancel that dialog. Selection requests serialize on their container, and an action on a direct child of a selection container (a tab or list item) shares that container's slot; deeper descendants, such as controls inside tab content, keep their own slot.
 
 | Reply | D-Bus error | Meaning |
 |---|---|---|
@@ -123,9 +123,114 @@ Action limits can change in the same update. New admissions use the new capacity
 
 By default any client able to reach the session accessibility bus can read exported content and request permitted actions. `allowedActionSenders(Set.of(":1.42"))` restricts mutations to specified unique D-Bus names; an empty set denies all mutations, and `allowAllActionSenders()` restores the default. Up to 256 names are accepted. Reads and discovery are always available, including to senders denied mutation. Names are connection-scoped and change on reconnect. Configuration governs this bridge's exports. Other accessibility providers in the same process (for example a GTK provider publishing window titles) are outside its control. This filter is defense in depth, not authentication or isolation against a compromised desktop session. Configure deployment restrictions explicitly so assistive technology remains usable.
 
+## Stable automation IDs and custom controls
+
+Set an application-defined ID on FX with `AutomationIds.set(target, "settings.theme")` and read it with
+`AutomationIds.get(target)`. Overloads accept `Node`, `Window`, `Tab` and `MenuItem`; `null` removes the ID.
+IDs are independent of CSS `Node.id` and internal AT-SPI object paths. They must be nonblank, contain no NUL,
+and have at most 256 UTF-16 units. The published value is available as `AccessibleId` and the `automation-id`
+attribute; without an explicit ID it is empty. Changing an ID keeps the object's internal reference.
+
+IDs pass through `ContentKind.AUTOMATION_ID` redaction before application-wide uniqueness checks. Password IDs
+are never published or passed to callbacks. Sensitive IDs use the configured redactor (empty by default).
+A redacted ID may be empty for suppression; a nonempty blank result or more than 256 UTF-16 units makes the
+projection empty and inert. Invalid results do not enter the uniqueness index or cause duplicate-ID shutdown.
+A repeated application ID (before redaction) among published IDs rejects installation or a candidate
+`updateOptions` without adopting that candidate. A collision introduced by a later UI change stops the bridge,
+denies further work and emits a fixed diagnostic without the ID values. Correct the IDs and reinstall after
+`closed()` completes. Distinct application IDs that only coincide after redaction (for example a redactor that
+maps every sensitive ID to one placeholder) are not an application error: an unredacted holder keeps the value and
+every redacted holder publishes an empty ID until its value is unique again. IDs never authorize actions.
+Candidate updates that change adapters, the redactor, inclusion/exclusion/sensitivity predicates or the semantic
+child limit create and dispose a temporary observation tree before adoption, so pure adapter/redactor callbacks can
+be called more than once; application callbacks must not mutate the UI or enter nested loops. Other option changes
+skip that preflight.
+
+Checkboxes and radios expose checked/indeterminate states and semantic actions. Lists and combos expose logical
+items and `Selection`, including multiple selection for a `ListView` configured that way. Combo text reflects its
+current value independently of its selection, including values outside its items. Editable combos expose their
+public editor's text; setting it does not commit or parse an application value. Tabs expose headers and observe
+only the active tab's content. Menu bars/buttons, context menus, submenus and check/radio menu items have semantic
+roles and actions. Standalone context menus anchored to excluded, sensitive or password controls are excluded, including their content-sized window geometry. Items in closed or disabled menu hierarchies cannot be activated. Logical item visibility follows the semantic container; per-row viewport visibility is not inferred from cells. Logical items have no
+`Component` geometry, and adapted popup skins are not exported a second time.
+
+MenuButton names use their current text unless accessibleText overrides it, with CSS ID as the fallback for empty text.
+SplitMenuButton retains its primary `click` action at index 0 and offers `toggle-popup` at index 1, alongside its semantic
+menu children. Ordinary MenuButton keeps `toggle-popup` at index 0. Both split actions use central mutation policy.
+
+Selection operations resolve client indices to internal item references when admitted and revalidate those
+references on FX. A queued request never silently selects a different item after reordering. Repeated/equal values
+have distinct occurrence identities; permutations preserve them, while replacements retire them. Selection mutations
+and child activation share their container's coordinator conflict slot. `pressAllowed` controls selection and
+activation; `textWriteAllowed` controls text mutation. Offscreen logical items can be selected through their eligible,
+visible container. Unsupported selection operations (for example SelectAll in single-selection mode) return false;
+policy/state denials retain the documented AccessDenied error.
+
+Queued activations also retain an internal revision of the ordered action metadata. If actions change before FX
+execution, the request returns AccessDenied rather than invoking a different action at the same index. This detects
+changes hidden by metadata redaction. Adapters must observe/invalidate changing action metadata and distinguish actions
+whose meaning changes; unrelated projection changes do not invalidate the action list.
+
+`BridgeOptions.builder().maxSemanticChildren(1000)` configures the per-collection limit (1..10,000; default 1,000).
+The bridge additionally limits logical objects to 10,000, semantic depth to 64, actions per object to 16 and
+subscriptions/cleanup registrations per adapter context to 256 each. Cycles and duplicate child keys fail closed.
+An overflowing or failing expansion becomes empty and inert; root subscriptions remain so a later relevant change
+can recover it. No periodic retry work is scheduled. Action names/key bindings are bounded to 256 UTF-16 units,
+descriptions to 1,024, and text keeps the existing 32,768-unit bound, all without splitting surrogate pairs.
+The depth budget counts both real and logical semantic edges. Real-node reservations also survive rejected collection
+sizes, duplicate descriptors and cycles. Descriptor inspection is capped at 10,000 per session read; an application session
+returning more leaves the exported model in every window inert until the last oversized session recovers or disposes,
+since its uninspected tail may contain aliases in another window. This intentionally favors privacy over availability.
+Bulk selection is denied if any declared real child was filtered out by exclusion or password/source-window policy,
+including ClearSelection when the filtered child's selection cannot be inspected safely.
+
+String list items publish their strings. Combo labels use the public `StringConverter`, matching its value display.
+For domain objects or custom-rendered cells, set `itemTextProvider((control, item) -> ...)`; it takes precedence over
+the converter and is redacted centrally. Other non-string list items get generic positional names. The bridge
+never constructs cells or reads their skins to derive labels.
+
+Applications can register `ControlAdapter<T extends Node>` instances through `BridgeOptions.adapters(List.of(...))`.
+The exported `dev.desktopcontrol.fxatspi.adapter` package provides `AdapterSession`, `AdapterContext`,
+`SemanticProjection`, `SemanticChild` and typed `AdapterCommand` records. Registered adapters are tried in order
+before builtins; passwords always bypass adapter selection. Sessions read raw FX-only projections, describe children
+with stable identity keys, and execute admitted commands. Keys and factories never enter provider snapshots.
+Use `SemanticChild.node(node)` for actual JavaFX nodes so their own policy and password protections still apply;
+logical keys are scoped to their parent's lifetime and use object identity. Nodes cannot be disguised as logical keys.
+Real children retain exclusion/sensitivity from both semantic owners and physical ancestors, plus source-window inclusion.
+Declared semantic ownership takes precedence over ordinary scene traversal. Releasing a real child restores an eligible
+ordinary physical edge without changing a still-live reference; a published removal still retires it. Sensitive or failed
+expansions retain their real-node reservations until the adapter releases them, so physical traversal cannot expose aliases.
+Declaring the same real Node under multiple semantic owners fails the conflicting expansion closed.
+That failure still reserves the owner's nonconflicting declared Nodes and removes their physical aliases; the shared
+Node keeps its existing owner. Those partial reservations recover or dispose through the normal session lifecycle.
+Their physical visibility and modality are checked before individual or bulk selection. Password descendants cannot be
+exported through another adapter. Additional physical subscriptions are shared and disposed with their dependent children.
+Geometry is unavailable when the source node belongs to a different window from its exported semantic frame.
+Independent ContextMenus on adapted controls remain exported; only identified represented popups are suppressed.
+A still-showing standalone menu excluded through its observed anchor's sensitivity is reconsidered when the anchor changes.
+For menus shown with a Window owner and no ownerNode, the owner Scene's root is the policy/action anchor. A protected
+or undetermined anchor excludes the whole popup, including its content-sized geometry; owner Scene/root changes are observed.
+All exported children inherit their semantic parent's effective enabled/showing state, including real Nodes and ordinary
+descendants. Unavailable descendants remain discoverable with stable references, but remote mutations are denied and
+hidden geometry is unavailable. Failed ancestors also block descendant mutations.
+
+Call `context.observe(observable)` for subscriptions or `context.invalidate()` for an application event on FX.
+Use `context.onDispose(cleanup)` for additional resources. The bridge removes subscriptions and runs cleanup even
+if opening a session fails; session close is called once on removal, exclusion, adapter replacement or shutdown.
+Adapter registration changes compare reference identities in order, without calling application equals/hashCode.
+Distinct equal instances or reordered references replace sessions; the same instances in the same order preserve them.
+All callbacks must be fast and nonblocking. Adapters are trusted application code; central redaction, sender policy,
+state/modality checks and bounded admission apply to every adapter. A `PasswordField` session is never opened.
+
+Run the consumer-module example with `./gradlew :examples:fx-lab:run --args='--semantics'`.
+`SemanticsApp.CounterAdapter` demonstrates observing and operating a custom counter using only exported APIs.
+After `:examples:fx-lab:installDist`, run
+`python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/new-semantics-run`
+for a bounded independent libatspi check. See [issue-8 verification](docs/verification/issue-8.md) for actual evidence.
+
 ## Discovery and events
 
-At installation the bridge traverses `Window.getWindows()`, scenes, and container children once and subscribes to them: the window list, each window's scene and scene root, container children, and the properties it publishes (visibility, disabled state, focus, accessible text, id, labels, and the text, caret and editability of non-password text inputs). Controls are treated as semantic leaves: their internal skin nodes are not published or observed. Password fields' text and caret are never observed. Changes mark the affected objects; the bridge publishes them once per JavaFX event-loop turn, and an idle scene costs no work. Hiding or disabling a container updates its descendants. Additional windows, scene and root replacements, removals and reparenting are detected; a control moved between observed containers keeps its reference. The GDBus thread registers new objects and removes old ones, emitting `Cache.AddAccessible`, `Cache.RemoveAccessible`, and `ChildrenChanged`. It also reports observed changes to names, text, caret positions, and states.
+At installation the bridge traverses `Window.getWindows()`, scenes, and container children once and subscribes to them: the window list, each window's scene and scene root, container children, and the properties it publishes (visibility, disabled state, focus, accessible text, id, labels, and the text, caret and editability of non-password text inputs). Controls use semantic adapters; internal skin nodes are not published or observed. Controls without a child adapter remain semantic leaves. Password fields' text and caret are never observed. Changes mark the affected objects; the bridge publishes them once per JavaFX event-loop turn, and an idle scene costs no work. Hiding or disabling a container updates its descendants. Additional windows, scene and root replacements, removals and reparenting are detected; a control moved between observed containers keeps its reference. The GDBus thread registers new objects and removes old ones, emitting `Cache.AddAccessible`, `Cache.RemoveAccessible`, and `ChildrenChanged`. It also reports observed changes to names, text, caret positions, and states.
 
 Changes made within one event-loop turn are coalesced: the bridge synchronizes state, it does not record every transition, and a control added and removed within the same turn is never published. Listeners are removed when an object leaves the tree and when the bridge closes.
 
@@ -138,11 +243,11 @@ pending registry `Embed` call uses the same blocking dispatch with a one-second 
 
 ## Current coverage
 
-- Windows, containers, labels, buttons, TextField, and TextArea.
+- Windows, containers, labels, buttons, TextField, TextArea, checkboxes/radios, list/combo selection, tabs and menus.
 - Button actions and text reading/writing, with Unicode offsets measured in code points.
 - Password contents are hidden; PasswordField exposes neither Text nor EditableText in this experiment.
 - Read-only Component geometry for windows and nodes, including sensitive controls; see the coordinate contract below.
-- Partial AT-SPI interfaces: full selection support, virtualized tables, menus, and semantic mappings for all custom controls are not implemented. An unsupported control is published as a panel without specific actions.
+- Partial AT-SPI interfaces: text selection, virtualized tables/trees, and semantic mappings for all custom controls are not implemented. An unsupported control is published as a panel without specific actions.
 - Full screen reader compatibility has not been established. Invoking an accessible button action tests its behavior, not a physical click or its appearance.
 - Initial ABI support targets Linux x86_64 and JavaFX 27. The UI may still use XWayland: AT-SPI communicates over D-Bus and does not depend on X11 screenshots.
 
@@ -155,7 +260,7 @@ and subscriptions belong to the FX thread; queries never wait for layout or appl
 changes become visible after JavaFX performs layout and the observer publishes them. `BoundsChanged` carries the
 valid SCREEN rectangle once per node per provider publication: a frame reports a move or resize, and other nodes
 report changes in their WINDOW bounds, so moving a window emits one event and re-projects only its frame.
-`GetLayer` (window layer for frames, widget layer otherwise), `GetMDIZOrder` (-1) and `GetAlpha` (1.0) are constants.
+`GetLayer` (window layer for frames, popup layer for standalone menu windows, widget layer otherwise), `GetMDIZOrder` (-1) and `GetAlpha` (1.0) are constants.
 Other Component methods, including focus, point lookup, scrolling and geometry setters, return
 `org.freedesktop.DBus.Error.NotSupported` without effects.
 

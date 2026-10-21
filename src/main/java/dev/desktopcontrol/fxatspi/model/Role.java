@@ -24,7 +24,11 @@ public enum Role {
     // AT-SPI role 61 is reported as "text"; this matches the behavior before the model extraction.
     TEXT_AREA(61, "text"),
     LABEL(29, "label"),
-    PANEL(39, "panel");
+    PANEL(39, "panel"),
+    CHECK_BOX(7, "check box"), RADIO_BUTTON(44, "radio button"), COMBO_BOX(11, "combo box"),
+    LIST(31, "list"), LIST_ITEM(32, "list item"), PAGE_TAB_LIST(38, "page tab list"), PAGE_TAB(37, "page tab"),
+    MENU_BAR(34, "menu bar"), MENU(33, "menu"), MENU_ITEM(35, "menu item"),
+    CHECK_MENU_ITEM(8, "check menu item"), RADIO_MENU_ITEM(45, "radio menu item"), SEPARATOR(50, "separator");
 
     private final int atspiValue;
     private final String roleName;

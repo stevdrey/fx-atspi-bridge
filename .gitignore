@@ -35,3 +35,6 @@ __pycache__/
 
 # Issue 22 generated benchmark/QA output; retain summaries and source instead (policy #39).
 /docs/verification/data/issue-22/
+
+# Issue 8 generated benchmark/QA output; reusable source lives under examples/fx-lab/scripts/issue8.
+/docs/verification/data/issue-8/

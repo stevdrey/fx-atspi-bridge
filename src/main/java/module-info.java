@@ -14,4 +14,4 @@
  * limitations under the License.
  */
 /** Experimental Linux accessibility bridge for the current JavaFX process. */
-module dev.desktopcontrol.fxatspi { requires transitive javafx.controls; exports dev.desktopcontrol.fxatspi; }
+module dev.desktopcontrol.fxatspi { requires transitive javafx.controls; exports dev.desktopcontrol.fxatspi; exports dev.desktopcontrol.fxatspi.adapter; }

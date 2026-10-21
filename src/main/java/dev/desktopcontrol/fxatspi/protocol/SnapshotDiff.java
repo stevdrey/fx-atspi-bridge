@@ -16,6 +16,7 @@
 package dev.desktopcontrol.fxatspi.protocol;
 
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
+import dev.desktopcontrol.fxatspi.adapter.SemanticState;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -41,6 +43,10 @@ public final class SnapshotDiff {
     /** An existing object whose capabilities, and therefore exported interfaces, changed. */
     public record Reshaped(String id) implements Change {}
     public record State(String id, String state, boolean value) implements Change {}
+    public record RoleChanged(String id, int role) implements Change {}
+    public record AutomationId(String id, String value) implements Change {}
+    public record SelectionChanged(String id) implements Change {}
+    public record ActionsChanged(String id) implements Change {}
     public record Name(String id, String name) implements Change {}
     public record TextDeleted(String id, String text) implements Change {}
     public record TextInserted(String id, String text) implements Change {}
@@ -67,7 +73,10 @@ public final class SnapshotDiff {
             var item = after.get(id);
             if (item == null) { if (old != null) removed.add(new Removed(id)); continue; }
             if (old == null) added.add(new Added(id));
-            else if (old.equals(item)) continue;
+            else if (old.equals(item)) {
+                if (item.semantics().selection() && !selected(before,old).equals(selected(after,item))) changed.add(new SelectionChanged(id));
+                continue;
+            }
             else {
                 if (!old.capabilities().equals(item.capabilities())) changed.add(new Reshaped(id));
                 properties(old, item, before, after, changed);
@@ -81,9 +90,17 @@ public final class SnapshotDiff {
 
     private static void properties(AccessibleNode old, AccessibleNode item, Snapshot before, Snapshot after, List<Change> out) {
         var id = item.id();
+        if (old.role() != item.role()) out.add(new RoleChanged(id,item.role().atspiValue()));
         if (old.enabled() != item.enabled()) { out.add(new State(id, "enabled", item.enabled())); out.add(new State(id, "sensitive", item.enabled())); }
         if (old.focused() != item.focused()) out.add(new State(id, "focused", item.focused()));
         if (old.showing() != item.showing()) { out.add(new State(id, "showing", item.showing())); out.add(new State(id, "visible", item.showing())); }
+        for (var state : SemanticState.values()) {
+            var present = item.semantics().states().contains(state);
+            if (old.semantics().states().contains(state) != present) out.add(new State(id,state.name().toLowerCase(Locale.ROOT),present));
+        }
+        if (!old.semantics().automationId().equals(item.semantics().automationId())) out.add(new AutomationId(id,item.semantics().automationId()));
+        if (!old.semantics().actions().equals(item.semantics().actions())) out.add(new ActionsChanged(id));
+        if (item.semantics().selection() && !selected(before,old).equals(selected(after,item))) out.add(new SelectionChanged(id));
         if (!old.name().equals(item.name())) out.add(new Name(id, item.name()));
         if (!old.text().equals(item.text())) {
             if (!old.text().isEmpty()) out.add(new TextDeleted(id, old.text()));
@@ -91,10 +108,16 @@ public final class SnapshotDiff {
         }
         if (old.caret() != item.caret()) out.add(new Caret(id, item.caret()));
         // A window move changes only its frame's SCREEN bounds; descendants report changes in their WINDOW bounds.
-        var frame = item.role() == Role.FRAME;
+        var frame = Snapshot.isFrame(item);
         var moved = frame ? !Objects.equals(screen(after, item), screen(before, old)) : !Objects.equals(item.geometry().window(), old.geometry().window());
         var bounds = moved ? screen(after, item) : null;
         if (bounds != null) out.add(new BoundsChanged(id, bounds));
+    }
+
+    private static List<String> selected(Snapshot snapshot, AccessibleNode node) {
+        return node.children().stream().filter(id -> {
+            var item = snapshot.get(id); return item != null && item.semantics().states().contains(SemanticState.SELECTED);
+        }).toList();
     }
 
     /**

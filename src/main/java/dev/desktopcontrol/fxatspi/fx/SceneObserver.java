@@ -15,7 +15,17 @@
  */
 package dev.desktopcontrol.fxatspi.fx;
 
+import dev.desktopcontrol.fxatspi.AutomationIds;
 import dev.desktopcontrol.fxatspi.BridgeOptions;
+import dev.desktopcontrol.fxatspi.adapter.AdapterCommand;
+import dev.desktopcontrol.fxatspi.adapter.AdapterContext;
+import dev.desktopcontrol.fxatspi.adapter.AdapterSession;
+import dev.desktopcontrol.fxatspi.adapter.ControlAdapter;
+import dev.desktopcontrol.fxatspi.adapter.SemanticAction;
+import dev.desktopcontrol.fxatspi.adapter.SemanticChild;
+import dev.desktopcontrol.fxatspi.adapter.SemanticProjection;
+import dev.desktopcontrol.fxatspi.adapter.SemanticState;
+import dev.desktopcontrol.fxatspi.model.Semantics;
 import dev.desktopcontrol.fxatspi.BridgeOptions.ContentKind;
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.Capability;
@@ -24,21 +34,39 @@ import dev.desktopcontrol.fxatspi.model.NodeStore;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.IdentityHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
+import javafx.beans.value.ObservableValue;
+import javafx.application.Platform;
 import javafx.geometry.Point2D;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.Control;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.skin.ComboBoxListViewSkin;
+import javafx.stage.PopupWindow;
+import javafx.util.StringConverter;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.PasswordField;
@@ -73,6 +101,11 @@ public final class SceneObserver {
     /** Stands for the application root, whose children are the windows. */
     private static final Object APPLICATION = new Object();
 
+    /** Standalone popup windows have semantic owners outside their exported parent chain. */
+    private final Set<Observed> semanticPopups = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Showing standalone menus excluded by owner policy, without subscriptions to their protected contents. */
+    private final Set<ContextMenu> excludedPopups = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Observed> comboPopups = Collections.newSetFromMap(new IdentityHashMap<>());
     private final TargetRegistry registry;
     private final Executor scheduler;
     private final IdentityHashMap<Object, Observed> observed = new IdentityHashMap<>();
@@ -106,6 +139,40 @@ public final class SceneObserver {
     private final IdentityHashMap<Window, Boolean> modal = new IdentityHashMap<>();
     /** A subtree may be reached from several renewed ancestors; rotate each identity once per atomic flush. */
     private final Set<Observed> rotated = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Application IDs (before redaction) of entries with a nonempty candidate; a second holder is a real duplicate. */
+    private final Map<String, String> rawAutomationIndex = new HashMap<>();
+    private final Map<String, String> rawAutomation = new HashMap<>();
+    /** Redacted candidates by export id and their holders by value; collisions only between candidates are resolved here. */
+    private final Map<String, AutomationCandidate> automationCandidates = new HashMap<>();
+    private final Map<String, Set<String>> automationHolders = new HashMap<>();
+    private record AutomationCandidate(String value, boolean transformed) {}
+    private int logicalCount, logicalReserved;
+    private final IdentityHashMap<Object, List<Observed>> logicalKeys = new IdentityHashMap<>();
+    /** Declared real edges also reserve nodes while owner privacy hides their expansion. FX identity only. */
+    private final IdentityHashMap<Node, Observed> semanticOwners = new IdentityHashMap<>();
+    /**
+     * An uninspected descriptor may name a Node in any window. Retain only oversized session identities and
+     * quarantine all publication until the last one recovers or disposes.
+     */
+    private final Set<Observed> unidentifiedClaims = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final ActionFingerprint actionFingerprint = new ActionFingerprint();
+    /** Only real adapter edges need extra physical provenance; ordinary scene edges keep their fast path. */
+    private final Set<Observed> realNodes = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Observed> physicalDirty = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final IdentityHashMap<Observable, PhysicalWatch> physicalWatches = new IdentityHashMap<>();
+    private final IdentityHashMap<Node, PhysicalState> physicalState = new IdentityHashMap<>();
+    private final Consumer<Object> idListener = target -> {
+        var entry = observed.get(target);
+        if (entry != null) { dirty.add(entry); schedule(); }
+        var entries = logicalKeys.get(target);
+        if (entries != null) { dirty.addAll(entries); schedule(); }
+    };
+    private Runnable collisionHandler = () -> {};
+    private boolean initializing, observeIds;
+    public void observeAutomationIds() { observeIds = true; }
+    /** Any thread: removes the static change subscription when FX cleanup can no longer run. Idempotent. */
+    public void releaseAutomationIds() { AutomationIdEvents.remove(idListener); }
+    public void onCollision(Runnable handler) { collisionHandler = Objects.requireNonNull(handler); }
     private Sink sink;
     private boolean active, closed, scheduled;
     private long publications, projectionFailures, projections;
@@ -122,11 +189,31 @@ public final class SceneObserver {
     }
 
     public BridgeOptions options() { return options; }
+    /** Candidate preflight owns and disposes all temporary subscriptions, without publishing to native state. */
+    public void validateOptions(BridgeOptions candidate) {
+        // Only adapters, privacy, inclusion and expansion bounds can change which IDs are published.
+        if (sameAdapters(options.adapters(),candidate.adapters()) && options.redactor() == candidate.redactor()
+                && options.includedWindows() == candidate.includedWindows() && options.excludedNodes() == candidate.excludedNodes()
+                && options.sensitiveNodes() == candidate.sensitiveNodes() && options.maxSemanticChildren() == candidate.maxSemanticChildren()) return;
+        var temporary = new SceneObserver(new TargetRegistry(), _ -> {}, candidate);
+        try { temporary.start((snapshot, touched) -> true); }
+        finally { temporary.close(); }
+    }
+    Node ownerFor(String id) { return owner(observed.get(registry.target(id))); }
+
 
     /** FX-only explicit invalidation of captured policy state, with a publication barrier even for an unchanged tree. */
     public void updateOptions(BridgeOptions value, long revision) {
         var renew = customRedaction(options) || customRedaction(value);
+        var replaceAdapters = !sameAdapters(options.adapters(),value.adapters());
         options = value;
+        if (replaceAdapters) {
+            for (var entry : List.copyOf(observed.values())) if (entry.attached && entry.target instanceof Logical) detach(entry);
+            for (var entry : List.copyOf(observed.values())) if (entry.attached && entry.target != APPLICATION) {
+                entry.closeSession(); entry.expansionFailed = false; entry.openSession(); rotate(entry);
+            }
+            rotated.clear();
+        }
         policyRevision = revision;
         for (var entry : observed.values()) {
             entry.renew |= renew && entry.target != APPLICATION;
@@ -137,10 +224,20 @@ public final class SceneObserver {
         flush();
     }
 
+    private static boolean sameAdapters(List<ControlAdapter<?>> first, List<ControlAdapter<?>> second) {
+        if (first.size() != second.size()) return false;
+        for (var index = 0; index < first.size(); index++) if (first.get(index) != second.get(index)) return false;
+        return true;
+    }
+
     /** Only sanitized, successfully projected nodes authorize an FX mutation. */
     public boolean permits(String id, Capability capability) {
         var item = model.get(id);
         return item != null && item.permits(capability);
+    }
+    public long actionRevision(String id) {
+        var item = model.get(id);
+        return item == null ? -1 : item.semantics().actionRevision();
     }
 
     private static boolean customRedaction(BridgeOptions value) { return value.redactor() != BridgeOptions.defaults().redactor(); }
@@ -160,16 +257,255 @@ public final class SceneObserver {
     /** Whether {@code candidate} passes the inclusion predicates; a throwing predicate excludes it (fail closed). */
     private boolean included(Object candidate) {
         try {
+            if (candidate instanceof ContextMenu popup) {
+                if (!options.includedWindows().test(popup)) return false;
+                var owner = popup.getOwnerWindow();
+                if (owner == null || !options.includedWindows().test(owner)) return false;
+                var anchor = popupAnchor(popup);
+                if (anchor == null) return false;
+                for (var node = anchor; node != null; node = node.getParent())
+                    if (options.excludedNodes().test(node) || options.sensitiveNodes().test(node) || node instanceof PasswordField) return false;
+                return true;
+            }
             return candidate instanceof Window window ? options.includedWindows().test(window)
-                    : !options.excludedNodes().test((Node) candidate);
+                    : candidate instanceof Node node ? !options.excludedNodes().test(node) : true;
         } catch (RuntimeException failure) { projectionFailures++; return false; } // never log callback data
     }
 
+    private static Node popupAnchor(ContextMenu popup) {
+        if (popup.getOwnerNode() != null) return popup.getOwnerNode();
+        var window = popup.getOwnerWindow();
+        var scene = window == null ? null : window.getScene();
+        return scene == null ? null : scene.getRoot();
+    }
+
+    private record PhysicalState(boolean included, boolean sensitive, boolean visible) {}
+
+    private PhysicalState physicalState(Node node) {
+        var known = physicalState.get(node);
+        if (known != null) return known;
+        var parent = node.getParent();
+        var inherited = parent == null ? new PhysicalState(true, false, true) : physicalState(parent);
+        var state = new PhysicalState(inherited.included() && !(parent instanceof PasswordField)
+                && !options.excludedNodes().test(node), inherited.sensitive() || node instanceof PasswordField
+                || options.sensitiveNodes().test(node), inherited.visible() && node.isVisible());
+        physicalState.put(node, state);
+        return state;
+    }
+
+    private boolean includedReal(Node node) {
+        try {
+            var scene = node.getScene();
+            return physicalState(node).included() && (scene == null || scene.getWindow() == null
+                    || included(scene.getWindow()));
+        } catch (RuntimeException failure) { projectionFailures++; return false; }
+    }
+
+    /** One listener per physical property, shared by dependent real-node edges, never polled. */
+    private final class PhysicalWatch implements InvalidationListener {
+        final Observable property;
+        final Set<Observed> dependents = Collections.newSetFromMap(new IdentityHashMap<>());
+        PhysicalWatch(Observable property) { this.property = property; }
+        @Override public void invalidated(Observable ignored) {
+            for (var entry : dependents) if (entry.attached) {
+                physicalDirty.add(entry); inclusion.add(entry); restructured.add(entry); markSubtree(entry);
+            }
+            schedule();
+        }
+    }
+
+    /** FX-only diagnostic for disposal/idle regression tests. */
+    public int physicalSubscriptions() { return physicalWatches.size(); }
+
+    private static void physicalProperties(Set<Observable> properties, Node node) {
+        for (var ancestor = node; ancestor != null; ancestor = ancestor.getParent()) {
+            Collections.addAll(properties, nodeProperties(ancestor));
+            if (ancestor instanceof Labeled labeled) properties.add(labeled.textProperty());
+            if (ancestor instanceof TextInputControl input && !(input instanceof PasswordField)) {
+                properties.add(input.textProperty()); properties.add(input.caretPositionProperty()); properties.add(input.editableProperty());
+            }
+            properties.add(ancestor.visibleProperty()); properties.add(ancestor.parentProperty()); properties.add(ancestor.sceneProperty());
+            properties.add(ancestor.localToParentTransformProperty()); properties.add(ancestor.clipProperty());
+            if (ancestor.getClip() != null) properties.add(ancestor.getClip().boundsInParentProperty());
+        }
+    }
+
+    private static void physicalWindowProperties(Set<Observable> properties, Window window) {
+        properties.add(window.showingProperty()); properties.add(window.focusedProperty());
+        properties.add(window.xProperty()); properties.add(window.yProperty());
+        properties.add(window.widthProperty()); properties.add(window.heightProperty());
+        if (window instanceof Stage stage) { properties.add(stage.titleProperty()); properties.add(stage.iconifiedProperty()); }
+    }
+
+    /** FX-only wrapper: keys and factories never enter the transport model. */
+    private static final class Logical {
+        final Object key;
+        final SemanticChild descriptor;
+        boolean reserved;
+        Logical(SemanticChild descriptor) { this.key = descriptor.key(); this.descriptor = descriptor; }
+    }
+    private final class Context implements AdapterContext {
+        final Observed entry;
+        final Set<Observable> properties = Collections.newSetFromMap(new IdentityHashMap<>());
+        final List<Runnable> cleanup = new ArrayList<>();
+        final InvalidationListener listener = _ -> invalidate();
+        boolean disposed;
+        Context(Observed entry) { this.entry = entry; }
+        @Override public void observe(Observable property) {
+            if (disposed) throw new IllegalStateException("Adapter context closed");
+            Objects.requireNonNull(property);
+            if (properties.size() >= 256 && !properties.contains(property)) throw new IllegalStateException("Adapter subscription limit");
+            if (properties.add(property)) {
+                try { property.addListener(listener); }
+                catch (RuntimeException failure) { property.removeListener(listener); properties.remove(property); throw failure; }
+            }
+        }
+        @Override public void invalidate() {
+            if (!Platform.isFxApplicationThread()) throw new IllegalStateException("Invalidate on FX");
+            if (disposed || !active || !entry.attached) return;
+            restructured.add(entry); markSubtree(entry); schedule();
+        }
+        @Override public void onDispose(Runnable action) {
+            if (disposed || cleanup.size() >= 256) throw new IllegalStateException("Adapter cleanup limit");
+            cleanup.add(Objects.requireNonNull(action));
+        }
+        @Override public int maxChildren() { return options.maxSemanticChildren(); }
+        @SuppressWarnings("unchecked") @Override public String itemText(Control owner, Object value, int index) {
+            if (options.itemTextProvider() != null) return Objects.requireNonNull(options.itemTextProvider().apply(owner,value));
+            if (owner instanceof ComboBox<?> combo && combo.getConverter() != null)
+                return Objects.requireNonNullElse(((StringConverter<Object>) combo.getConverter()).toString(value), "");
+            return value instanceof String text ? text : value == null ? "" : index < 0 ? "" : "Item " + (index + 1);
+        }
+        void readProperties() {
+            for (var property : properties) if (property instanceof ObservableValue<?> value) value.getValue();
+        }
+        void close() {
+            if (disposed) return; disposed = true;
+            for (var property : properties) try { property.removeListener(listener); } catch (RuntimeException ignored) { projectionFailures++; }
+            properties.clear();
+            for (var action : cleanup) try { action.run(); } catch (RuntimeException ignored) { projectionFailures++; }
+            cleanup.clear();
+        }
+    }
+    @SuppressWarnings("unchecked") private static <T extends Node> AdapterSession open(ControlAdapter<T> adapter, Node node, AdapterContext context) {
+        return adapter.open((T) node, context);
+    }
+    private Node owner(Observed entry) {
+        for (var current = entry; current != null; current = current.parent) {
+            if (current.target instanceof Node node) return node;
+            if (current.target instanceof ContextMenu popup) {
+                return popupAnchor(popup);
+            }
+        }
+        return null;
+    }
+    /** Only the central observer resolves opaque keys and runs application sessions. */
+    public List<String> selectionChildren(String parentId, boolean selectedOnly) {
+        var parent = model.get(parentId);
+        if (parent == null) return List.of();
+        return parent.children().stream().filter(id -> {
+            var item = model.get(id);
+            var entry = observed.get(registry.target(id));
+            // Protection/failure can erase SELECTABLE/SELECTED. Never treat that as proof a bulk callback cannot affect it.
+            return item != null && (item.redacted() || entry != null && (entry.failed || entry.expansionFailed)
+                    || item.semantics().states().contains(selectedOnly ? SemanticState.SELECTED : SemanticState.SELECTABLE));
+        }).toList();
+    }
+    boolean hasFilteredSelectionChildren(String parentId) {
+        var parent = observed.get(registry.target(parentId));
+        if (parent == null) return true;
+        for (var node : parent.nodeClaims) {
+            var child = observed.get(node);
+            if (child == null || child.parent != parent || model.get(child.id) == null) return true;
+        }
+        return false;
+    }
+    public boolean selectable(String parentId, String childId) {
+        var parent = observed.get(registry.target(parentId));
+        var child = observed.get(registry.target(childId));
+        var item = child == null ? null : model.get(child.id);
+        return parent != null && child != null && child.parent == parent && item != null && item.enabled()
+                && !item.redacted() && (!(child.target instanceof Node) || item.actionEligible())
+                && item.semantics().states().contains(SemanticState.SELECTABLE);
+    }
+    public boolean execute(String id, AdapterCommand command, String childId) {
+        var target = registry.target(id);
+        var entry = observed.get(target);
+        if (entry == null || entry.session == null || entry.failed || entry.expansionFailed) return false;
+        if (command instanceof AdapterCommand.Select(var ignored, var selected)) {
+            var child = observed.get(registry.target(childId));
+            if (!selectable(id,childId)) return false;
+            command = new AdapterCommand.Select(child.key(), selected);
+        }
+        if (command instanceof AdapterCommand.Activate(var index)) {
+            var item = model.get(entry.id);
+            if (item == null || index < 0 || index >= item.semantics().actions().size()) return false;
+        }
+        return entry.session.execute(command);
+    }
+    public boolean adapted(String id) {
+        var entry = observed.get(registry.target(id)); return entry != null && entry.session != null;
+    }
     /** One observed target: its id, its observed parent and children, and the listener it registered. */
     private final class Observed implements InvalidationListener {
         final Object target;
         String id;
-        boolean renew, failed;
+        boolean renew, failed, expansionFailed;
+        /** Last projected application ID before redaction, and whether the redactor changed it. FX only. */
+        String rawAutomationId = "";
+        boolean automationTransformed;
+        boolean builtin;
+        byte[] actionDigest;
+        List<SemanticAction> publishedActions = List.of();
+        long actionRevision;
+        boolean realNode, physicalFailed;
+        Set<Observable> physicalProperties = Set.of();
+        AdapterSession session;
+        Context context;
+        final IdentityHashMap<Object, Logical> logicalChildren = new IdentityHashMap<>();
+        Set<Node> nodeClaims = Set.of();
+        Object key() { return target instanceof Logical logical ? logical.key : target; }
+        void openSession() {
+            if (session != null || target instanceof PasswordField) return;
+            try {
+                if (target instanceof Node node && !BuiltinAdapters.supports(node)
+                        && options.adapters().stream().noneMatch(adapter -> adapter.targetType().isInstance(node))) return;
+            } catch (RuntimeException failure) { expansionFailed = true; projectionFailures++; return; }
+            context = new Context(this);
+            try {
+                if (target instanceof Logical logical) session = Objects.requireNonNull(logical.descriptor.factory().apply(context));
+                else if (target instanceof Node node) {
+                    for (var adapter : options.adapters()) if (adapter.targetType().isInstance(node)) {
+                        session = Objects.requireNonNull(open(adapter,node,context)); break;
+                    }
+                    if (session == null) {
+                        session = BuiltinAdapters.open(node,context); builtin = session != null;
+                        if (builtin && node instanceof ComboBox<?>) comboPopups.add(this);
+                    }
+                } else if (target instanceof ContextMenu popup) session = BuiltinAdapters.popup(popup,context);
+                if (session == null) { context.close(); context = null; }
+                else if (target instanceof Node node) context.observe(node.focusTraversableProperty());
+            } catch (RuntimeException failure) {
+                closeSession(); expansionFailed = true; projectionFailures++;
+            }
+        }
+        void closeSession() {
+            releaseNodeClaims(this);
+            unidentifiedClaims(this,false);
+            comboPopups.remove(this);
+            if (context != null) context.close();
+            if (session != null) try { session.close(); } catch (RuntimeException failure) { projectionFailures++; }
+            context = null; session = null; builtin = false; clearLogicalChildren(this);
+            actionDigest = null; publishedActions = List.of();
+        }
+        long reviseActions(List<SemanticAction> original, List<SemanticAction> published) {
+            var digest = actionFingerprint.of(original);
+            if (!Arrays.equals(digest, actionDigest) || !publishedActions.equals(published)) {
+                actionRevision = Math.incrementExact(actionRevision);
+                actionDigest = digest; publishedActions = List.copyOf(published);
+            }
+            return actionRevision;
+        }
         /** Last projected classification, separate from text transformed by redaction or output bounds. */
         boolean sensitive;
         Observed parent;
@@ -197,6 +533,70 @@ public final class SceneObserver {
 
         Observed(Object target, String id, Observed parent) { this.target = target; this.id = id; this.parent = parent; }
 
+        void physicalParent() {
+            realNode = target instanceof Node && parent != null && parent.session != null;
+            if (realNode) { realNodes.add(this); bindPhysical(); }
+            else { realNodes.remove(this); clearPhysical(); physicalFailed = false; }
+        }
+
+        void bindPhysical() {
+            var next = Collections.newSetFromMap(new IdentityHashMap<Observable, Boolean>());
+            try {
+                if (physicalProperties.isEmpty()) physicalProperties = Collections.newSetFromMap(new IdentityHashMap<>());
+                var source = (Node) target;
+                next.add(source.parentProperty()); next.add(source.sceneProperty());
+                physicalProperties(next,source.getParent());
+                var sourceScene = source.getScene();
+                if (sourceScene != null) {
+                    Collections.addAll(next, sceneProperties(sourceScene)); next.add(sourceScene.windowProperty());
+                    var window = sourceScene.getWindow();
+                    if (window != null) {
+                        physicalWindowProperties(next,window);
+                        if (window instanceof ContextMenu popup) {
+                            next.add(popup.ownerNodeProperty()); next.add(popup.ownerWindowProperty());
+                            physicalProperties(next,popupAnchor(popup));
+                            var owner = popup.getOwnerWindow();
+                            if (owner != null) {
+                                physicalWindowProperties(next,owner); next.add(owner.sceneProperty());
+                                if (owner.getScene() != null) next.add(owner.getScene().rootProperty());
+                            }
+                        }
+                    }
+                }
+                for (var property : next) {
+                    if (property instanceof ObservableValue<?> value) value.getValue(); // re-arm invalidation
+                    if (physicalProperties.contains(property)) continue;
+                    var watch = physicalWatches.get(property);
+                    if (watch == null) {
+                        watch = new PhysicalWatch(property);
+                        try { property.addListener(watch); }
+                        catch (RuntimeException failure) { property.removeListener(watch); throw failure; }
+                        physicalWatches.put(property, watch);
+                    }
+                    watch.dependents.add(this); physicalProperties.add(property);
+                }
+                for (var property : List.copyOf(physicalProperties)) if (!next.contains(property)) unwatchPhysical(property);
+                physicalFailed = false;
+            } catch (RuntimeException failure) {
+                clearPhysical(); physicalFailed = true; retry.add(this);
+            }
+        }
+
+        void unwatchPhysical(Observable property) {
+            var watch = physicalWatches.get(property);
+            if (watch != null) {
+                watch.dependents.remove(this);
+                if (watch.dependents.isEmpty()) { property.removeListener(watch); physicalWatches.remove(property); }
+            }
+            physicalProperties.remove(property);
+        }
+
+        void clearPhysical() {
+            for (var property : List.copyOf(physicalProperties)) unwatchPhysical(property);
+            physicalProperties = Set.of();
+            physicalDirty.remove(this);
+        }
+
         @Override public void invalidated(Observable source) {
             if (!attached || !active) return;
             if (target == APPLICATION && source == structure) windowsChanged = true; // modal blocking may have changed
@@ -215,6 +615,7 @@ public final class SceneObserver {
         }
 
         void subscribe() {
+            openSession();
             switch (target) {
                 case Window window -> {
                     inherited = window.showingProperty();
@@ -224,6 +625,11 @@ public final class SceneObserver {
                             window.xProperty(), window.yProperty(), window.widthProperty(), window.heightProperty()}
                             : new Observable[] {window.focusedProperty(), window.xProperty(), window.yProperty(),
                             window.widthProperty(), window.heightProperty()};
+                    if (window instanceof ContextMenu popup) {
+                        own = Arrays.copyOf(own,own.length + 2);
+                        own[own.length - 2] = popup.ownerNodeProperty();
+                        own[own.length - 1] = popup.ownerWindowProperty();
+                    }
                     structure = window.sceneProperty();
                     if (window instanceof Stage stage) geometryInherited = new Observable[] {stage.iconifiedProperty()};
                 }
@@ -239,6 +645,7 @@ public final class SceneObserver {
                     if (node instanceof Parent container && !(node instanceof Control)) structure = container.getChildrenUnmodifiable();
                     geometryInherited = new Observable[] {node.localToParentTransformProperty(), node.clipProperty()};
                 }
+                case Logical _ -> own = NO_PROPERTIES;
                 default -> { own = NO_PROPERTIES; structure = Window.getWindows(); }
             }
             for (var property : own) listen(property);
@@ -268,6 +675,8 @@ public final class SceneObserver {
 
         void unsubscribe() {
             attached = false;
+            realNodes.remove(this); clearPhysical();
+            closeSession();
             for (var property : own) property.removeListener(this);
             for (var property : geometryInherited) property.removeListener(this);
             observeClip(null);
@@ -339,9 +748,11 @@ public final class SceneObserver {
         if (active || closed) return;
         sink = receiver;
         active = true;
+        if (observeIds) AutomationIdEvents.add(idListener);
         windowsChanged = true; // records each window's initial blocked state
-        attach(APPLICATION, null);
-        flush();
+        initializing = true;
+        try { attach(APPLICATION, null); flush(); }
+        finally { initializing = false; }
     }
 
     /** Publishes pending changes to the sink now, for example around an action. */
@@ -364,8 +775,10 @@ public final class SceneObserver {
         closed = true;
         if (!active) return;
         active = false;
+        if (observeIds) AutomationIdEvents.remove(idListener); logicalKeys.clear();
         for (var entry : observed.values()) entry.unsubscribe();
-        observed.clear();
+        observed.clear(); semanticPopups.clear(); excludedPopups.clear(); comboPopups.clear(); semanticOwners.clear();
+        unidentifiedClaims.clear();
         model.clear();
         dirty.clear();
         restructured.clear();
@@ -378,7 +791,8 @@ public final class SceneObserver {
         inclusion.clear();
         modal.clear();
         rotated.clear();
-        registry.clear();
+        registry.clear(); rawAutomationIndex.clear(); rawAutomation.clear(); automationCandidates.clear(); automationHolders.clear(); logicalCount = 0; logicalReserved = 0;
+        physicalState.clear(); physicalDirty.clear(); realNodes.clear();
         options = BridgeOptions.defaults(); // release application callback captures after disposal
     }
 
@@ -388,17 +802,51 @@ public final class SceneObserver {
         catch (RuntimeException rejected) { /* The toolkit is gone; nothing runs on the FX thread any more. */ }
     }
 
+    private static final class AutomationIdCollision extends IllegalArgumentException {
+        AutomationIdCollision() { super("Duplicate automation ID"); }
+    }
     private void schedule() {
         if (scheduled || !active) return;
         scheduled = true;
-        try { scheduler.execute(() -> { scheduled = false; flush(); }); }
+        try { scheduler.execute(() -> {
+            scheduled = false;
+            try { flush(); } catch (AutomationIdCollision rejected) { /* controlled collision shutdown already requested */ }
+        }); }
         catch (RuntimeException rejected) { scheduled = false; } // the next synchronize() publishes the pending changes
     }
 
     /** Applies one batch: structure first, then removals, then projections; publishes once if anything changed. */
     private void flush() {
         if (!active) return;
-        for (var entry : inclusion) if (entry.attached && entry.parent != null && !included(entry.target)) restructured.add(entry.parent);
+        sensitivity.clear(); showing.clear();
+        physicalState.clear();
+        for (var entry : List.copyOf(physicalDirty)) if (entry.attached && entry.realNode) entry.bindPhysical();
+        physicalDirty.clear();
+        // A window list change can only change source-window inclusion of real edges: recheck it without reprojecting
+        // their subtrees (visibility and modality have their own watches). Owners re-expand only when a claimed
+        // Node's inclusion no longer matches whether it is exported under them.
+        if (windowsChanged) {
+            inclusion.addAll(realNodes);
+            for (var owner : semanticOwnerEntries()) if (!owner.sensitive) for (var node : owner.nodeClaims) {
+                var exported = observed.get(node);
+                if (includedReal(node) != (exported != null && exported.parent == owner)) { restructured.add(owner); break; }
+            }
+        }
+        for (var entry : List.copyOf(dirty)) if (entry.session != null) {
+            try { if (entry.sensitive != sensitive(entry)) restructured.add(entry); }
+            catch (RuntimeException failure) { restructured.add(entry); } // semanticChildren fails the expansion closed
+        }
+        // Revalidate only standalone popup expansions when a real batch changes. Their owner may have become
+        // sensitive/excluded/disabled outside the popup's exported ancestry. Idle scenes do not enter this path.
+        if (!dirty.isEmpty() || !restructured.isEmpty() || !geometryRoots.isEmpty()) {
+            for (var popup : excludedPopups) if (included(popup)) restructured.add(observed.get(APPLICATION));
+            for (var popup : semanticPopups) if (popup.attached) {
+                if (!included(popup.target)) restructured.add(popup.parent);
+                else { restructured.add(popup); markSubtree(popup); }
+            }
+        }
+        for (var entry : inclusion) if (entry.attached && entry.parent != null
+                && !(entry.realNode ? includedReal((Node) entry.target) : included(entry.target))) restructured.add(entry.parent);
         inclusion.clear();
         var candidates = new ArrayList<Removal>();
         while (!restructured.isEmpty()) {
@@ -409,7 +857,7 @@ public final class SceneObserver {
         // A removed child that another observed parent adopted in this batch keeps its id and listeners.
         for (var removal : candidates) {
             var entry = observed.get(removal.child());
-            if (entry != null && entry.parent == removal.former()) detach(entry);
+            if (entry != null && entry.parent == removal.former() && !restorePhysical(entry, null)) detach(entry);
         }
         if (windowsChanged) { windowsChanged = false; reconcileModality(); }
         // An ancestor invalidation subsumes every descendant root in this batch.
@@ -419,22 +867,57 @@ public final class SceneObserver {
             if (ancestor == null && entry.attached) markSubtree(entry);
         }
         geometryRoots.clear();
-        for (var entry : retry) if (entry.attached) { entry.resubscribe(); dirty.add(entry); }
+        for (var entry : List.copyOf(retry)) if (entry.attached) {
+            if (entry.realNode && entry.physicalFailed) entry.bindPhysical();
+            entry.resubscribe(); dirty.add(entry);
+            if (entry.session == null && entry.expansionFailed) { entry.expansionFailed = false; entry.openSession(); }
+            if (entry.session != null) restructured.add(entry);
+        }
         retry.clear();
+        while (!restructured.isEmpty()) {
+            var pending = List.copyOf(restructured); restructured.clear();
+            var removals = new ArrayList<Removal>();
+            for (var entry : pending) if (entry.attached) restructure(entry,removals);
+            for (var removal : removals) {
+                var entry = observed.get(removal.child());
+                if (entry != null && entry.parent == removal.former() && !restorePhysical(entry, null)) detach(entry);
+            }
+        }
         try {
-            while (!dirty.isEmpty()) {
-                var iterator = dirty.iterator();
-                var entry = iterator.next();
-                iterator.remove();
-                if (!entry.attached) continue;
+            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+            var pending = new ArrayDeque<Observed>();
+            while (!dirty.isEmpty() || !pending.isEmpty()) {
+                if (pending.isEmpty()) {
+                    var entry = dirty.iterator().next(); pending.push(entry);
+                    for (var parent = entry.parent; parent != null && (!prepared.contains(parent) || dirty.contains(parent)); parent = parent.parent)
+                        pending.push(parent);
+                }
+                var entry = pending.pop(); prepared.add(entry);
+                if (!dirty.remove(entry) || !entry.attached) continue;
                 AccessibleNode node;
                 var failed = false;
                 var sensitive = false;
                 projections++;
+                entry.rawAutomationId = ""; entry.automationTransformed = false;
                 try {
+                    if (!unidentifiedClaims.isEmpty())
+                        throw new IllegalStateException("Unidentified semantic aliases");
                     entry.readGeometry();
                     sensitive = sensitive(entry);
+                    if (entry.physicalFailed) throw new IllegalStateException("Physical observation unavailable");
+                    if (entry.expansionFailed) throw new IllegalStateException("Semantic expansion unavailable");
                     node = project(entry, sensitive);
+                    if (!(entry.target instanceof PasswordField)) {
+                        var rawId = entry.target instanceof Node target ? AutomationIds.get(target)
+                                : entry.target instanceof Window window ? AutomationIds.get(window) : "";
+                        if (rawId.isEmpty()) rawId = node.semantics().automationId();
+                        if (!rawId.isEmpty()) {
+                            var id = redact(ContentKind.AUTOMATION_ID,sensitive,rawId);
+                            if (id.length() > 256 || !id.isEmpty() && id.isBlank()) throw new IllegalArgumentException("Invalid automation ID");
+                            entry.rawAutomationId = rawId; entry.automationTransformed = !id.equals(rawId);
+                            node = node.semantics(new Semantics(id,node.semantics().actions(),node.semantics().states(),node.semantics().selection(),node.semantics().actionRevision()));
+                        }
+                    }
                     // Descendants of a sensitive node publish a substitute box and never use this node's origin.
                     if (entry.target instanceof Node target && !sensitive) {
                         var origin = geometry.origin(target);
@@ -451,6 +934,7 @@ public final class SceneObserver {
                     }
                 }
                 catch (RuntimeException failure) { // no values are logged: they may be field contents
+                    entry.rawAutomationId = ""; entry.automationTransformed = false;
                     projectionFailures++;
                     retry.add(entry);
                     failed = true;
@@ -459,7 +943,8 @@ public final class SceneObserver {
                 }
                 if (!entry.unsubscribed.isEmpty()) retry.add(entry); // projected, but a listener is still missing
                 var old = model.get(entry.id);
-                if (entry.target != APPLICATION && old != null && (entry.renew && (!old.name().equals(node.name()) || !old.text().equals(node.text())) || failed != entry.failed
+                if (entry.target != APPLICATION && old != null && (entry.renew && (!old.name().equals(node.name()) || !old.text().equals(node.text())
+                        || !old.semantics().equals(node.semantics())) || failed != entry.failed
                         || sensitive != entry.sensitive || old.redacted() != node.redacted() || !old.capabilities().equals(node.capabilities()))) {
                     rotate(entry);
                     node = identity(node, entry);
@@ -468,7 +953,19 @@ public final class SceneObserver {
                 entry.failed = failed;
                 entry.sensitive = sensitive;
                 var previous = model.put(entry.id, node);
-                if (!node.equals(previous)) touched.add(entry.id);
+                if (!node.equals(previous)) {
+                    touched.add(entry.id);
+                    if (entry.parent != null && (previous == null || previous.semantics().states().contains(SemanticState.SELECTED)
+                            != node.semantics().states().contains(SemanticState.SELECTED))) touched.add(entry.parent.id);
+                }
+                if (previous == null || previous.enabled() != node.enabled() || previous.showing() != node.showing()) {
+                    for (var child : entry.children) {
+                        var descendant = observed.get(child);
+                        if (descendant != null && descendant.parent == entry) {
+                            showing.remove(descendant); dirty.add(descendant);
+                        }
+                    }
+                }
                 if (!sensitive && previous != null && entry.target instanceof Node && !previous.geometry().equals(node.geometry())) {
                     // Sensitive children publish this node's box as their own.
                     for (var child : entry.children) {
@@ -477,12 +974,63 @@ public final class SceneObserver {
                     }
                 }
             }
-        } finally { showing.clear(); sensitivity.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
+        } finally { showing.clear(); sensitivity.clear(); physicalState.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
+        indexAutomationIds();
         var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
         touched.clear();
         publications++;
         if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
+    }
+
+    /**
+     * Indexes the touched IDs. A repeated application ID with a nonempty published candidate is a real duplicate and
+     * stops observation. Distinct application IDs whose redacted candidates coincide are not an application error:
+     * an untransformed holder keeps the value and every transformed holder publishes an empty ID until it is unique.
+     * Old entries are removed before new ones are inserted, so atomic swaps in one batch are valid.
+     */
+    private void indexAutomationIds() {
+        var affected = new HashSet<String>();
+        for (var id : touched) {
+            var raw = rawAutomation.remove(id);
+            if (raw != null) rawAutomationIndex.remove(raw,id);
+            var candidate = automationCandidates.remove(id);
+            if (candidate != null) { removeHolder(candidate.value(),id); affected.add(candidate.value()); }
+        }
+        for (var id : List.copyOf(touched)) {
+            var item = model.get(id);
+            var entry = item == null ? null : observed.get(registry.target(id));
+            if (entry == null || entry.rawAutomationId.isEmpty() || item.semantics().automationId().isEmpty()) continue;
+            var conflict = rawAutomationIndex.putIfAbsent(entry.rawAutomationId,id);
+            if (conflict != null && !conflict.equals(id)) {
+                if (!initializing) collisionHandler.run();
+                close();
+                throw new AutomationIdCollision();
+            }
+            rawAutomation.put(id,entry.rawAutomationId);
+            var value = item.semantics().automationId();
+            automationCandidates.put(id,new AutomationCandidate(value,entry.automationTransformed));
+            automationHolders.computeIfAbsent(value,_ -> new HashSet<>()).add(id);
+            affected.add(value);
+        }
+        for (var value : affected) {
+            var holders = automationHolders.get(value);
+            if (holders == null) continue;
+            for (var id : holders) {
+                var publish = holders.size() == 1 || !automationCandidates.get(id).transformed();
+                var item = model.get(id);
+                var published = publish ? value : "";
+                if (item.semantics().automationId().equals(published)) continue;
+                var semantics = item.semantics();
+                model.put(id,item.semantics(new Semantics(published,semantics.actions(),semantics.states(),semantics.selection(),semantics.actionRevision())));
+                touched.add(id);
+            }
+        }
+    }
+
+    private void removeHolder(String value, String id) {
+        var holders = automationHolders.get(value);
+        if (holders != null && holders.remove(id) && holders.isEmpty()) automationHolders.remove(value);
     }
 
     /**
@@ -525,7 +1073,7 @@ public final class SceneObserver {
     private AccessibleNode identity(AccessibleNode node, Observed entry) {
         return new AccessibleNode(entry.id, node.name(), node.role(), node.text(), node.editable(), node.enabled(),
                 node.showing(), node.focused(), node.focusable(), node.caret(), entry.parent.id, childIds(entry),
-                node.capabilities(), node.actionEligible(), node.redacted(), node.geometry());
+                node.capabilities(), node.actionEligible(), node.redacted(), node.geometry(), node.semantics());
     }
 
     private record Removal(Object child, Observed former) {}
@@ -534,16 +1082,25 @@ public final class SceneObserver {
     private Observed attach(Object target, Observed parent) {
         var entry = new Observed(target, target == APPLICATION ? Snapshot.ROOT_ID : registry.register(target), parent);
         observed.put(target, entry);
+        if (target instanceof ContextMenu) semanticPopups.add(entry);
+        if (target instanceof Logical logical) {
+            releaseLogicalReservation(logical);
+            logicalCount++; logicalKeys.computeIfAbsent(logical.key,_ -> new ArrayList<>()).add(entry);
+        }
         entry.subscribe();
+        entry.physicalParent();
         if (!entry.unsubscribed.isEmpty()) retry.add(entry);
         var live = liveChildren(entry);
         var children = new ArrayList<Object>(live.size());
         for (var child : live) {
+            if (target == APPLICATION && child instanceof Window window && adaptedPopup(window)) continue;
             var existing = observed.get(child);
+            if (child instanceof Node node && entry.session == null && semanticOwners.containsKey(node)) continue;
             if (existing == null) attach(child, entry);
             else adopt(existing, entry);
             children.add(child);
         }
+        children.removeIf(child -> !ownedChild(child,entry)); // recursive semantic adoption can remove a sibling
         entry.children = children;
         dirty.add(entry);
         return entry;
@@ -555,31 +1112,136 @@ public final class SceneObserver {
         var next = new ArrayList<Object>(live.size());
         var present = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>(live.size()));
         for (var child : live) {
+            if (entry.target == APPLICATION && child instanceof Window window && adaptedPopup(window)) continue;
             var existing = observed.get(child);
+            if (child instanceof Node node && entry.session == null && semanticOwners.containsKey(node)) continue;
             if (existing == null) attach(child, entry);
             else if (existing.parent != entry) adopt(existing, entry);
+            else if (existing.realNode != (child instanceof Node && entry.session != null)) existing.physicalParent();
             next.add(child);
             present.add(child);
         }
         for (var child : entry.children) if (!present.contains(child)) candidates.add(new Removal(child, entry));
+        next.removeIf(child -> !ownedChild(child,entry));
         entry.children = next;
         dirty.add(entry);
     }
 
     /** {@code entry} moved under {@code parent}: its ancestor and inherited visibility must be read again. */
     private void adopt(Observed entry, Observed parent) {
+        var former = entry.parent;
+        if (former != null) dirty.add(former); // reconcile once at projection, not once per moved sibling
         entry.parent = parent;
+        entry.physicalParent();
         markSubtree(entry);
+    }
+
+    private Set<Observed> semanticOwnerEntries() {
+        var owners = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+        for (var owner : semanticOwners.values()) if (owner.attached) owners.add(owner);
+        return owners;
+    }
+
+    private boolean ownedChild(Object target, Observed parent) {
+        var child = observed.get(target);
+        return child != null && child.parent == parent;
+    }
+
+    /** Restores a released semantic Node to its exported ordinary parent without rotating its incarnation. */
+    private boolean restorePhysical(Observed entry, Observed retiring) {
+        if (!entry.realNode || !(entry.target instanceof Node node) || semanticOwners.containsKey(node) || !includedReal(node)) return false;
+        var parent = physicalParent(node);
+        if (parent == null) return false;
+        for (var ancestor = parent; ancestor != null; ancestor = ancestor.parent)
+            if (ancestor == entry || ancestor == retiring) return false;
+        adopt(entry, parent);
+        restructured.add(parent);
+        return true;
+    }
+
+    private Observed physicalParent(Node node) {
+        var scene = node.getScene();
+        var parent = observed.get(node.getParent() != null ? node.getParent()
+                : scene != null && scene.getRoot() == node ? scene.getWindow() : null);
+        if (parent == null || !parent.attached || parent.session != null || parent.expansionFailed
+                || parent.target instanceof Control) return null;
+        return parent;
+    }
+
+    private void releaseNodeClaims(Observed entry) {
+        for (var node : entry.nodeClaims) if (semanticOwners.remove(node,entry) && active) {
+            var parent = physicalParent(node);
+            if (parent != null) restructured.add(parent);
+        }
+        entry.nodeClaims = Set.of();
+    }
+
+    private void unidentifiedClaims(Observed entry, boolean value) {
+        var wasEmpty = unidentifiedClaims.isEmpty();
+        if (value) unidentifiedClaims.add(entry); else unidentifiedClaims.remove(entry);
+        // Repeated invalidations of the same failing session must not repeatedly invalidate every other window.
+        if (active && wasEmpty != unidentifiedClaims.isEmpty()) dirty.addAll(observed.values());
+    }
+
+    private void claimNodes(Observed entry, Set<Node> claims, Collection<?> exported) {
+        if (claims.isEmpty()) { releaseNodeClaims(entry); return; }
+        var accepted = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
+        var conflict = false;
+        for (var node : claims) {
+            var previous = semanticOwners.get(node);
+            if (previous != null && previous != entry) conflict = true;
+            else accepted.add(node);
+        }
+        for (var node : entry.nodeClaims) if (!claims.contains(node) && semanticOwners.remove(node,entry)) {
+            var parent = physicalParent(node);
+            if (parent != null) restructured.add(parent);
+        }
+        for (var node : accepted) semanticOwners.put(node,entry);
+        entry.nodeClaims = accepted.isEmpty() ? Set.of() : accepted;
+        suppressAliases(entry,conflict ? List.of() : exported);
+        if (conflict) throw new IllegalStateException("Multiple semantic owners");
+    }
+
+    private void suppressAliases(Observed entry, Collection<?> exported) {
+        var visible = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
+        visible.addAll(exported);
+        for (var node : entry.nodeClaims) if (!visible.contains(node)) {
+            var current = observed.get(node);
+            if (current != null && current.parent != entry) {
+                dirty.add(current.parent);
+                detach(current);
+            }
+        }
+    }
+
+    private void releaseLogicalReservation(Logical logical) {
+        if (logical.reserved) { logical.reserved = false; logicalReserved--; }
+    }
+
+    private void clearLogicalChildren(Observed entry) {
+        for (var logical : entry.logicalChildren.values()) releaseLogicalReservation(logical);
+        entry.logicalChildren.clear();
     }
 
     /** Releases {@code entry} and every descendant that still belongs to it. */
     private void detach(Observed entry) {
+        detach(entry, entry);
+    }
+
+    private void detach(Observed entry, Observed retiring) {
+        releaseNodeClaims(entry);
         for (var child : entry.children) {
             var descendant = observed.get(child);
-            if (descendant != null && descendant.parent == entry) detach(descendant);
+            if (descendant != null && descendant.parent == entry && !restorePhysical(descendant, retiring)) detach(descendant, retiring);
         }
         entry.unsubscribe();
         observed.remove(entry.target);
+        semanticPopups.remove(entry);
+        if (entry.target instanceof Logical logical) {
+            logicalCount--;
+            var entries = logicalKeys.get(logical.key); entries.remove(entry);
+            if (entries.isEmpty()) logicalKeys.remove(logical.key);
+        }
         dirty.remove(entry);
         restructured.remove(entry);
         retry.remove(entry);
@@ -588,6 +1250,7 @@ public final class SceneObserver {
     }
 
     private void markSubtree(Observed entry) {
+        showing.remove(entry); sensitivity.remove(entry);
         dirty.add(entry);
         for (var child : entry.children) {
             var descendant = observed.get(child);
@@ -596,6 +1259,8 @@ public final class SceneObserver {
     }
 
     private List<?> liveChildren(Observed entry) {
+        if (entry.session != null) return semanticChildren(entry);
+        if (entry.expansionFailed) return List.of();
         var candidates = switch (entry.target) {
             case Window window -> {
                 entry.observeScene(window.getScene());
@@ -607,18 +1272,139 @@ public final class SceneObserver {
             case Node _ -> List.of();
             default -> Window.getWindows();
         };
-        if (!filtersTargets()) return candidates;
+        if (entry.target == APPLICATION) {
+            excludedPopups.clear();
+            var windows = new ArrayList<Object>(candidates.size());
+            for (var candidate : candidates) if (!adaptedPopup((Window) candidate)) {
+                if (included(candidate)) windows.add(candidate);
+                else if (candidate instanceof ContextMenu popup) excludedPopups.add(popup);
+            }
+            return windows;
+        }
+        if (!filtersTargets() && entry.target != APPLICATION) return candidates;
         var included = new ArrayList<Object>(candidates.size());
         for (var candidate : candidates) if (included(candidate)) included.add(candidate);
         return included;
     }
 
+    private boolean adaptedPopup(Window window) {
+        try { return representedPopup(window); }
+        catch (RuntimeException failure) { projectionFailures++; return true; } // never expose callback data
+    }
+    private boolean representedPopup(Window window) {
+        if (!(window instanceof PopupWindow popup)) return false;
+        // JavaFX's standard combo popup can have no ownerNode; use actual public content-window identity.
+        if (!(popup instanceof ContextMenu)) for (var entry : comboPopups) {
+            var combo = (ComboBox<?>) entry.target;
+            if (combo.getSkin() instanceof ComboBoxListViewSkin<?> skin) {
+                var content = skin.getPopupContent();
+                if (content != null && content.getScene() != null && content.getScene().getWindow() == popup) return true;
+            }
+        }
+        if (popup instanceof ContextMenu menu && menu.getItems().size() <= options.maxSemanticChildren()) {
+            for (var item : menu.getItems()) {
+                var entries = logicalKeys.get(item);
+                if (entries == null) continue;
+                for (var entry : entries) for (var ancestor = entry.parent; ancestor != null; ancestor = ancestor.parent) {
+                    if (ancestor.target == popup) break; // its own standalone projection is not a duplicate
+                    if (ancestor.target instanceof ContextMenu || ancestor.builtin
+                            && (ancestor.target instanceof MenuButton || ancestor.target instanceof MenuBar)) return true;
+                }
+            }
+        }
+        for (var node = popup.getOwnerNode(); node != null; node = node.getParent()) {
+            var entry = observed.get(node);
+            if (entry == null || !entry.builtin) continue;
+            if (popup instanceof ContextMenu menu) {
+                if (node instanceof MenuButton button && sameItems(menu.getItems(),button.getItems())) return true;
+                if (node instanceof MenuBar bar) {
+                    if (menu.getItems().size() > options.maxSemanticChildren() || bar.getMenus().size() > options.maxSemanticChildren()) continue;
+                    for (var item : menu.getItems()) {
+                        var root = item;
+                        var depth = 0;
+                        while (root.getParentMenu() != null && ++depth <= 64) root = root.getParentMenu();
+                        if (depth <= 64) for (var candidate : bar.getMenus()) if (candidate == root) return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    private boolean sameItems(List<MenuItem> first, List<MenuItem> second) {
+        if (first.isEmpty() || first.size() != second.size() || first.size() > options.maxSemanticChildren()) return false;
+        for (var index = 0; index < first.size(); index++) if (first.get(index) != second.get(index)) return false;
+        return true;
+    }
+    private List<?> semanticChildren(Observed entry) {
+        try {
+            var sensitive = sensitive(entry);
+            entry.context.readProperties();
+            var children = Objects.requireNonNull(entry.session.children());
+            var count = children.size();
+            var claims = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
+            // Reserve a bounded prefix before any validation can reject other descriptors in the same session.
+            unidentifiedClaims(entry,count > 10000);
+            for (var index = 0; index < Math.min(count,10000); index++) {
+                var child = children.get(index);
+                if (child == null || child.node() == null) continue;
+                var ancestor = entry;
+                while (ancestor != null && ancestor.key() != child.node()) ancestor = ancestor.parent;
+                if (ancestor == null) claims.add(child.node()); // never claim an ancestor to suppress a cycle
+            }
+            claimNodes(entry,claims,claims);
+            if (count > options.maxSemanticChildren()) throw new IllegalStateException("Semantic child limit");
+            var next = new ArrayList<Object>(count);
+            var keys = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
+            var logical = new IdentityHashMap<Object,Logical>();
+            var added = 0;
+            for (var child : children) {
+                if (!keys.add(child.key())) throw new IllegalStateException("Duplicate semantic child");
+                var depth = 0;
+                for (var ancestor = entry; ancestor != null; ancestor = ancestor.parent) {
+                    if (ancestor.key() == child.key()) throw new IllegalStateException("Semantic cycle");
+                    if (ancestor.session != null && ++depth > 64) throw new IllegalStateException("Semantic depth limit");
+                }
+                if (child.node() != null) {
+                    if (!sensitive && includedReal(child.node())) next.add(child.node());
+                } else if (!sensitive) {
+                    var target = entry.logicalChildren.get(child.key());
+                    if (target == null) { target = new Logical(child); added++; }
+                    next.add(target); logical.put(child.key(),target);
+                }
+            }
+            suppressAliases(entry,next);
+            // Replacements release their outgoing owned subtrees first. Unchanged keys keep their incarnations,
+            // and recursive attachment never temporarily exceeds the global cap.
+            for (var previous : entry.logicalChildren.entrySet()) if (!logical.containsKey(previous.getKey())) {
+                var removed = observed.get(previous.getValue());
+                if (removed != null && removed.parent == entry) detach(removed);
+                releaseLogicalReservation(previous.getValue());
+            }
+            if (logicalCount + logicalReserved + added > 10000) throw new IllegalStateException("Semantic object limit");
+            for (var target : logical.values()) if (!target.reserved && !observed.containsKey(target)) {
+                target.reserved = true; logicalReserved++;
+            }
+            entry.logicalChildren.clear(); entry.logicalChildren.putAll(logical); entry.expansionFailed = false;
+            return next;
+        } catch (RuntimeException failure) {
+            suppressAliases(entry,List.of());
+            if (!entry.expansionFailed) projectionFailures++;
+            entry.expansionFailed = true; clearLogicalChildren(entry); retry.add(entry); return List.of();
+        }
+    }
+
     private List<String> childIds(Observed entry) {
         var ids = new ArrayList<String>(entry.children.size());
-        for (var child : entry.children) {
+        List<Object> retained = null;
+        for (var index = 0; index < entry.children.size(); index++) {
+            var child = entry.children.get(index);
             var descendant = observed.get(child);
-            if (descendant != null && descendant.parent == entry) ids.add(descendant.id);
+            if (descendant != null && descendant.parent == entry) {
+                ids.add(descendant.id);
+                if (retained != null) retained.add(child);
+            } else if (retained == null) retained = new ArrayList<>(entry.children.subList(0,index));
         }
+        if (retained != null) entry.children = retained;
         return ids;
     }
 
@@ -631,12 +1417,25 @@ public final class SceneObserver {
         var known = showing.get(entry);
         if (known != null) return known;
         boolean value = switch (entry.target) {
-            case Window window -> window.isShowing();
-            case Node node -> node.isVisible() & (entry.parent == null || showing(entry.parent));
+            case Window window -> window.isShowing() && parentShowing(entry);
+            case Node node -> node.isVisible() & parentShowing(entry)
+                    && (!entry.realNode || physicalState(node).visible() && node.getScene() != null
+                    && node.getScene().getWindow() != null && node.getScene().getWindow().isShowing());
+            case Logical _ -> parentShowing(entry);
             default -> true;
         };
         showing.put(entry, value);
         return value;
+    }
+
+    private boolean parentShowing(Observed entry) {
+        var parent = entry.parent == null ? null : model.get(entry.parent.id);
+        return entry.parent == null || parent != null && parent.showing();
+    }
+
+    private boolean parentEnabled(Observed entry) {
+        var parent = entry.parent == null ? null : model.get(entry.parent.id);
+        return entry.parent == null || parent != null && parent.enabled();
     }
 
     /**
@@ -644,10 +1443,20 @@ public final class SceneObserver {
      * Memoized for the current flush like {@link #showing}; a throwing predicate fails the projection closed.
      */
     private boolean sensitive(Observed entry) {
-        if (!(entry.target instanceof Node node)) return false;
+        if (entry == null) return false;
+        if (!(entry.target instanceof Node node)) {
+            if (entry.target instanceof Logical) return sensitive(entry.parent);
+            if (entry.target instanceof ContextMenu) {
+                var anchor = owner(entry);
+                for (var current = anchor; current != null; current = current.getParent())
+                    if (current instanceof PasswordField || options.sensitiveNodes().test(current)) return true;
+            }
+            return false;
+        }
         var known = sensitivity.get(entry);
         if (known != null) return known;
-        var value = node instanceof PasswordField || options.sensitiveNodes().test(node) || sensitive(entry.parent);
+        var value = node instanceof PasswordField || options.sensitiveNodes().test(node) || sensitive(entry.parent)
+                || entry.realNode && physicalState(node).sensitive();
         sensitivity.put(entry, value);
         return value;
     }
@@ -658,19 +1467,67 @@ public final class SceneObserver {
      */
     private AccessibleNode project(Observed entry, boolean sensitive) {
         var children = childIds(entry);
+        if (entry.session != null) return projectSemantic(entry,sensitive,children);
         return switch (entry.target) {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
-                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, true, window.isShowing(), window.isFocused(), false, 0,
-                        Snapshot.ROOT_ID, children, COMPONENT, window.isShowing(), false, geometry.project(window));
+                var shows = showing(entry); var enabled = parentEnabled(entry);
+                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, enabled, shows, window.isFocused(), false, 0,
+                        Snapshot.ROOT_ID, children, COMPONENT, enabled && shows, false, shows ? geometry.project(window) : Geometry.UNAVAILABLE);
             }
             case Node node -> {
                 var shows = showing(entry);
-                yield projectNode(node, entry.id, entry.parent.id, shows, children, sensitive, nodeGeometry(entry, node, shows, sensitive));
+                yield projectNode(node, entry.id, entry.parent.id, parentEnabled(entry), shows, children, sensitive, nodeGeometry(entry, node, shows, sensitive));
             }
             default -> new AccessibleNode(Snapshot.ROOT_ID, redact(ContentKind.APPLICATION_NAME, false, options.applicationName()), Role.APPLICATION, "", false, true, !children.isEmpty(),
                     false, false, 0, "", children, NONE);
         };
+    }
+
+    private String metadata(String value, int limit) {
+        var result = redact(ContentKind.ACTION_METADATA,false,value);
+        var end = Math.min(result.length(),limit);
+        if (end < result.length() && end > 0 && Character.isHighSurrogate(result.charAt(end - 1)) && Character.isLowSurrogate(result.charAt(end))) end--;
+        return result.substring(0,end);
+    }
+    private AccessibleNode projectSemantic(Observed entry, boolean sensitive, List<String> children) {
+        entry.context.readProperties();
+        var raw = Objects.requireNonNull(entry.session.read());
+        var anchor = owner(entry);
+        var name = raw.name();
+        if (entry.target instanceof Node node) {
+            if (node.getAccessibleText() != null) name = node.getAccessibleText();
+            else if (name.isEmpty()) name = Objects.requireNonNullElse(node.getId(), "");
+        }
+        name = redact(ContentKind.NODE_NAME,sensitive,name);
+        var text = redact(ContentKind.NODE_TEXT,sensitive,raw.text());
+        var transformed = sensitive || !text.equals(raw.text().replace('\0','\uFFFD'));
+        var capabilities = EnumSet.noneOf(Capability.class);
+        if (!(entry.target instanceof Logical)) capabilities.add(Capability.COMPONENT);
+        var allow = !sensitive && anchor != null && options.pressAllowed().test(anchor);
+        var actions = new ArrayList<SemanticAction>();
+        if (allow) for (var action : raw.actions()) actions.add(new SemanticAction(
+                metadata(action.name(),256),metadata(action.description(),1024),metadata(action.keyBinding(),256)));
+        if (!actions.isEmpty()) capabilities.add(Capability.ACTION);
+        if (raw.selection() && allow) capabilities.add(Capability.SELECTION);
+        var hasText = !raw.text().isEmpty() || raw.editable() || raw.role().name().equals("COMBO_BOX")
+                || raw.role().name().equals("ENTRY") || raw.role().name().equals("TEXT_AREA");
+        if (hasText) capabilities.add(Capability.TEXT);
+        var editable = raw.editable() && !transformed && anchor != null && options.textWriteAllowed().test(anchor);
+        if (editable) capabilities.add(Capability.EDITABLE_TEXT);
+        var enabled = raw.enabled() && (anchor == null || !anchor.isDisabled()) && parentEnabled(entry);
+        var shows = raw.showing() && showing(entry);
+        var scene = anchor == null ? null : anchor.getScene();
+        var window = scene == null ? entry.target instanceof Window target ? target : null : scene.getWindow();
+        var blocked = window == null || modal.computeIfAbsent(window,ActionExecutor::blockedByModal);
+        var bounds = entry.target instanceof Node node ? nodeGeometry(entry,node,shows,sensitive)
+                : entry.target instanceof Window target && shows ? geometry.project(target) : Geometry.UNAVAILABLE;
+        var states = sensitive ? Set.<SemanticState>of() : raw.states();
+        var id = raw.automationId();
+        return new AccessibleNode(entry.id,name,Role.valueOf(raw.role().name()),text,editable,enabled,shows,entry.target instanceof Node source ? source.isFocused() : raw.focused(),
+                entry.target instanceof Node source ? source.isFocusTraversable() : raw.focusable(),transformed ? 0 : raw.caret(),entry.parent.id,children,capabilities,
+                enabled && shows && !blocked && !sensitive && !transformed,sensitive || transformed,bounds,
+                new Semantics(id,actions,states,raw.selection() && allow,entry.reviseActions(raw.actions(),actions)));
     }
 
     /** Inert stand-in for a new target whose projection failed: no name, text or capability, not showing. */
@@ -685,13 +1542,18 @@ public final class SceneObserver {
      * own layout box, which depends on their column count, not on their contents.
      */
     private Geometry nodeGeometry(Observed entry, Node node, boolean showing, boolean sensitive) {
+        if (entry.realNode) {
+            var frame = entry.parent;
+            while (frame != null && !(frame.target instanceof Window)) frame = frame.parent;
+            if (node.getScene() == null || frame == null || frame.target != node.getScene().getWindow()) return Geometry.UNAVAILABLE;
+        }
         if (!sensitive || node instanceof PasswordField) return geometry.project(node, entry.parent.target, showing);
         var box = entry.parent;
         while (box.target instanceof Node && sensitive(box)) box = box.parent;
         return geometry.substitute(node, box.target, box != entry.parent, showing);
     }
 
-    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean showing, List<String> children, boolean sensitive, Geometry bounds) {
+    private AccessibleNode projectNode(Node node, String id, String ancestor, boolean parentEnabled, boolean showing, List<String> children, boolean sensitive, Geometry bounds) {
         var password = node instanceof PasswordField;
         var accessibleText = password ? null : node.getAccessibleText();
         var nodeId = password ? null : node.getId();
@@ -716,7 +1578,7 @@ public final class SceneObserver {
         var capabilities = node instanceof ButtonBase && !sensitive && options.pressAllowed().test(node) ? ACTION
                 : input != null ? writable ? TEXT_INPUT : TEXT : COMPONENT;
         var focusable = node instanceof ButtonBase || node instanceof TextInputControl;
-        var enabled = !node.isDisabled();
+        var enabled = !node.isDisabled() && parentEnabled;
         var focused = node.isFocused();
         var scene = node.getScene();
         var window = scene == null ? null : scene.getWindow();

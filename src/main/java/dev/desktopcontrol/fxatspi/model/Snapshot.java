@@ -40,10 +40,14 @@ public record Snapshot(Map<String, AccessibleNode> nodes, ActionLimits limits, S
 
     public AccessibleNode get(String id) { return nodes.get(id); }
 
+    /** A top-level semantic menu still has its own real Window coordinate frame. */
+    public static boolean isFrame(AccessibleNode node) {
+        return node.role() == Role.FRAME || node.role() == Role.MENU && ROOT_ID.equals(node.ancestor()) && node.has(Capability.COMPONENT);
+    }
     /** The frame that contains {@code node} (a frame is its own), or null; bounded by the node count. */
     public AccessibleNode frameOf(AccessibleNode node) {
         for (var steps = nodes.size(); node != null && steps >= 0; steps--) {
-            if (node.role() == Role.FRAME) return node;
+            if (isFrame(node)) return node;
             node = nodes.get(node.ancestor());
         }
         return null;

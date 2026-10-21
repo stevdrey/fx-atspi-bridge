@@ -18,3 +18,60 @@ Target requirements, not a security certification of the prototype.
 `BridgeOptions` applies before snapshots, with runtime/null failures producing an empty inert projection. Password metadata is generic and no password values reach the redactor. Application redactors are trusted and must cover aliases in titles, labels and IDs; no automatic cross-control secret detection is claimed. Sensitivity is inherited by the observed subtree of a matching node. Sensitive/transformed text has projected offsets, zero caret and no mutation capability; one-for-one NUL replacement is not a transformation. Limits and sender settings in snapshots contain no FX objects/callbacks.
 
 Update completion is a provider reconciliation barrier, not revocation of already received data. Privacy/interface/failure changes rotate references rather than sending deleted old text. Exclusion disposes descendants and their listeners; reintroduction creates fresh identities. Admission checks stable sender, capability and redaction policy; current state (enabled, showing, modal, editable) and full policy are checked on FX after synchronization, immediately before effects. Denials are fixed AccessDenied errors. Update delivery normally completes on FX, with a five-second independent daemon fallback after the provider result (immediate on FX rejection). Public completion never runs on the provider owner. Continuations registered after completion follow standard registering-thread semantics; explicit FX scheduling is required for UI affinity. Continuations must not block. A maximum of 64 global reservations bounds delivery jobs, one per bridge; settlement cancels scheduled jobs and releases captures. Delivery failure cannot roll back a reconciled policy and is not a native-reconciliation timeout. Optional unique-name sender allowlists affect mutations only; same-session reads remain available and no authentication is claimed. Reducing action capacity never cancels admitted work or shortens its captured deadlines.
+
+## SC-08 adapter contract
+
+Adapter callbacks are trusted application code on FX, never native upcalls. PasswordField is screened before adapter
+selection; it publishes no automation ID or text. Logical children inherit owner sensitivity/exclusion and mutation
+policy. A declared real Node child passes normal policy and cannot be disguised as a logical key. Every published
+name, text, application ID and action metadata passes the central redactor and bounds. Snapshot semantics retain no
+application keys, sessions or callbacks. Duplicate IDs are checked without logging either value: a repeated
+application ID among nonempty published candidates is a real duplicate (install/candidate rejection or live shutdown);
+distinct application IDs whose redacted values coincide publish the value only from an unredacted holder and an empty
+ID from every redacted holder, recovering when unique. Application IDs are retained only in FX-owned maps cleared on close.
+Selection index admission captures the internal child incarnation, not an authorization-bearing application ID;
+removal rejects the queued action as stale and state/policy is rechecked before the effect. Container conflict slots (selection and direct children only),
+existing action limits/deadlines and provider-owned invocation cleanup apply to all new commands. Selection reads
+use immutable snapshots and never schedule FX work. Candidate option checks release their temporary subscriptions;
+failed candidates do not adopt options. Live collisions use controlled bridge shutdown. Expansion limits are
+recoverable through event-driven subscriptions, with no timer, unbounded executor or retry loop.
+
+Declared real children combine semantic-owner privacy with physical ancestors and source-window inclusion; password
+descendants are excluded. Physical visibility/modal eligibility is required for real selection children, including bulk
+operations; logical offscreen selection retains its container contract. Additional physical dependencies are shared by
+identity on FX and detached on removal, reparenting, exclusion or close. Cross-window geometry is unavailable.
+Queued activations compare their admitted action-list revision after FX synchronization. Ordered original metadata is
+fingerprinted in bounded scratch storage on FX, including changes masked by redaction; only a numeric revision enters
+snapshots. Raw metadata fingerprints and application keys never cross to native protocol state.
+
+Declared real-node ownership takes precedence over ordinary physical traversal. Owner-scoped FX reservations also
+cover real children hidden by sensitivity or a failed expansion; only an actual release or owner disposal permits
+physical fallback. Reassignments reconcile both parent records without retiring a still-live reference. Logical
+capacity checks release outgoing owned subtrees before admitting replacement keys; unaffected incarnations survive.
+Excluded showing standalone menus retain only a window candidate for owner-driven recovery, not content listeners;
+window-list removal and observer close release those candidates, and idle scenes schedule no recovery work.
+
+A semantic owner collision must reserve all nonconflicting declared real Nodes before failing the expansion closed,
+including retirement of already-exported physical aliases; never steal the shared Node or leak sibling content through
+ordinary physical traversal. Partial reservations follow actual descriptor/session/owner disposal and recovery.
+After central redaction, automation IDs allow empty suppression but reject nonempty blank or oversized output before
+uniqueness indexing. Such output uses the fixed empty/inert projection path rather than collision-driven shutdown.
+
+A custom session exceeding the 10,000-descriptor hard bound makes the whole published model inert until the last
+oversized session recovers or disposes. Unknown aliases may belong to any included window; no cross-window exposure
+is accepted. Only global quarantine entry/exit invalidates all records; added windows are also inert while it is active.
+Bulk SelectAll/ClearSelection eligibility is decided once, in the provider's FX task, and denied as AccessDenied.
+A bridge whose FX cleanup is refused removes its static automation-ID subscription from the provider thread.
+
+Window-owned ContextMenus resolve their anchor from ownerNode or ownerWindow.scene.root; a missing or protected
+anchor excludes the popup window and its geometry. Shared real-child observations rebind on owner Scene/root changes.
+Adapter replacement uses ordered reference identity, never application equals/hashCode, and disposes old/provisional
+sessions through their existing ownership paths. Effective enabled/showing propagates through every exported edge,
+including real/generic descendants. Project dirty ancestors first, reuse sanitized parent state, and deny observer-backed
+generic activation/text mutation as well as adapter commands when the effective projection is unavailable.
+
+Collect bounded real-node claims before rejecting semantic descriptor validation, and suppress physical aliases on
+every expansion failure. Inspect at most 10,000 descriptors per session read; an uninspected tail quarantines the published
+model as inert until recovery/disposal, without retaining the tail or scheduling periodic work. Bulk selection checks
+both published children and filtered declared real children before any effect. The depth-64 budget includes real and
+logical semantic edges; ordinary physical edges retain their existing traversal contract.

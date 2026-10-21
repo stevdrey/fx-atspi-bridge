@@ -15,6 +15,9 @@
  */
 package dev.desktopcontrol.fxatspi;
 
+import dev.desktopcontrol.fxatspi.adapter.AdapterCommand;
+import dev.desktopcontrol.fxatspi.adapter.SemanticState;
+
 import dev.desktopcontrol.fxatspi.model.AccessibleNode;
 import dev.desktopcontrol.fxatspi.model.ActionPort;
 import dev.desktopcontrol.fxatspi.model.Capability;
@@ -541,6 +544,7 @@ final class AtSpiProvider {
             try { return nativeApi.text(reply, 0); } finally { nativeApi.release(reply); }
         } finally { nativeApi.unref(session); }
     }
+    void identityConflict() { report("Error AT-SPI: duplicate automation ID", true); stop(); }
     private void export(String id) {
         var info = definition(id);
         exportsAcquired.incrementAndGet();
@@ -604,6 +608,10 @@ final class AtSpiProvider {
             switch (change) {
                 case Added(var id) -> signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
                 case SnapshotDiff.State(var id, var state, var value) -> stateEvent(id, state, value); // qualified: State is also the lifecycle enum
+                case SnapshotDiff.RoleChanged(var id, var role) -> event(id,"PropertyChange","('accessible-role', 0, 0, <uint32 "+role+">, @a{sv} {})");
+                case SnapshotDiff.AutomationId(var id, var value) -> event(id,"PropertyChange","('accessible-id', 0, 0, <"+Ffm.quote(value)+">, @a{sv} {})");
+                case SnapshotDiff.SelectionChanged(var id) -> event(id,"SelectionChanged","('', 0, 0, <0>, @a{sv} {})");
+                case SnapshotDiff.ActionsChanged(var id) -> event(id,"PropertyChange","('accessible-actions', 0, 0, <0>, @a{sv} {})");
                 case Name(var id, var name) -> event(id,"PropertyChange","('accessible-name', 0, 0, <"+Ffm.quote(name)+">, @a{sv} {})");
                 case TextDeleted(var id, var text) -> event(id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
                 case TextInserted(var id, var text) -> event(id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
@@ -665,13 +673,14 @@ final class AtSpiProvider {
                 case "Parent" -> id.equals(Snapshot.ROOT_ID) ? parent : reference(item.ancestor());
                 case "ChildCount" -> Integer.toString(children(id).size());
                 case "Locale" -> "'es'";
-                case "AccessibleId" -> Ffm.quote(id);
+                case "AccessibleId" -> Ffm.quote(item.semantics().automationId());
                 case "ToolkitName" -> "'JavaFX experimental AT-SPI bridge'";
                 case "Version", "ToolkitVersion" -> "'27'";
                 case "AtspiVersion" -> "'2.1'";
                 case "InterfaceVersion", "version" -> "uint32 1";
                 case "Id" -> Integer.toString(applicationId);
-                case "NActions" -> "1";
+                case "NActions" -> Integer.toString(item.semantics().actions().size());
+                case "NSelectedChildren" -> Integer.toString(selected(snapshot.get(),item).size());
                 case "CharacterCount" -> Integer.toString(item.characterCount());
                 case "CaretOffset" -> Integer.toString(item.caret());
                 default -> throw new IllegalArgumentException("Unknown property: " + key);
@@ -698,17 +707,27 @@ final class AtSpiProvider {
                 return;
             }
             if (api.endsWith("Action") && name.equals("DoAction")) {
-                if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
+                var index = ffi.integer(args,0);
+                if (item == null) throw Rejected.STALE;
+                if (index < 0 || index >= item.semantics().actions().size()) throw new Rejected("Action index out of range");
                 requireCapability(item, Capability.ACTION);
-                mutate(invocation, id, Ffm.string(sender), item, Capability.ACTION, () -> actions.press(id));
+                var revision = item.semantics().actionRevision();
+                mutate(invocation, id, Ffm.string(sender), item, Capability.ACTION,
+                        () -> {
+                            if (actions.actionRevision(id) != revision) throw Rejected.DENIED;
+                            return actions.execute(id,new AdapterCommand.Activate(index),null);
+                        });
                 return;
             }
             if (api.endsWith("EditableText") && name.equals("SetTextContents")) {
                 String value = ffi.text(args, 0);
                 if (value.length() > 32768) throw new Rejected("Text exceeds experimental limit");
                 requireCapability(item, Capability.EDITABLE_TEXT);
-                mutate(invocation, id, Ffm.string(sender), item, Capability.EDITABLE_TEXT, () -> actions.setText(id, value));
+                mutate(invocation, id, Ffm.string(sender), item, Capability.EDITABLE_TEXT, () -> actions.execute(id, new AdapterCommand.SetText(value), null));
                 return;
+            }
+            if (api.equals(PREFIX + "Selection")) {
+                selection(invocation,id,Ffm.string(sender),item,name,args); return;
             }
             String result = switch (name) {
                 case "GetItems" -> cacheItems(snapshot.get(), busName, parent);
@@ -717,31 +736,77 @@ final class AtSpiProvider {
                 case "GetIndexInParent" -> "(" + (id.equals(Snapshot.ROOT_ID) ? -1 : children(item.ancestor()).indexOf(id)) + ",)";
                 case "GetRole" -> "(uint32 " + item.role().atspiValue() + ",)";
                 case "GetRoleName", "GetLocalizedRoleName" -> "(" + Ffm.quote(item.role().roleName()) + ",)";
-                case "GetState" -> "([uint32 " + stateBits(item) + ", uint32 0],)";
+                case "GetState" -> "([uint32 " + (stateBits(item) & 0xffffffffL) + ", uint32 " + (stateBits(item) >>> 32) + "],)";
                 case "GetRelationSet" -> "(@a(ua(so)) [],)";
-                case "GetAttributes" -> "(@a{ss} {},)";
+                case "GetAttributes" -> item.semantics().automationId().isEmpty() ? "(@a{ss} {},)"
+                        : "({'automation-id': " + Ffm.quote(item.semantics().automationId()) + "},)";
                 case "GetApplication" -> "(" + reference(Snapshot.ROOT_ID) + ",)";
                 case "GetInterfaces" -> "([" + String.join(",", interfaces(item).stream().map(Ffm::quote).toList()) + "],)";
                 case "GetLocale" -> "('es',)";
                 case "GetApplicationBusAddress" -> "('',)"; // Shared accessibility bus, not a private peer bus.
                 case "GetName", "GetLocalizedName", "GetDescription", "GetKeyBinding" -> {
-                    if (ffi.integer(args, 0) != 0) throw new Rejected("Action index out of range");
-                    yield "(" + Ffm.quote(name.equals("GetKeyBinding") ? "" : "click") + ",)";
+                    var index = ffi.integer(args,0);
+                    if (item == null) throw Rejected.STALE;
+                    if (index < 0 || index >= item.semantics().actions().size()) throw new Rejected("Action index out of range");
+                    var action = item.semantics().actions().get(index);
+                    yield "(" + Ffm.quote(name.equals("GetKeyBinding") ? action.keyBinding()
+                            : name.equals("GetDescription") ? action.description() : action.name()) + ",)";
                 }
-                case "GetActions" -> "([('click', 'Activate button', '')],)";
+                case "GetActions" -> "(@a(sss) [" + String.join(",", item.semantics().actions().stream().map(action ->
+                        "(" + Ffm.quote(action.name()) + "," + Ffm.quote(action.description()) + "," + Ffm.quote(action.keyBinding()) + ")").toList()) + "],)";
                 case "GetText" -> "(" + Ffm.quote(textRange(item.text(), ffi.integer(args, 0), ffi.integer(args, 1))) + ",)";
                 default -> throw new Rejected("Operation is outside this experiment");
             };
             reply(invocation, result);
         } catch (Throwable failure) { fail(invocation, failure); }
     }
+    private static List<String> selected(Snapshot snapshot, AccessibleNode item) {
+        if (item == null) return List.of();
+        return item.children().stream().filter(id -> {
+            var child = snapshot.get(id); return child != null && child.semantics().states().contains(SemanticState.SELECTED);
+        }).toList();
+    }
+    private void selection(MemorySegment invocation, String id, String sender, AccessibleNode item, String method, MemorySegment args) {
+        requireCapability(item,Capability.SELECTION);
+        var published = snapshot.get();
+        if (method.equals("GetSelectedChild")) {
+            var index = ffi.integer(args,0); var selected = selected(published,item);
+            reply(invocation,index < 0 || index >= selected.size() ? "(('', objectpath '/org/a11y/atspi/null'),)" : "(" + reference(selected.get(index)) + ",)"); return;
+        }
+        String child = null;
+        AdapterCommand command;
+        switch (method) {
+            case "IsChildSelected", "SelectChild", "DeselectChild", "DeselectSelectedChild" -> {
+                var index = ffi.integer(args,0);
+                var candidates = method.equals("DeselectSelectedChild") ? selected(published,item) : item.children();
+                if (index < 0 || index >= candidates.size()) throw new Rejected("Selection index out of range");
+                child = candidates.get(index);
+                if (method.equals("IsChildSelected")) {
+                    reply(invocation,"(" + selected(published,item).contains(child) + ",)"); return;
+                }
+                command = new AdapterCommand.Select(null,method.equals("SelectChild"));
+            }
+            case "SelectAll" -> command = new AdapterCommand.SelectAll();
+            case "ClearSelection" -> command = new AdapterCommand.ClearSelection();
+            default -> throw Rejected.NOT_SUPPORTED;
+        }
+        var childId = child;
+        mutate(invocation,id,sender,item,Capability.SELECTION,() -> {
+            if (childId != null && !actions.isLive(childId)) throw Rejected.STALE;
+            if (childId != null && !actions.selectionTargetEligible(id,childId)) throw Rejected.DENIED;
+            if (command instanceof AdapterCommand.SelectAll && !actions.selectionSetEligible(id,false)) throw Rejected.DENIED;
+            if (command instanceof AdapterCommand.ClearSelection && !actions.selectionSetEligible(id,true)) throw Rejected.DENIED;
+            return actions.execute(id,command,childId);
+        });
+    }
+
     /** Snapshot-only reads: no admission, retained invocation, FX scheduling or application callback. */
     private String component(Snapshot published, AccessibleNode item, String method, MemorySegment args) {
         if (item == null) throw Rejected.STALE;
         if (!item.has(Capability.COMPONENT)) throw Rejected.NOT_SUPPORTED;
         // Constant answers: the AT-SPI window/widget layers, no MDI and opaque.
         switch (method) {
-            case "GetLayer" -> { return "(uint32 " + (item.role() == Role.FRAME ? 7 : 3) + ",)"; }
+            case "GetLayer" -> { return "(uint32 " + (item.role() == Role.FRAME ? 7 : Snapshot.isFrame(item) ? 5 : 3) + ",)"; }
             case "GetMDIZOrder" -> { return "(int16 -1,)"; }
             case "GetAlpha" -> { return "(1.0,)"; }
             default -> {}
@@ -773,6 +838,15 @@ final class AtSpiProvider {
         if (!item.has(capability)) throw Rejected.DENIED;
     }
     /**
+     * Selection serializes on its container. A direct child of a selection container shares that container's key,
+     * so activating an item cannot race a selection change; deeper descendants (tab content) keep their own key.
+     */
+    private String conflictTarget(AccessibleNode item, Capability capability) {
+        if (capability == Capability.SELECTION) return item.id();
+        var parent = snapshot.get().get(item.ancestor());
+        return parent != null && parent.has(Capability.SELECTION) ? parent.id() : item.id();
+    }
+    /**
      * Provider thread. Admission throws {@link Rejected} before any reference is taken; the caller answers it. Once
      * admitted, the invocation is retained under its action id until exactly one answer releases it.
      */
@@ -783,13 +857,14 @@ final class AtSpiProvider {
         // editable state are decided on FX after refresh(), where the projection is current.
         if (!snapshot.get().permitsSender(sender) || !item.offers(capability)) throw Rejected.DENIED;
         // The FX task touches no native object: it revalidates, runs the action and posts a completion.
-        var command = commands.admit(target, () -> {
+        var command = commands.admit(conflictTarget(item, capability), () -> {
             refresh();
             if (!actions.isLive(target)) throw Rejected.STALE;
             if (!actions.permits(target, sender, capability)) throw Rejected.DENIED;
             try {
-                if (!operation.apply()) throw Rejected.DENIED;
-                return true;
+                var accepted = operation.apply();
+                if (!accepted && capability != Capability.SELECTION) throw Rejected.DENIED;
+                return accepted;
             } finally { refresh(); }
         });
         ffi.ref(invocation);

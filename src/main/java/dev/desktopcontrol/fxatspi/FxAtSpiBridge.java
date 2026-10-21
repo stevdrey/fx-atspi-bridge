@@ -52,7 +52,9 @@ public final class FxAtSpiBridge implements AutoCloseable {
         registry = new TargetRegistry();
         observer = new SceneObserver(registry, observerScheduler, options);
         provider = AtSpiProvider.pushed(status, observer::synchronize,
-                new ActionExecutor(registry, observer::options, observer::permits), bus, embed, Platform::runLater, options.actionLimits());
+                new ActionExecutor(registry, observer), bus, embed, Platform::runLater, options.actionLimits());
+        observer.observeAutomationIds();
+        observer.onCollision(() -> { provider.identityConflict(); closeOnFx(); });
     }
     /** Called after the bridge owns the install slot, so a fast termination cannot clear the slot before it is set. */
     private void begin() {
@@ -75,7 +77,10 @@ public final class FxAtSpiBridge implements AutoCloseable {
         updates.stop(false);
         // A provider that failed on its own still holds the observer and registry; the FX executor releases them.
         try { fxExecutor.execute(this::closeOnFx); }
-        catch (RuntimeException rejected) { /* The executor refused the task; nothing static keeps this bridge reachable. */ }
+        catch (RuntimeException rejected) {
+            // The executor refused the task: drop the only static reference, so nothing static keeps this bridge reachable.
+            observer.releaseAutomationIds();
+        }
     }
     static boolean slotHeld() { return ACTIVE.get() != null; }
     /**
@@ -152,7 +157,7 @@ public final class FxAtSpiBridge implements AutoCloseable {
         var revision = policyRevision + 1;
         var delivery = updates.reserve();
         CompletionStage<Void> completion;
-        try { completion = provider.prepareUpdate(revision); }
+        try { observer.validateOptions(options); completion = provider.prepareUpdate(revision); }
         catch (RuntimeException | Error failure) { delivery.abandon(); throw failure; }
         policyRevision = revision;
         try { observer.updateOptions(options, revision); }
