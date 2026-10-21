@@ -69,6 +69,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.SelectionMode;
+import javafx.scene.control.SplitMenuButton;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.ToggleGroup;
@@ -98,6 +99,22 @@ class SemanticObserverTest {
                 return new AdapterSession() {
                     public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Owner").selection(true); }
                     public List<SemanticChild> children() { return node.child.get() == null ? List.of() : List.of(SemanticChild.node(node.child.get())); }
+                };
+            }
+        };
+    }
+    static final class ClaimOwner extends Control {
+        final SimpleObjectProperty<List<Node>> declared = new SimpleObjectProperty<>(List.of());
+        ClaimOwner(Node... nodes) { declared.set(List.of(nodes)); }
+    }
+    static ControlAdapter<ClaimOwner> claimAdapter() {
+        return new ControlAdapter<>() {
+            public Class<ClaimOwner> targetType() { return ClaimOwner.class; }
+            public AdapterSession open(ClaimOwner node,AdapterContext context) {
+                context.observe(node.declared);
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Claim owner").selection(true); }
+                    public List<SemanticChild> children() { return node.declared.get().stream().map(SemanticChild::node).toList(); }
                 };
             }
         };
@@ -749,6 +766,195 @@ class SemanticObserverTest {
             assertEquals(retained,h.named("Retained").id()); assertEquals(1,closed.get());
             assertEquals(failures,h.observer.projectionFailures()); assertTree(h.snapshot);
             assertTrue(h.actions.execute(parent,new AdapterCommand.Select(null,true),retained));
+        } return null;
+    }); }
+
+    @Test void conflictingOwnerReservesItsOtherNodesBeforeFailingClosed() throws Exception { fx(() -> {
+        for (var physicalFirst : List.of(true,false)) for (var reverseClaims : List.of(true,false))
+                for (var initiallySensitive : List.of(true,false)) {
+            var shared = new TextField("Shared public value"); shared.setAccessibleText("Shared");
+            var privateNode = new TextField("SC08_SECRET_COLLISION"); privateNode.setAccessibleText("SC08_SECRET_NAME");
+            AutomationIds.set(privateNode,"SC08_SECRET_ID");
+            var physical = new VBox(shared,privateNode); physical.setAccessibleText("Physical");
+            var first = new Owner(shared); first.setAccessibleText("First owner");
+            var contender = reverseClaims ? new ClaimOwner(privateNode,shared) : new ClaimOwner(shared,privateNode);
+            if (initiallySensitive) contender.setId("sensitive");
+            var options = BridgeOptions.builder().adapters(List.of(ownerAdapter(),claimAdapter()))
+                    .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+            try (var h = new Harness(options,physicalFirst ? physical : first,physicalFirst ? first : contender,
+                    physicalFirst ? contender : physical)) {
+                var sharedId = h.named("Shared").id(); var firstId = h.named("First owner").id();
+                assertEquals(firstId,h.snapshot.get(sharedId).ancestor());
+                assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+                assertEquals(null,h.registry.targetId(privateNode)); assertTree(h.snapshot);
+                var inert = h.snapshot.get(h.registry.targetId(contender));
+                assertEquals(List.of(),inert.children()); assertTrue(inert.capabilities().isEmpty());
+                assertTrue(h.actions.setText(sharedId,"Still public")); h.flush();
+                contender.setId("sensitive"); physical.getChildren().add(new Label("Unrelated")); h.flush();
+                assertEquals(sharedId,h.named("Shared").id()); assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+                // Actual release permits physical fallback; re-declaration must retire that already-published alias.
+                contender.declared.set(List.of(shared)); h.flush();
+                var publicAlias = h.registry.targetId(privateNode); assertNotNull(publicAlias);
+                assertEquals(h.named("Physical").id(),h.snapshot.get(publicAlias).ancestor());
+                var before = h.snapshot;
+                contender.declared.set(reverseClaims ? List.of(privateNode,shared) : List.of(shared,privateNode)); h.flush();
+                assertFalse(h.actions.isLive(publicAlias)); assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+                assertFalse(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream()
+                        .anyMatch(change -> change instanceof SnapshotDiff.TextDeleted)); assertTree(h.snapshot);
+                if (initiallySensitive) {
+                    ((VBox) contender.getParent()).getChildren().remove(contender); h.flush();
+                    assertNotNull(h.registry.targetId(privateNode)); assertEquals(sharedId,h.named("Shared").id());
+                } else {
+                    first.child.set(null); h.flush(); assertFalse(h.actions.isLive(sharedId));
+                    assertFalse(h.snapshot.toString().contains("SC08_SECRET"));
+                    contender.setId(null); h.flush();
+                    var recovered = h.registry.targetId(contender);
+                    assertEquals(recovered,h.snapshot.get(h.registry.targetId(privateNode)).ancestor());
+                    assertEquals(recovered,h.named("Shared").ancestor());
+                }
+                assertTree(h.snapshot); h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+                var queued = h.scheduled.size(); privateNode.setText("Detached"); shared.setText("Detached");
+                assertEquals(queued,h.scheduled.size());
+            }
+            List.copyOf(Window.getWindows()).forEach(Window::hide);
+        } return null;
+    }); }
+
+    @Test void blankRedactedIdsFailProjectionInsteadOfCausingCollisions() throws Exception { fx(() -> {
+        var one = new Button("One"); var two = new Button("Two"); AutomationIds.set(one,"one"); AutomationIds.set(two,"two");
+        var tab = new Tab("Tab"); AutomationIds.set(tab,"tab");
+        var item = new MenuItem("Item"); AutomationIds.set(item,"item");
+        var adapter = new ControlAdapter<Label>() {
+            public Class<Label> targetType() { return Label.class; }
+            public AdapterSession open(Label node,AdapterContext context) {
+                var key = new Object();
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PUSH_BUTTON,"Adapter").id("adapter").actions("activate"); }
+                    public List<SemanticChild> children() { return List.of(SemanticChild.logical(key,_ -> new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST_ITEM,"Logical").id("logical").actions("activate"); }
+                    })); }
+                };
+            }
+        };
+        var options = BridgeOptions.builder().adapters(List.of(adapter)).build();
+        try (var h = new Harness(options,one,two,new TabPane(tab),new MenuButton("Menu",null,item),new Label())) {
+            var window = one.getScene().getWindow(); AutomationIds.set(window,"window"); h.flush();
+            assertEquals("adapter",h.named("Adapter").semantics().automationId());
+            assertEquals("logical",h.named("Logical").semantics().automationId());
+            var collisions = new AtomicInteger(); h.observer.onCollision(collisions::incrementAndGet);
+            var revision = 1L;
+            for (var invalid : List.of(" ","\t","\u2003"," \t\u2003","x".repeat(257))) {
+                var candidate = options.toBuilder().redactor((kind,sensitive,value) ->
+                        kind == BridgeOptions.ContentKind.AUTOMATION_ID ? invalid : value).build();
+                h.observer.validateOptions(candidate); h.observer.updateOptions(candidate,revision++); h.flush();
+                assertTrue(h.observer.active()); assertEquals(0,collisions.get());
+                assertTrue(h.snapshot.nodes().values().stream().allMatch(node -> node.semantics().automationId().isEmpty()));
+                for (var target : List.of(one,two,window)) {
+                    var projected = h.snapshot.get(h.registry.targetId(target));
+                    assertTrue(projected.capabilities().isEmpty()); assertEquals("",projected.name());
+                }
+                h.observer.updateOptions(options,revision++); h.flush();
+                assertEquals("one",h.named("One").semantics().automationId());
+                assertEquals("tab",h.named("Tab").semantics().automationId());
+                assertEquals("item",h.named("Item").semantics().automationId());
+                assertEquals("adapter",h.named("Adapter").semantics().automationId());
+                assertEquals("logical",h.named("Logical").semantics().automationId());
+            }
+        } return null;
+    }); }
+
+    @Test void redactedIdAllowsEmptySuppressionAndExactNonblankBoundary() throws Exception { fx(() -> {
+        var button = new Button("Target"); AutomationIds.set(button,"target");
+        try (var h = new Harness(BridgeOptions.defaults(),button)) {
+            var revision = 1L;
+            for (var valid : List.of(""," padded ","v".repeat(256))) {
+                h.observer.updateOptions(BridgeOptions.builder().redactor((kind,sensitive,value) ->
+                        kind == BridgeOptions.ContentKind.AUTOMATION_ID ? valid : value).build(),revision++); h.flush();
+                assertEquals(valid,h.named("Target").semantics().automationId());
+                assertTrue(h.named("Target").has(Capability.ACTION)); assertTrue(h.observer.active());
+            }
+        }
+        var blank = BridgeOptions.builder().redactor((kind,sensitive,value) ->
+                kind == BridgeOptions.ContentKind.AUTOMATION_ID ? " " : value).build();
+        try (var h = new Harness(blank,button)) {
+            assertTrue(h.observer.active()); assertTrue(h.snapshot.get(h.registry.targetId(button)).capabilities().isEmpty());
+        } return null;
+    }); }
+
+    @Test void menuButtonPublishesItsDynamicLabelAndNamePrecedence() throws Exception { fx(() -> {
+        var button = new MenuButton("File",null,new MenuItem("Open"));
+        try (var h = new Harness(BridgeOptions.defaults(),button)) {
+            var id = h.named("File").id(); var actionRevision = h.actions.actionRevision(id);
+            var before = h.snapshot; button.setText("Edit"); h.flush();
+            assertEquals(id,h.named("Edit").id()); assertEquals(actionRevision,h.actions.actionRevision(id));
+            assertTrue(SnapshotDiff.diff(before,h.snapshot,Set.of(id)).contains(new SnapshotDiff.Name(id,"Edit")));
+            button.setId("css-fallback"); h.flush(); assertNotNull(h.named("Edit"));
+            button.setAccessibleText("Explicit"); h.flush(); assertEquals(id,h.named("Explicit").id());
+            button.setText("Other label"); h.flush(); assertNotNull(h.named("Explicit"));
+            button.setAccessibleText(null); button.setText(""); h.flush(); assertNotNull(h.named("css-fallback"));
+            button.setText(null); h.flush(); assertNotNull(h.named("css-fallback"));
+            button.setText("Custom-redacted label");
+            h.observer.updateOptions(BridgeOptions.builder().redactor((kind,sensitive,value) ->
+                    kind == BridgeOptions.ContentKind.NODE_NAME && value.equals("Custom-redacted label") ? "Masked menu" : value).build(),1);
+            h.flush(); assertNotNull(h.named("Masked menu")); assertFalse(h.snapshot.toString().contains("Custom-redacted label"));
+            button.setText("SC08_SECRET_MENU");
+            h.observer.updateOptions(BridgeOptions.builder().sensitiveNodes(node -> node == button).build(),2); h.flush();
+            assertFalse(h.snapshot.toString().contains("SC08_SECRET_MENU"));
+            assertFalse(h.named("[redacted]").has(Capability.ACTION));
+            h.close(); var queued = h.scheduled.size(); button.setText("Detached"); assertEquals(queued,h.scheduled.size());
+        } return null;
+    }); }
+
+    @Test void splitMenuButtonKeepsPrimaryAndPopupActionsSeparate() throws Exception { fx(() -> {
+        var primary = new AtomicInteger(); var menu = new AtomicInteger();
+        var item = new MenuItem("Menu command"); item.setOnAction(_ -> menu.incrementAndGet());
+        var split = new SplitMenuButton("Run",null,item); split.setOnAction(_ -> primary.incrementAndGet());
+        try (var h = new Harness(BridgeOptions.defaults(),split)) {
+            var id = h.named("Run").id();
+            assertEquals(List.of("click","toggle-popup"),h.snapshot.get(id).semantics().actions().stream().map(action -> action.name()).toList());
+            assertFalse(h.actions.execute(h.named("Menu command").id(),new AdapterCommand.Activate(0),null));
+            assertTrue(h.actions.execute(id,new AdapterCommand.Activate(0),null)); h.flush();
+            assertEquals(1,primary.get()); assertEquals(0,menu.get()); assertFalse(split.isShowing());
+            assertTrue(h.actions.execute(id,new AdapterCommand.Activate(1),null)); h.flush();
+            assertTrue(split.isShowing()); assertEquals(1,primary.get());
+            assertEquals(1,h.snapshot.get(Snapshot.ROOT_ID).children().size());
+            assertTrue(h.actions.execute(id,new AdapterCommand.Activate(1),null)); h.flush();
+            assertFalse(split.isShowing()); assertEquals(1,primary.get());
+            assertFalse(h.actions.execute(id,new AdapterCommand.Activate(2),null));
+            assertFalse(h.actions.execute(id,new AdapterCommand.Activate(-1),null));
+            assertTrue(h.actions.execute(id,new AdapterCommand.Activate(1),null)); h.flush();
+            assertTrue(h.actions.execute(h.named("Menu command").id(),new AdapterCommand.Activate(0),null)); h.flush();
+            assertEquals(1,menu.get()); assertEquals(1,primary.get());
+        } return null;
+    }); }
+
+    @Test void bothSplitActionsRespectCurrentPolicyAndModality() throws Exception { fx(() -> {
+        var fired = new AtomicInteger(); var split = new SplitMenuButton("Run",null,new MenuItem("Menu item"));
+        split.setOnAction(_ -> fired.incrementAndGet());
+        var options = BridgeOptions.builder().sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+        try (var h = new Harness(options,split)) {
+            for (var state : List.of("disabled","hidden","sensitive","modal")) {
+                var modal = new Stage();
+                switch (state) {
+                    case "disabled" -> split.setDisable(true);
+                    case "hidden" -> split.setVisible(false);
+                    case "sensitive" -> split.setId("sensitive");
+                    case "modal" -> {
+                        modal.initOwner(split.getScene().getWindow()); modal.initModality(Modality.WINDOW_MODAL);
+                        modal.setScene(new Scene(new VBox(new Button("Modal")))); modal.show();
+                    }
+                    default -> throw new AssertionError();
+                }
+                h.flush(); var id = h.registry.targetId(split);
+                assertFalse(h.actions.execute(id,new AdapterCommand.Activate(0),null));
+                assertFalse(h.actions.execute(id,new AdapterCommand.Activate(1),null));
+                assertEquals(0,fired.get()); assertFalse(split.isShowing());
+                split.setDisable(false); split.setVisible(true); split.setId(null); modal.hide(); h.flush();
+            }
+            h.observer.updateOptions(options.toBuilder().pressAllowed(_ -> false).build(),1); h.flush();
+            assertFalse(h.actions.execute(h.registry.targetId(split),new AdapterCommand.Activate(0),null));
+            assertFalse(h.actions.execute(h.registry.targetId(split),new AdapterCommand.Activate(1),null));
+            assertEquals(0,fired.get());
         } return null;
     }); }
 

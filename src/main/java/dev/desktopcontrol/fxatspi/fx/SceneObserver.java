@@ -846,7 +846,7 @@ public final class SceneObserver {
                         if (rawId.isEmpty()) rawId = node.semantics().automationId();
                         if (!rawId.isEmpty()) {
                             var id = redact(ContentKind.AUTOMATION_ID,sensitive,rawId);
-                            if (id.length() > 256) throw new IllegalArgumentException("Invalid automation ID");
+                            if (id.length() > 256 || !id.isEmpty() && id.isBlank()) throw new IllegalArgumentException("Invalid automation ID");
                             node = node.semantics(new Semantics(id,node.semantics().actions(),node.semantics().states(),node.semantics().selection(),node.semantics().actionRevision()));
                         }
                     }
@@ -1060,26 +1060,31 @@ public final class SceneObserver {
     }
 
     private void claimNodes(Observed entry, Set<Node> claims, List<Object> exported) {
+        if (claims.isEmpty()) { releaseNodeClaims(entry); return; }
+        var accepted = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
+        var conflict = false;
         for (var node : claims) {
             var previous = semanticOwners.get(node);
-            if (previous != null && previous != entry) throw new IllegalStateException("Multiple semantic owners");
+            if (previous != null && previous != entry) conflict = true;
+            else accepted.add(node);
         }
         for (var node : entry.nodeClaims) if (!claims.contains(node) && semanticOwners.remove(node,entry)) {
             var parent = physicalParent(node);
             if (parent != null) restructured.add(parent);
         }
-        for (var node : claims) semanticOwners.put(node,entry);
-        entry.nodeClaims = claims.isEmpty() ? Set.of() : claims;
-        if (claims.isEmpty()) return;
+        for (var node : accepted) semanticOwners.put(node,entry);
+        entry.nodeClaims = accepted.isEmpty() ? Set.of() : accepted;
         var visible = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
-        visible.addAll(exported);
-        for (var node : claims) if (!visible.contains(node)) {
+        if (!conflict) visible.addAll(exported);
+        // A conflicting expansion is entirely inert, including aliases that would otherwise have been exported.
+        for (var node : accepted) if (!visible.contains(node)) {
             var current = observed.get(node);
             if (current != null && current.parent != entry) {
                 dirty.add(current.parent);
                 detach(current);
             }
         }
+        if (conflict) throw new IllegalStateException("Multiple semantic owners");
     }
 
     private void releaseLogicalReservation(Logical logical) {

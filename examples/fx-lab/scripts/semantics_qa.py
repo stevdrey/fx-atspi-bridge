@@ -202,6 +202,40 @@ def run(launcher, out):
             results['cases'].append('independent-context-menus-on-adapted-controls')
             settle()
             found = tree(app)
+            original_menu_button = found['menu-button']
+            assert original_menu_button.get_name() == 'Menu button'
+            assert Atspi.Action.get_n_actions(original_menu_button) == 1
+            assert Atspi.Action.get_action_name(original_menu_button, 0) == 'toggle-popup'
+            assert Atspi.Action.do_action(found['rename-menu'], 0)
+            settle()
+            found = tree(app)
+            assert found['menu-button'] == original_menu_button and found['menu-button'].get_name() == 'Renamed menu'
+            results['cases'].append('menu-button-dynamic-visible-label')
+            split = found['split-button']
+            assert split.get_name() == 'Run split'
+            assert Atspi.Action.get_n_actions(split) == 2
+            assert [Atspi.Action.get_action_name(split, i) for i in range(2)] == ['click', 'toggle-popup']
+            assert Atspi.Action.do_action(split, 0)
+            settle()
+            found = tree(app)
+            assert found['split-result'].get_name() == 'Primary 1'
+            assert not found['split-button'].get_state_set().contains(Atspi.StateType.EXPANDED)
+            for expanded in (True, False, True):
+                assert Atspi.Action.do_action(found['split-button'], 1)
+                settle()
+                found = tree(app)
+                assert found['split-button'].get_state_set().contains(Atspi.StateType.EXPANDED) == expanded
+                assert found['split-result'].get_name() == 'Primary 1'
+                assert app.get_child_count() == 1
+            assert Atspi.Action.do_action(found['split-menu-item'], 0)
+            settle()
+            found = tree(app)
+            assert found['split-result'].get_name() == 'Menu action'
+            assert Atspi.Action.do_action(found['split-button'], 0)
+            settle()
+            found = tree(app)
+            assert found['split-result'].get_name() == 'Primary 2'
+            results['cases'].append('split-primary-popup-and-menu-actions')
             assert Atspi.Text.get_text(found['editable-combo'], 0, -1) == 'a😀b'
             assert Atspi.Action.do_action(found['caret-two'], 0)
             settle()

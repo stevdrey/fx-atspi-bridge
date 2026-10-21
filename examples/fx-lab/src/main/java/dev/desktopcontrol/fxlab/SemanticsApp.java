@@ -56,6 +56,7 @@ import javafx.scene.control.PasswordField;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.SelectionMode;
+import javafx.scene.control.SplitMenuButton;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.ToggleGroup;
@@ -152,6 +153,12 @@ public final class SemanticsApp extends Application {
         var menu = new Menu("File"); AutomationIds.set(menu,"menu-file"); menu.getItems().addAll(execute,menuCheck,menuRadio,submenu);
         var bar = id(new MenuBar(menu),"menu-bar");
         var menuButton = id(new MenuButton("Menu button",null,new MenuItem("Button action")),"menu-button");
+        var renameMenu = id(new Button("Rename menu"),"rename-menu"); renameMenu.setOnAction(_ -> menuButton.setText("Renamed menu"));
+        var splitResult = id(new Label("Primary 0"),"split-result"); var splitCount = new AtomicInteger();
+        var splitItem = new MenuItem("Split menu action"); AutomationIds.set(splitItem,"split-menu-item");
+        splitItem.setOnAction(_ -> splitResult.setText("Menu action"));
+        var split = id(new SplitMenuButton("Run split",null,splitItem),"split-button");
+        split.setOnAction(_ -> splitResult.setText("Primary " + splitCount.incrementAndGet()));
         var contextButtons = new HBox(8);
         for (var anchor : List.of(combo,menuButton,bar)) {
             var suffix = anchor == combo ? "combo" : anchor == menuButton ? "button" : "bar";
@@ -160,6 +167,7 @@ public final class SemanticsApp extends Application {
             var show = id(new Button("Context on " + suffix),"show-context-"+suffix);
             show.setOnAction(_ -> popup.show(anchor,Side.BOTTOM,0,0)); contextButtons.getChildren().add(show);
         }
+        contextButtons.getChildren().add(renameMenu);
         var editable = id(new ComboBox<String>(),"editable-combo"); editable.setEditable(true);
         var caretOne = id(new Button("Caret 1"),"caret-one"); caretOne.setOnAction(_ -> editable.getEditor().positionCaret(1));
         var caretTwo = id(new Button("Caret 2"),"caret-two"); caretTwo.setOnAction(_ -> editable.getEditor().positionCaret(3));
@@ -190,7 +198,7 @@ public final class SemanticsApp extends Application {
         sensitive.setId("sensitive"); sensitive.setValue("SC08_SECRET_VALUE");
         var rename = id(new Button("Rename ID"),"rename"); rename.setOnAction(_ -> AutomationIds.set(checked,"check-renamed"));
         var remove = id(new Button("Remove custom"),"remove-custom");
-        var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,new HBox(8,combo,menuButton),tabs,contextButtons,
+        var box = new VBox(8,bar,checked,new HBox(8,radioA,radioB),list,new HBox(8,combo,menuButton,split,splitResult),tabs,contextButtons,
                 new HBox(8,editable,caretOne,caretTwo),proxy,source,new HBox(8,visibleSource,sensitiveSource,ownership),
                 new HBox(8,showContext,contextPrivacy),counter,password,sensitive,result,rename,remove);
         remove.setOnAction(_ -> { box.getChildren().remove(counter); result.setText("Adapter disposals: " + DISPOSALS.get()); });

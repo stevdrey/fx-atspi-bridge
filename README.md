@@ -133,6 +133,8 @@ attribute; without an explicit ID it is empty. Changing an ID keeps the object's
 
 IDs pass through `ContentKind.AUTOMATION_ID` redaction before application-wide uniqueness checks. Password IDs
 are never published or passed to callbacks. Sensitive IDs use the configured redactor (empty by default).
+A redacted ID may be empty for suppression; a nonempty blank result or more than 256 UTF-16 units makes the
+projection empty and inert. Invalid results do not enter the uniqueness index or cause duplicate-ID shutdown.
 Duplicate published IDs reject installation or a candidate `updateOptions` without adopting that candidate.
 A collision introduced by a later UI change stops the bridge, denies further work and emits a fixed diagnostic
 without the ID values. Correct the IDs and reinstall after `closed()` completes. IDs never authorize actions.
@@ -146,6 +148,10 @@ public editor's text; setting it does not commit or parse an application value. 
 only the active tab's content. Menu bars/buttons, context menus, submenus and check/radio menu items have semantic
 roles and actions. Standalone context menus anchored to excluded, sensitive or password controls are excluded, including their content-sized window geometry. Items in closed or disabled menu hierarchies cannot be activated. Logical item visibility follows the semantic container; per-row viewport visibility is not inferred from cells. Logical items have no
 `Component` geometry, and adapted popup skins are not exported a second time.
+
+MenuButton names use their current text unless accessibleText overrides it, with CSS ID as the fallback for empty text.
+SplitMenuButton retains its primary `click` action at index 0 and offers `toggle-popup` at index 1, alongside its semantic
+menu children. Ordinary MenuButton keeps `toggle-popup` at index 0. Both split actions use central mutation policy.
 
 Selection operations resolve client indices to internal item references when admitted and revalidate those
 references on FX. A queued request never silently selects a different item after reordering. Repeated/equal values
@@ -184,6 +190,8 @@ Declared semantic ownership takes precedence over ordinary scene traversal. Rele
 ordinary physical edge without changing a still-live reference; a published removal still retires it. Sensitive or failed
 expansions retain their real-node reservations until the adapter releases them, so physical traversal cannot expose aliases.
 Declaring the same real Node under multiple semantic owners fails the conflicting expansion closed.
+That failure still reserves the owner's nonconflicting declared Nodes and removes their physical aliases; the shared
+Node keeps its existing owner. Those partial reservations recover or dispose through the normal session lifecycle.
 Their physical visibility and modality are checked before individual or bulk selection. Password descendants cannot be
 exported through another adapter. Additional physical subscriptions are shared and disposed with their dependent children.
 Geometry is unavailable when the source node belongs to a different window from its exported semantic frame.

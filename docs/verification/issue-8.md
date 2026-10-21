@@ -213,6 +213,8 @@ No complete quick/full matrix or memory attribution was rerun, and no performanc
 
 ## PR #41 — second review round (three comments)
 
+This section describes the follow-up published at `a674526`; the third review round is recorded below.
+
 The follow-up to `556a2f2` gives real semantic edges precedence over ordinary physical traversal. Both parent records
 are reconciled on reassignment; releasing a semantic edge or removing its owner restores an eligible physical edge
 without retiring a still-live Node. An FX identity index reserves real Nodes even while owner sensitivity or a failed
@@ -247,3 +249,42 @@ JAR hashes. The desktop results and fixed fixture status are retained alongside 
 before the independent desktop run. Historical SC-01 artifacts and their budgets remain unchanged and qualify only
 their recorded revisions. The full quick/full matrix and pending memory characterization were not repeated. Local
 issue-1/issue-16 verification changes remain outside this patch.
+
+## PR #41 — third review round (four comments)
+
+The follow-up to `a674526` reserves all nonconflicting declared real Nodes before rejecting a semantic owner
+collision. The existing owner keeps the shared Node; the failing expansion remains empty/inert and retires physical
+aliases of its other reserved Nodes, including previously published aliases. Partial reservations use the existing
+FX identity index and descriptor/session/owner lifecycle, with recovery when the conflict ends and no polling.
+
+Automation IDs are now checked after central redaction for nonempty blank output as well as the existing 256-unit
+limit. Empty suppression and normal string normalization remain valid; invalid results produce inert projections and
+never enter the uniqueness index. Valid duplicate-ID rejection/shutdown remains covered by the existing regressions.
+MenuButton uses its current text below explicit accessibleText and above CSS ID fallback. SplitMenuButton retains
+menu children with click at index 0 (public fire()) and toggle-popup at index 1 (public show()/hide()); ordinary
+MenuButton retains toggle-popup at index 0. Public APIs and the existing action coordinator/policy are unchanged.
+
+Actual final checks:
+
+- `./gradlew test --tests '*SemanticObserverTest' --no-daemon` — **Passed**, 36 FX regressions. The final full check below also ran these tests, including the subsequently strengthened custom-label-redaction assertions.
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 252 Java/native tests, zero failures/errors/skips. The invalid-signal native failure-path test emits its expected fixed GLib diagnostic. Actual suite counts and semantic regression names are in `review-round3/java-check.json`.
+- `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-review-round3-qa` — **Passed**, 19 independent libatspi scenarios on Fedora 44 / GNOME / Wayland, libatspi 2.60.7. New cases verify the MenuButton's dynamic visible label without changing its reference, the split's ordered action names, primary-action counters, popup expansion/collapse without firing primary, menu-item activation, and no duplicate popup frame. Previous privacy, reference, caret and collision cases remain enabled.
+
+The mixed-owner regression covers eight combinations of physical traversal order, descriptor order and initial
+sensitivity. It checks an inert conflicting owner, preservation of the original owner's reference and mutation,
+retirement of an already-published private alias without a secret TextDeleted event, exclusion from snapshots/IDs/
+geometry, recovery after the original claim is released, actual descriptor/owner release and physical-listener cleanup.
+The ID regressions cover Nodes, Window, Tab, MenuItem and custom control/logical IDs; spaces, tabs and Unicode blanks;
+oversized output; initial/live invalid output; empty suppression; a nonblank padded value without trimming; exactly
+256 UTF-16 units; and successful recovery without false duplicate-ID shutdown.
+
+Menu regressions cover label updates/events, accessibleText/text/CSS fallback precedence, null labels, stable action
+revision for label-only changes, custom redaction, sensitivity and disposal. Split regressions distinguish both actions
+and menu-item effects, reject invalid indices and deny both actions for disabled, hidden, sensitive, modal-blocked and
+press-disallowed controls. No timeout, privacy rule or resource limit was weakened.
+
+`review-round3/environment.json` pins base commit `a674526`, final main/test/probe source hashes and installed JAR
+hashes. Desktop results and fixed fixture status are retained alongside it; JavaFX test fixtures terminated before
+the independent QA run. Historical performance evidence remains attached to its recorded revision; no quick/full
+matrix or memory characterization was repeated, and no benchmark budget was changed. Local #1/#16 changes are excluded.

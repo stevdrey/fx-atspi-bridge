@@ -82,3 +82,21 @@ Acceptance: both physical/semantic traversal orders, physical reparent/restructu
 removal, bidirectional snapshot/event consistency, still-showing popup hide/recovery through sensitivity changes,
 one-for-one and nested logical replacements at capacity, unchanged-item selection and genuine overflow/recovery.
 Record focused/full checks and independent libatspi QA; preserve earlier performance evidence and unrelated #1/#16 files.
+
+### Third PR #41 review follow-up
+
+An owner collision leaves the conflicting expansion inert while retaining reservations for every nonconflicting
+declared real Node. Reserve those Nodes and suppress already-exported physical aliases before reporting the collision;
+never steal the shared Node from its existing semantic owner. Retain/release the partial reservations through the
+same descriptor/session/owner lifecycle, independent of identity-set iteration order, and recover when conflict ends.
+After central automation-ID redaction, allow empty suppression but reject a nonempty blank result or more than
+256 UTF-16 units. Invalid output follows the empty/inert projection path rather than becoming a false global collision;
+retain central normalization, no trim, and valid duplicate-ID behavior.
+MenuButton projects its current text, below explicit accessibleText and above CSS ID fallback, with central redaction
+and name events. SplitMenuButton is handled before MenuButton, retaining menu children and exposing click at index 0
+via public fire(), plus toggle-popup at index 1 via show()/hide(). Ordinary MenuButton keeps toggle-popup at index 0.
+No public signature, AdapterCommand or action authorization/coordinator contract changes.
+Acceptance covers mixed conflicting/free claims and physical traversal orders, sensitive and failed expansions,
+snapshots/events/IDs/geometry, recovery/disposal, blank-ID redaction and boundary values, dynamic menu names, both split
+actions and disabled/hidden/sensitive/modal denials. Extend consumer-module demo and independent libatspi QA; run focused,
+full Java and Python checks, preserve historical benchmarks and local #1/#16 changes, then publish/verify CI/reply/resolve.

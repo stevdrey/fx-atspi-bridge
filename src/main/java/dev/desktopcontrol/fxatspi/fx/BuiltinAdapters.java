@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 import javafx.beans.Observable;
 import javafx.beans.InvalidationListener;
 import javafx.collections.ListChangeListener;
@@ -46,6 +47,7 @@ import javafx.scene.control.RadioButton;
 import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SplitMenuButton;
 import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
@@ -66,12 +68,8 @@ final class BuiltinAdapters {
             case ComboBox<?> combo -> new Items(combo, context);
             case TabPane tabs -> tabs(tabs, context);
             case MenuBar bar -> menuRoot(bar.getMenus(), context, SemanticRole.MENU_BAR, () -> true, null);
-            case MenuButton button -> {
-                context.observe(button.showingProperty()); context.observe(button.textProperty());
-                yield menuRoot(button.getItems(), context, SemanticRole.MENU, button::isShowing, () -> {
-                    if (button.isShowing()) button.hide(); else button.show();
-                });
-            }
+            case SplitMenuButton button -> menuButton(button,context,button::fire);
+            case MenuButton button -> menuButton(button,context,null);
             default -> null;
         };
     }
@@ -295,17 +293,33 @@ final class BuiltinAdapters {
     }
     private static AdapterSession menuRoot(ObservableList<? extends MenuItem> items, AdapterContext context,
                                           SemanticRole role, BooleanSupplier open, Runnable toggle) {
+        return menuRoot(items,context,role,() -> "",open,toggle,null);
+    }
+    private static AdapterSession menuButton(MenuButton button, AdapterContext context, Runnable primary) {
+        context.observe(button.showingProperty()); context.observe(button.textProperty());
+        return menuRoot(button.getItems(),context,SemanticRole.MENU,button::getText,button::isShowing,() -> {
+            if (button.isShowing()) button.hide(); else button.show();
+        },primary);
+    }
+    private static AdapterSession menuRoot(ObservableList<? extends MenuItem> items, AdapterContext context,
+                                          SemanticRole role, Supplier<String> name, BooleanSupplier open,
+                                          Runnable toggle, Runnable primary) {
         context.observe(items);
         return new AdapterSession() {
             @Override public SemanticProjection read() {
-                var result = SemanticProjection.of(role, "");
-                if (toggle != null) result = result.states(open.getAsBoolean()
-                        ? Set.of(SemanticState.EXPANDABLE, SemanticState.EXPANDED) : Set.of(SemanticState.EXPANDABLE)).actions("toggle-popup");
+                var result = SemanticProjection.of(role, name.get());
+                if (toggle != null) {
+                    result = result.states(open.getAsBoolean()
+                            ? Set.of(SemanticState.EXPANDABLE, SemanticState.EXPANDED) : Set.of(SemanticState.EXPANDABLE));
+                    result = primary == null ? result.actions("toggle-popup") : result.actions("click","toggle-popup");
+                }
                 return result;
             }
             @Override public List<SemanticChild> children() { return menuChildren(items, context, open); }
             @Override public boolean execute(AdapterCommand command) {
-                if (command instanceof AdapterCommand.Activate(var actionIndex) && actionIndex == 0 && toggle != null) { toggle.run(); return true; }
+                if (!(command instanceof AdapterCommand.Activate(var actionIndex))) return false;
+                if (actionIndex == 0 && primary != null) { primary.run(); return true; }
+                if (actionIndex == (primary == null ? 0 : 1) && toggle != null) { toggle.run(); return true; }
                 return false;
             }
         };

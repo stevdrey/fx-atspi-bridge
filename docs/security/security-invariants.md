@@ -47,3 +47,9 @@ physical fallback. Reassignments reconcile both parent records without retiring 
 capacity checks release outgoing owned subtrees before admitting replacement keys; unaffected incarnations survive.
 Excluded showing standalone menus retain only a window candidate for owner-driven recovery, not content listeners;
 window-list removal and observer close release those candidates, and idle scenes schedule no recovery work.
+
+A semantic owner collision must reserve all nonconflicting declared real Nodes before failing the expansion closed,
+including retirement of already-exported physical aliases; never steal the shared Node or leak sibling content through
+ordinary physical traversal. Partial reservations follow actual descriptor/session/owner disposal and recovery.
+After central redaction, automation IDs allow empty suppression but reject nonempty blank or oversized output before
+uniqueness indexing. Such output uses the fixed empty/inert projection path rather than collision-driven shutdown.
