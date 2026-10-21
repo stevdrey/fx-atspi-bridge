@@ -140,6 +140,8 @@ QA, record exact source/JAR hashes and actual results, then publish to PR #41 an
 
 ### Code-review follow-up (ten findings)
 
+Historical contract of `b513be3`; its window-local quarantine is superseded by the final section below.
+
 Conflict slots: selection on its container; a direct child of a selection container shares that slot; deeper
 descendants (tab content) keep their own. Automation IDs: application duplicates are detected on pre-redaction
 values among nonempty candidates; colliding redacted candidates are suppressed (empty) while an unredacted holder
@@ -149,3 +151,19 @@ real-edge inclusion without reprojecting their subtrees. A session over the 10,0
 only its own window (documented cross-window residual). The static ID subscription is removable from any thread and is
 removed when FX cleanup is refused. Stale Action metadata reads answer UnknownObject; `itemTextProvider(null)` restores
 the default; bulk eligibility is checked once by the provider FX task. No other public API changes.
+
+### Review feedback — changes requested (b513be3)
+
+Supersede the window-local quarantine from the ten-finding follow-up: an uninspected real child may belong to any
+included window. Keep a bounded FX identity set of oversized sessions and publish the whole model inert until the
+last such session recovers or disposes. Invalidate all records only on global quarantine entry/exit, include windows
+added while quarantined, and retain the existing 10,000-descriptor inspection cap and event-driven recovery.
+First reproduce initial/live cross-window tails in both traversal orders, including name/text/ID/geometry/action
+protection, no effects or secret deletion events, recovery and cleanup. Cover multiple oversized sessions as well.
+Apply policy #39 to this unmerged PR: retain 101 generated originals locally but remove them from version control;
+move seven reusable source tools/fixtures to examples/fx-lab/scripts/issue8 and ignore the old output directory.
+Keep concise authored verification with measured revisions, environment, commands, verdicts, distributions/variation,
+historical 10,000-node install-heap budget failure and qualification limits. No evidence-only PR, history rewrite,
+mandatory upload or fresh performance campaign. Preserve local #1/#16 changes. Verify relocated tools with temporary
+copies/synthetic failures, full Java/Python checks, the existing independent desktop QA and installed-JAR probe;
+publish in PR #41, await build/CodeQL and respond to the review comment with actual results.

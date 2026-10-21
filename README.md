@@ -179,7 +179,8 @@ can recover it. No periodic retry work is scheduled. Action names/key bindings a
 descriptions to 1,024, and text keeps the existing 32,768-unit bound, all without splitting surrogate pairs.
 The depth budget counts both real and logical semantic edges. Real-node reservations also survive rejected collection
 sizes, duplicate descriptors and cycles. Descriptor inspection is capped at 10,000 per session read; an application session
-returning more leaves the exported model inert until recovery or disposal, since its uninspected tail may contain aliases.
+returning more leaves the exported model in every window inert until the last oversized session recovers or disposes,
+since its uninspected tail may contain aliases in another window. This intentionally favors privacy over availability.
 Bulk selection is denied if any declared real child was filtered out by exclusion or password/source-window policy,
 including ClearSelection when the filtered child's selection cannot be inspected safely.
 

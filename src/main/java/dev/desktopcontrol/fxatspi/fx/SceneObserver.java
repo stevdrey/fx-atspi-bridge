@@ -151,10 +151,10 @@ public final class SceneObserver {
     /** Declared real edges also reserve nodes while owner privacy hides their expansion. FX identity only. */
     private final IdentityHashMap<Node, Observed> semanticOwners = new IdentityHashMap<>();
     /**
-     * A bounded descriptor prefix cannot identify every physical alias of an oversized application session. Each
-     * such owner fails its own frame (window) closed; other windows keep publishing.
+     * An uninspected descriptor may name a Node in any window. Retain only oversized session identities and
+     * quarantine all publication until the last one recovers or disposes.
      */
-    private final IdentityHashMap<Observed, Object> unidentifiedClaims = new IdentityHashMap<>();
+    private final Set<Observed> unidentifiedClaims = Collections.newSetFromMap(new IdentityHashMap<>());
     private final ActionFingerprint actionFingerprint = new ActionFingerprint();
     /** Only real adapter edges need extra physical provenance; ordinary scene edges keep their fast path. */
     private final Set<Observed> realNodes = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -883,8 +883,6 @@ public final class SceneObserver {
                 if (entry != null && entry.parent == removal.former() && !restorePhysical(entry, null)) detach(entry);
             }
         }
-        var unidentifiedFrames = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
-        unidentifiedFrames.addAll(unidentifiedClaims.values());
         try {
             var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
             var pending = new ArrayDeque<Observed>();
@@ -902,7 +900,7 @@ public final class SceneObserver {
                 projections++;
                 entry.rawAutomationId = ""; entry.automationTransformed = false;
                 try {
-                    if (!unidentifiedFrames.isEmpty() && unidentifiedFrames.contains(frameOf(entry)))
+                    if (!unidentifiedClaims.isEmpty())
                         throw new IllegalStateException("Unidentified semantic aliases");
                     entry.readGeometry();
                     sensitive = sensitive(entry);
@@ -1179,23 +1177,10 @@ public final class SceneObserver {
     }
 
     private void unidentifiedClaims(Observed entry, boolean value) {
-        var frame = frameOf(entry);
-        var previous = value ? unidentifiedClaims.put(entry, frame) : unidentifiedClaims.remove(entry);
-        if (!active || previous == (value ? frame : null)) return;
-        if (previous != null) markFrame(previous);
-        if (value) markFrame(frame);
-    }
-
-    /** The window target containing {@code entry} in the observed tree, or the application root without one. */
-    private static Object frameOf(Observed entry) {
-        for (var current = entry; current != null; current = current.parent)
-            if (current.target instanceof Window) return current.target;
-        return APPLICATION;
-    }
-
-    private void markFrame(Object frame) {
-        var entry = observed.get(frame);
-        if (entry != null) markSubtree(entry);
+        var wasEmpty = unidentifiedClaims.isEmpty();
+        if (value) unidentifiedClaims.add(entry); else unidentifiedClaims.remove(entry);
+        // Repeated invalidations of the same failing session must not repeatedly invalidate every other window.
+        if (active && wasEmpty != unidentifiedClaims.isEmpty()) dirty.addAll(observed.values());
     }
 
     private void claimNodes(Observed entry, Set<Node> claims, Collection<?> exported) {

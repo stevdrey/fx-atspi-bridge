@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Reduced SC-01 cells: 100/1000/10000, dirty=10, off/on, two repetitions, 10 structural/install cycles.
-Usage: python3 docs/verification/data/issue-8/collect_cells.py /tmp/new-output [--retention]
+Usage: python3 examples/fx-lab/scripts/issue8/collect_cells.py /tmp/new-output [--retention]
 --retention uses the original SC-01 quick structural/install counts, still only dirty=10 and two repetitions.
 Use an otherwise idle graphical session. Does not change the display or suppress measurement guards.
 """

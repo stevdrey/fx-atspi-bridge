@@ -1,2 +1,0 @@
-bench pid 194670
-bench invalid: a measured pulse took 1002.790201 ms; display throttled or process stalled during the measured phase

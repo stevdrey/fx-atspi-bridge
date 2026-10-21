@@ -1,2 +1,0 @@
-bench pid 192958
-bench invalid: a measured pulse took 1002.323715 ms; display throttled or process stalled during the measured phase

@@ -1309,14 +1309,80 @@ class SemanticObserverTest {
         assertEquals(1,closes.get()); return null;
     }); }
 
-    @Test void oversizedOwnerQuarantinesOnlyItsOwnWindow() throws Exception { fx(() -> {
+    @Test void uninspectedCrossWindowTailIsProtectedBeforeAndAfterPublication() throws Exception { fx(() -> {
+        class Oversized extends Control { final SimpleObjectProperty<List<SemanticChild>> descriptors = new SimpleObjectProperty<>(List.of()); }
+        for (var sourceFirst : List.of(false,true)) for (var initiallyOversized : List.of(false,true)) {
+            var tailReads = new AtomicInteger(); var closes = new AtomicInteger(); var effects = new AtomicInteger();
+            var owner = new Oversized(); var known = new Label("Known prefix");
+            var secret = new TextField("TAIL_SECRET_TEXT"); secret.setAccessibleText("TAIL_SECRET_NAME");
+            AutomationIds.set(secret,"TAIL_SECRET_ID");
+            var button = new Button("TAIL_SECRET_ACTION"); button.setOnAction(_ -> effects.incrementAndGet());
+            var tail = new VBox(secret,button);
+            var source = new Stage(); source.setTitle("Source window B"); source.setScene(new Scene(new VBox(tail),220,160));
+            if (sourceFirst) source.show();
+            var oversized = new AbstractList<SemanticChild>() {
+                public int size() { return 10001; }
+                public SemanticChild get(int index) {
+                    if (index == 10000) { tailReads.incrementAndGet(); return SemanticChild.node(tail); }
+                    return SemanticChild.node(known);
+                }
+            };
+            if (initiallyOversized) owner.descriptors.set(oversized);
+            var adapter = new ControlAdapter<Oversized>() {
+                public Class<Oversized> targetType() { return Oversized.class; }
+                public AdapterSession open(Oversized node,AdapterContext context) {
+                    context.observe(node.descriptors); context.onDispose(closes::incrementAndGet);
+                    return new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Sensitive owner A"); }
+                        public List<SemanticChild> children() { return node.descriptors.get(); }
+                    };
+                }
+            };
+            try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).sensitiveNodes(node -> node == owner).build(),owner,known)) {
+                if (!sourceFirst) { source.show(); h.flush(); }
+                var before = h.snapshot; var old = h.registry.targetId(secret);
+                if (!initiallyOversized) {
+                    assertNotNull(old); assertTrue(h.snapshot.get(old).has(Capability.EDITABLE_TEXT));
+                    source.getScene().getRoot().applyCss(); source.getScene().getRoot().layout(); h.flush();
+                    assertNotEquals(Geometry.UNAVAILABLE,h.snapshot.get(old).geometry());
+                    before = h.snapshot; owner.descriptors.set(oversized); h.flush();
+                }
+                assertEquals(0,tailReads.get()); assertFalse(h.snapshot.toString().contains("TAIL_SECRET"));
+                for (var item : h.snapshot.nodes().values()) {
+                    assertTrue(item.capabilities().isEmpty()); assertEquals(Geometry.UNAVAILABLE,item.geometry());
+                }
+                if (old != null && !initiallyOversized) assertFalse(h.actions.isLive(old));
+                assertFalse(h.actions.press(h.registry.targetId(button)));
+                assertFalse(h.actions.setText(h.registry.targetId(secret),"Forbidden"));
+                assertEquals(0,effects.get()); assertEquals("TAIL_SECRET_TEXT",secret.getText());
+                assertFalse(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream()
+                        .anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+                owner.descriptors.set(List.of(SemanticChild.node(known))); h.flush();
+                assertTrue(h.actions.press(h.registry.targetId(button))); assertEquals(1,effects.get());
+                assertEquals("TAIL_SECRET_ID",h.snapshot.get(h.registry.targetId(secret)).semantics().automationId());
+                owner.descriptors.set(oversized); h.flush(); assertFalse(h.actions.press(h.registry.targetId(button)));
+                ((VBox) owner.getParent()).getChildren().remove(owner); h.flush();
+                assertTrue(h.actions.press(h.registry.targetId(button))); assertEquals(2,effects.get());
+                assertEquals(1,closes.get()); assertEquals(0,tailReads.get()); assertTree(h.snapshot);
+                h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+                var scheduled = h.scheduled.size(); owner.descriptors.set(List.of()); assertEquals(scheduled,h.scheduled.size());
+            } finally { List.copyOf(Window.getWindows()).forEach(Window::hide); }
+        }
+        return null;
+    }); }
+
+    @Test void oversizedSessionsQuarantineAllWindowsUntilTheLastOneDisposes() throws Exception { fx(() -> {
         class Oversized extends Control {}
+        var first = new Oversized(); var second = new Oversized(); var firstValid = new SimpleObjectProperty<>(false);
+        var closes = new AtomicInteger();
         var adapter = new ControlAdapter<Oversized>() {
             public Class<Oversized> targetType() { return Oversized.class; }
             public AdapterSession open(Oversized node,AdapterContext context) {
+                context.observe(firstValid); context.onDispose(closes::incrementAndGet);
                 return new AdapterSession() {
                     public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Oversized owner"); }
                     public List<SemanticChild> children() {
+                        if (node == first && firstValid.get()) return List.of();
                         return new AbstractList<>() {
                             public int size() { return 10001; }
                             public SemanticChild get(int index) { return SemanticChild.logical(index,_ -> () -> SemanticProjection.of(SemanticRole.LIST_ITEM,"")); }
@@ -1328,11 +1394,18 @@ class SemanticObserverTest {
         var fired = new AtomicInteger(); var elsewhere = new Button("Elsewhere"); elsewhere.setOnAction(_ -> fired.incrementAndGet());
         var other = new Stage(); other.setTitle("Other"); other.setScene(new Scene(new VBox(elsewhere),100,100)); other.show();
         var local = new Button("Local");
-        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),new Oversized(),local)) {
-            assertTrue(h.actions.press(h.registry.targetId(elsewhere))); assertEquals(1,fired.get());
-            assertTrue(h.named("Elsewhere").permits(Capability.ACTION));
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),first,second,local)) {
+            assertFalse(h.actions.press(h.registry.targetId(elsewhere))); assertEquals(0,fired.get());
             assertFalse(h.actions.press(h.registry.targetId(local)));
             assertTrue(h.snapshot.nodes().values().stream().noneMatch(node -> node.name().equals("Local")));
+            var added = new Button("New window"); var late = new Stage(); late.setScene(new Scene(new VBox(added),100,100)); late.show(); h.flush();
+            assertFalse(h.actions.press(h.registry.targetId(added))); assertFalse(h.snapshot.toString().contains("New window"));
+            firstValid.set(true); h.flush(); assertFalse(h.actions.press(h.registry.targetId(elsewhere)));
+            ((VBox) second.getParent()).getChildren().remove(second); h.flush();
+            assertTrue(h.actions.press(h.registry.targetId(elsewhere))); assertEquals(1,fired.get());
+            assertTrue(h.actions.press(h.registry.targetId(added))); assertTrue(h.actions.press(h.registry.targetId(local)));
+            assertEquals(1,closes.get()); assertTree(h.snapshot); h.close(); assertEquals(2,closes.get());
+            assertEquals(0,h.observer.physicalSubscriptions());
         } return null;
     }); }
 

@@ -57,8 +57,9 @@ ordinary physical traversal. Partial reservations follow actual descriptor/sessi
 After central redaction, automation IDs allow empty suppression but reject nonempty blank or oversized output before
 uniqueness indexing. Such output uses the fixed empty/inert projection path rather than collision-driven shutdown.
 
-A custom session exceeding the 10,000-descriptor hard bound makes its own window's projections inert; other windows
-keep publishing. Residual: a physical alias in another window beyond the inspected prefix is not identified.
+A custom session exceeding the 10,000-descriptor hard bound makes the whole published model inert until the last
+oversized session recovers or disposes. Unknown aliases may belong to any included window; no cross-window exposure
+is accepted. Only global quarantine entry/exit invalidates all records; added windows are also inert while it is active.
 Bulk SelectAll/ClearSelection eligibility is decided once, in the provider's FX task, and denied as AccessDenied.
 A bridge whose FX cleanup is refused removes its static automation-ID subscription from the provider thread.
 
