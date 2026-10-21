@@ -60,6 +60,7 @@ public final class ActionExecutor implements ActionPort {
     @Override public long actionRevision(String id) { return observer == null ? 0 : observer.actionRevision(id); }
     @Override public boolean selectionSetEligible(String parent, boolean clear) {
         if (observer == null) return true;
+        if (observer.hasFilteredSelectionChildren(parent)) return false;
         for (var child : observer.selectionChildren(parent,clear)) if (!selectionTargetEligible(parent,child)) return false;
         return true;
     }
@@ -69,6 +70,8 @@ public final class ActionExecutor implements ActionPort {
                 : command instanceof AdapterCommand.Activate ? Capability.ACTION : Capability.SELECTION;
         var owner = observer.ownerFor(id);
         if (owner == null || !eligible(owner) || !policy(owner,capability) || !observer.permits(id,capability)) return false;
+        if (command instanceof AdapterCommand.SelectAll && !selectionSetEligible(id,false)) return false;
+        if (command instanceof AdapterCommand.ClearSelection && !selectionSetEligible(id,true)) return false;
         return observer.execute(id,command,childId);
     }
     @Override public boolean isLive(String id) { return registry.target(id) != null; }

@@ -241,4 +241,21 @@ class SelectionProtocolTest {
             } finally { process.destroyForcibly(); }
         }
     }
+
+    @Test void queuedBulkDeniesFilteredChildrenThatNoLongerAppearInTheSnapshot() throws Exception {
+        for (var method : List.of("SelectAll","ClearSelection")) {
+            eligible.set(true); current.set(snapshot(List.of("a","b"))); provider.refresh();
+            var deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+            while (provider.publishedSnapshot().get("list").children().size() != 2 && System.nanoTime()<deadline) Thread.sleep(5);
+            assertEquals(2,provider.publishedSnapshot().get("list").children().size());
+            var process = request("list","org.a11y.atspi.Selection."+method);
+            try {
+                var work = tasks.poll(5,TimeUnit.SECONDS); assertNotNull(work);
+                // The parent remains eligible; only a declared child was removed by central read policy.
+                current.set(snapshot(List.of("a"))); eligible.set(false); work.run();
+                assertTrue(output(process).contains("AccessDenied")); assertEquals(null,effect.get());
+                assertTrue(current.get().get("list").permits(Capability.SELECTION));
+            } finally { process.destroyForcibly(); }
+        }
+    }
 }

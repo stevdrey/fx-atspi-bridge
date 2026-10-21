@@ -40,6 +40,7 @@ import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
 import java.util.ArrayList;
+import java.util.AbstractList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
@@ -1150,6 +1151,205 @@ class SemanticObserverTest {
             var projections = h.observer.projections(); var publications = h.observer.publications(); h.flush();
             assertEquals(projections,h.observer.projections()); assertEquals(publications,h.observer.publications());
         } return null;
+    }); }
+
+    @Test void invalidExpansionsReserveRealAliasesBeforeEveryDescriptorValidation() throws Exception { fx(() -> {
+        for (var mode : List.of("limit","duplicate","cycle")) for (var physicalFirst : List.of(false,true))
+                for (var initiallyInvalid : List.of(false,true)) {
+            var secret = new TextField("RESERVED_SECRET_TEXT"); secret.setAccessibleText("RESERVED_SECRET_NAME");
+            AutomationIds.set(secret,"RESERVED_SECRET_ID");
+            var other = new TextField("Other reserved content");
+            var source = new VBox(secret,other); var owner = new ClaimOwner(); owner.setId("sensitive");
+            var invalid = switch (mode) {
+                case "limit" -> List.<Node>of(secret,other);
+                case "duplicate" -> List.<Node>of(secret,secret,other);
+                default -> List.<Node>of(secret,owner,other);
+            };
+            if (initiallyInvalid) owner.declared.set(invalid);
+            var options = BridgeOptions.builder().adapters(List.of(claimAdapter()))
+                    .maxSemanticChildren(mode.equals("limit") ? 1 : 3)
+                    .sensitiveNodes(node -> "sensitive".equals(node.getId())).build();
+            try (var h = new Harness(options,physicalFirst ? source : owner,physicalFirst ? owner : source)) {
+                var before = h.snapshot; var old = h.registry.targetId(secret);
+                if (!initiallyInvalid) { assertNotNull(old); owner.declared.set(invalid); h.flush(); }
+                assertFalse(h.snapshot.toString().contains("RESERVED_SECRET"));
+                assertEquals(null,h.registry.targetId(secret)); assertEquals(null,h.registry.targetId(other));
+                assertTrue(h.snapshot.get(h.registry.targetId(owner)).capabilities().isEmpty());
+                if (old != null) assertFalse(h.actions.isLive(old));
+                assertFalse(SnapshotDiff.diff(before,h.snapshot,before.nodes().keySet()).stream()
+                        .anyMatch(change -> change instanceof SnapshotDiff.TextDeleted));
+                owner.setId(null); h.flush(); assertEquals(null,h.registry.targetId(secret));
+                owner.setId("sensitive"); owner.declared.set(List.of(secret)); h.flush();
+                assertEquals(null,h.registry.targetId(secret)); assertNotNull(h.registry.targetId(other));
+                owner.setId(null); h.flush(); var recovered = h.registry.targetId(secret);
+                assertNotNull(recovered); assertEquals("RESERVED_SECRET_ID",h.snapshot.get(recovered).semantics().automationId());
+                assertEquals(h.registry.targetId(owner),h.snapshot.get(recovered).ancestor());
+                owner.declared.set(List.of()); h.flush(); assertEquals(recovered,h.registry.targetId(secret));
+                assertEquals(h.registry.targetId(source),h.snapshot.get(recovered).ancestor());
+                assertEquals(0,h.observer.physicalSubscriptions()); assertTree(h.snapshot);
+                var projections = h.observer.projections(); h.flush(); assertEquals(projections,h.observer.projections());
+            } finally { List.copyOf(Window.getWindows()).forEach(Window::hide); }
+        }
+        return null;
+    }); }
+
+    @Test void uninspectableDescriptorTailQuarantinesPublicationAndRecoversOrDisposes() throws Exception { fx(() -> {
+        class Oversized extends Control { final SimpleObjectProperty<List<SemanticChild>> descriptors = new SimpleObjectProperty<>(); }
+        var reads = new AtomicInteger(); var tailReads = new AtomicInteger(); var closes = new AtomicInteger();
+        var adapter = new ControlAdapter<Oversized>() {
+            public Class<Oversized> targetType() { return Oversized.class; }
+            public AdapterSession open(Oversized node,AdapterContext context) {
+                context.observe(node.descriptors); context.onDispose(closes::incrementAndGet);
+                return new AdapterSession() {
+                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Oversized owner"); }
+                    public List<SemanticChild> children() { return node.descriptors.get(); }
+                };
+            }
+        };
+        var known = new TextField("PREFIX_SECRET"); var tail = new TextField("TAIL_SECRET");
+        var unrelated = new Button("Unrelated"); var fired = new AtomicInteger(); unrelated.setOnAction(_ -> fired.incrementAndGet());
+        var owner = new Oversized();
+        var oversized = new AbstractList<SemanticChild>() {
+            public int size() { return 10001; }
+            public SemanticChild get(int index) {
+                if (index >= 10000) { tailReads.incrementAndGet(); throw new AssertionError("Unbounded descriptor read"); }
+                reads.incrementAndGet(); return SemanticChild.node(known);
+            }
+        };
+        owner.descriptors.set(oversized);
+        var box = new VBox(owner,new VBox(known,tail),unrelated);
+        try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),box)) {
+            assertTrue(reads.get() >= 10000); assertEquals(0,tailReads.get());
+            assertFalse(h.snapshot.toString().contains("SECRET"));
+            for (var item : h.snapshot.nodes().values()) {
+                assertTrue(item.capabilities().isEmpty()); assertEquals(Geometry.UNAVAILABLE,item.geometry());
+            }
+            assertFalse(h.actions.press(h.registry.targetId(unrelated)));
+            assertFalse(h.actions.setText(h.registry.targetId(tail),"Forbidden")); assertEquals("TAIL_SECRET",tail.getText());
+            owner.descriptors.set(List.of(SemanticChild.node(known))); h.flush();
+            assertTrue(h.actions.press(h.registry.targetId(unrelated))); assertEquals(1,fired.get());
+            assertNotNull(h.named("Oversized owner")); assertEquals(0,tailReads.get()); assertTree(h.snapshot);
+            owner.descriptors.set(oversized); h.flush(); assertFalse(h.actions.press(h.registry.targetId(unrelated)));
+            box.getChildren().remove(owner); h.flush();
+            assertTrue(h.actions.press(h.registry.targetId(unrelated))); assertEquals(2,fired.get());
+            assertEquals(1,closes.get()); assertEquals(0,h.observer.physicalSubscriptions()); assertTree(h.snapshot);
+            var projections = h.observer.projections(); var publications = h.observer.publications(); h.flush();
+            assertEquals(projections,h.observer.projections()); assertEquals(publications,h.observer.publications());
+        }
+        assertEquals(1,closes.get()); return null;
+    }); }
+
+    @Test void filteredRealChildrenDenyBulkCallbacksAndRecoverAfterExplicitReinclusion() throws Exception { fx(() -> {
+        class PasswordParent extends PasswordField { void content(Node node) { getChildren().add(node); } }
+        for (var mode : List.of("node","ancestor","window","password")) {
+            var allowed = new CheckBox("Allowed"); var excluded = new CheckBox("Excluded");
+            allowed.setSelected(true); excluded.setSelected(true);
+            var effects = new AtomicInteger(); var owner = new ClaimOwner(allowed,excluded);
+            var source = new VBox(excluded); var password = new PasswordParent();
+            var sourceWindow = new Stage(); sourceWindow.setTitle("Included");
+            sourceWindow.setScene(new Scene(source,200,120)); sourceWindow.show();
+            var adapter = new ControlAdapter<ClaimOwner>() {
+                public Class<ClaimOwner> targetType() { return ClaimOwner.class; }
+                public AdapterSession open(ClaimOwner node,AdapterContext context) {
+                    context.observe(node.declared);
+                    return new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Bulk owner").selection(true); }
+                        public List<SemanticChild> children() { return node.declared.get().stream().map(SemanticChild::node).toList(); }
+                        public boolean execute(AdapterCommand command) {
+                            if (!(command instanceof AdapterCommand.SelectAll || command instanceof AdapterCommand.ClearSelection)) return false;
+                            effects.incrementAndGet();
+                            for (var item : node.declared.get()) ((CheckBox) item).setSelected(command instanceof AdapterCommand.SelectAll);
+                            return true;
+                        }
+                    };
+                }
+            };
+            var itemAdapter = new ControlAdapter<CheckBox>() {
+                public Class<CheckBox> targetType() { return CheckBox.class; }
+                public AdapterSession open(CheckBox item,AdapterContext context) {
+                    context.observe(item.selectedProperty());
+                    return () -> SemanticProjection.of(SemanticRole.LIST_ITEM,item.getText()).states(item.isSelected()
+                            ? Set.of(SemanticState.SELECTABLE,SemanticState.SELECTED) : Set.of(SemanticState.SELECTABLE));
+                }
+            };
+            var options = BridgeOptions.builder().adapters(List.of(adapter,itemAdapter))
+                    .excludedNodes(node -> "excluded".equals(node.getId()))
+                    .includedWindows(window -> !(window instanceof Stage stage) || !"Excluded".equals(stage.getTitle())).build();
+            try (var h = new Harness(options,owner,new Source(allowed),password)) {
+                var parent = h.named("Bulk owner").id(); var old = h.registry.targetId(excluded);
+                assertTrue(h.actions.selectionSetEligible(parent,false)); assertTrue(h.actions.selectionSetEligible(parent,true));
+                // Capture both commands while every child is still eligible, then revoke before the FX effect.
+                var pending = List.<AdapterCommand>of(new AdapterCommand.SelectAll(),new AdapterCommand.ClearSelection());
+                switch (mode) {
+                    case "node" -> excluded.setId("excluded");
+                    case "ancestor" -> source.setId("excluded");
+                    case "window" -> sourceWindow.setTitle("Excluded");
+                    default -> { source.getChildren().remove(excluded); password.content(excluded); }
+                }
+                h.flush(); assertEquals(parent,h.named("Bulk owner").id()); assertFalse(h.actions.isLive(old));
+                assertEquals(null,h.registry.targetId(excluded));
+                for (var command : pending) {
+                    assertFalse(h.actions.selectionSetEligible(parent,command instanceof AdapterCommand.ClearSelection));
+                    assertFalse(h.actions.execute(parent,command,null));
+                }
+                assertEquals(0,effects.get()); assertTrue(allowed.isSelected()); assertTrue(excluded.isSelected());
+                excluded.setId(null); source.setId(null); sourceWindow.setTitle("Included");
+                if (mode.equals("password")) source.getChildren().add(excluded);
+                h.observer.updateOptions(options,1); h.flush();
+                assertTrue(h.actions.selectionSetEligible(parent,false)); assertTrue(h.actions.selectionSetEligible(parent,true));
+                assertTrue(h.actions.execute(parent,new AdapterCommand.ClearSelection(),null)); h.flush();
+                assertFalse(allowed.isSelected()); assertFalse(excluded.isSelected());
+                assertTrue(h.actions.execute(parent,new AdapterCommand.SelectAll(),null)); h.flush();
+                assertTrue(allowed.isSelected()); assertTrue(excluded.isSelected()); assertEquals(2,effects.get());
+                assertTree(h.snapshot); h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+            } finally { List.copyOf(Window.getWindows()).forEach(Window::hide); }
+        }
+        return null;
+    }); }
+
+    @Test void semanticDepthCountsRealAndMixedEdgesAtTheExactBoundary() throws Exception { fx(() -> {
+        for (var mixed : List.of(false,true)) for (var overflow : List.of(false,true)) {
+            var adapter = new ControlAdapter<ClaimOwner>() {
+                public Class<ClaimOwner> targetType() { return ClaimOwner.class; }
+                public AdapterSession open(ClaimOwner node,AdapterContext context) {
+                    context.observe(node.declared); var key = new Object();
+                    return new AdapterSession() {
+                        public SemanticProjection read() { return SemanticProjection.of(SemanticRole.LIST,"Depth owner").selection(true); }
+                        public List<SemanticChild> children() {
+                            if (!mixed || node.declared.get().isEmpty()) return node.declared.get().stream().map(SemanticChild::node).toList();
+                            return List.of(SemanticChild.logical(key,child -> {
+                                child.observe(node.declared);
+                                return new AdapterSession() {
+                                    public SemanticProjection read() { return SemanticProjection.of(SemanticRole.PANEL,"Branch"); }
+                                    public List<SemanticChild> children() { return node.declared.get().stream().map(SemanticChild::node).toList(); }
+                                };
+                            }));
+                        }
+                    };
+                }
+            };
+            var count = mixed ? overflow ? 36 : 33 : overflow ? 70 : 65;
+            var chain = new ArrayList<ClaimOwner>(); var leaf = new ClaimOwner(); chain.add(leaf);
+            for (var index = 1; index < count; index++) chain.addFirst(new ClaimOwner(chain.getFirst()));
+            var root = chain.getFirst(); var source = new Source(new VBox(chain.subList(1,chain.size()).toArray(Node[]::new)));
+            try (var h = new Harness(BridgeOptions.builder().adapters(List.of(adapter)).build(),root,source)) {
+                var rootId = h.registry.targetId(root); var current = h.snapshot.get(rootId); var edges = 0;
+                while (!current.children().isEmpty()) {
+                    assertEquals(1,current.children().size()); current = h.snapshot.get(current.children().getFirst());
+                    assertTrue(++edges <= 64);
+                }
+                assertEquals(64,edges);
+                assertEquals(overflow,current.capabilities().isEmpty());
+                assertTree(h.snapshot);
+                if (overflow) {
+                    root.declared.set(List.of(leaf)); h.flush(); assertEquals(rootId,h.registry.targetId(root));
+                    assertNotNull(h.registry.targetId(leaf)); assertTrue(h.snapshot.get(h.registry.targetId(leaf)).enabled());
+                    assertTrue(h.snapshot.get(h.registry.targetId(leaf)).has(Capability.SELECTION)); assertTree(h.snapshot);
+                }
+                h.close(); assertEquals(0,h.observer.physicalSubscriptions());
+            } finally { List.copyOf(Window.getWindows()).forEach(Window::hide); }
+        }
+        return null;
     }); }
 
 }

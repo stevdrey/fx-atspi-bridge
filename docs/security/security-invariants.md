@@ -60,3 +60,9 @@ Adapter replacement uses ordered reference identity, never application equals/ha
 sessions through their existing ownership paths. Effective enabled/showing propagates through every exported edge,
 including real/generic descendants. Project dirty ancestors first, reuse sanitized parent state, and deny observer-backed
 generic activation/text mutation as well as adapter commands when the effective projection is unavailable.
+
+Collect bounded real-node claims before rejecting semantic descriptor validation, and suppress physical aliases on
+every expansion failure. Inspect at most 10,000 descriptors per session read; an uninspected tail quarantines the published
+model as inert until recovery/disposal, without retaining the tail or scheduling periodic work. Bulk selection checks
+both published children and filtered declared real children before any effect. The depth-64 budget includes real and
+logical semantic edges; ordinary physical edges retain their existing traversal contract.

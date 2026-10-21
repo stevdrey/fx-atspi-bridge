@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.IdentityHashMap;
 import java.util.HashMap;
 import java.util.Map;
@@ -143,6 +144,8 @@ public final class SceneObserver {
     private final IdentityHashMap<Object, List<Observed>> logicalKeys = new IdentityHashMap<>();
     /** Declared real edges also reserve nodes while owner privacy hides their expansion. FX identity only. */
     private final IdentityHashMap<Node, Observed> semanticOwners = new IdentityHashMap<>();
+    /** A bounded descriptor prefix cannot identify every physical alias of an oversized application session. */
+    private final Set<Observed> unidentifiedClaims = Collections.newSetFromMap(new IdentityHashMap<>());
     private final ActionFingerprint actionFingerprint = new ActionFingerprint();
     /** Only real adapter edges need extra physical provenance; ordinary scene edges keep their fast path. */
     private final Set<Observed> realNodes = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -393,6 +396,15 @@ public final class SceneObserver {
                     || item.semantics().states().contains(selectedOnly ? SemanticState.SELECTED : SemanticState.SELECTABLE));
         }).toList();
     }
+    boolean hasFilteredSelectionChildren(String parentId) {
+        var parent = observed.get(registry.target(parentId));
+        if (parent == null) return true;
+        for (var node : parent.nodeClaims) {
+            var child = observed.get(node);
+            if (child == null || child.parent != parent || model.get(child.id) == null) return true;
+        }
+        return false;
+    }
     public boolean selectable(String parentId, String childId) {
         var parent = observed.get(registry.target(parentId));
         var child = observed.get(registry.target(childId));
@@ -461,6 +473,7 @@ public final class SceneObserver {
         }
         void closeSession() {
             releaseNodeClaims(this);
+            unidentifiedClaims(this,false);
             comboPopups.remove(this);
             if (context != null) context.close();
             if (session != null) try { session.close(); } catch (RuntimeException failure) { projectionFailures++; }
@@ -747,6 +760,7 @@ public final class SceneObserver {
         if (observeIds) AutomationIdEvents.remove(idListener); logicalKeys.clear();
         for (var entry : observed.values()) entry.unsubscribe();
         observed.clear(); semanticPopups.clear(); excludedPopups.clear(); comboPopups.clear(); semanticOwners.clear();
+        unidentifiedClaims.clear();
         model.clear();
         dirty.clear();
         restructured.clear();
@@ -858,6 +872,7 @@ public final class SceneObserver {
                 var sensitive = false;
                 projections++;
                 try {
+                    if (!unidentifiedClaims.isEmpty()) throw new IllegalStateException("Unidentified semantic aliases");
                     entry.readGeometry();
                     sensitive = sensitive(entry);
                     if (entry.physicalFailed) throw new IllegalStateException("Physical observation unavailable");
@@ -1090,7 +1105,13 @@ public final class SceneObserver {
         entry.nodeClaims = Set.of();
     }
 
-    private void claimNodes(Observed entry, Set<Node> claims, List<Object> exported) {
+    private void unidentifiedClaims(Observed entry, boolean value) {
+        var before = unidentifiedClaims.isEmpty();
+        if (value) unidentifiedClaims.add(entry); else unidentifiedClaims.remove(entry);
+        if (active && before != unidentifiedClaims.isEmpty()) dirty.addAll(observed.values());
+    }
+
+    private void claimNodes(Observed entry, Set<Node> claims, Collection<?> exported) {
         if (claims.isEmpty()) { releaseNodeClaims(entry); return; }
         var accepted = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
         var conflict = false;
@@ -1105,17 +1126,20 @@ public final class SceneObserver {
         }
         for (var node : accepted) semanticOwners.put(node,entry);
         entry.nodeClaims = accepted.isEmpty() ? Set.of() : accepted;
+        suppressAliases(entry,conflict ? List.of() : exported);
+        if (conflict) throw new IllegalStateException("Multiple semantic owners");
+    }
+
+    private void suppressAliases(Observed entry, Collection<?> exported) {
         var visible = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
-        if (!conflict) visible.addAll(exported);
-        // A conflicting expansion is entirely inert, including aliases that would otherwise have been exported.
-        for (var node : accepted) if (!visible.contains(node)) {
+        visible.addAll(exported);
+        for (var node : entry.nodeClaims) if (!visible.contains(node)) {
             var current = observed.get(node);
             if (current != null && current.parent != entry) {
                 dirty.add(current.parent);
                 detach(current);
             }
         }
-        if (conflict) throw new IllegalStateException("Multiple semantic owners");
     }
 
     private void releaseLogicalReservation(Logical logical) {
@@ -1244,21 +1268,31 @@ public final class SceneObserver {
             var sensitive = sensitive(entry);
             entry.context.readProperties();
             var children = Objects.requireNonNull(entry.session.children());
-            if (children.size() > options.maxSemanticChildren()) throw new IllegalStateException("Semantic child limit");
-            var next = new ArrayList<Object>(children.size());
+            var count = children.size();
+            var claims = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
+            // Reserve a bounded prefix before any validation can reject other descriptors in the same session.
+            unidentifiedClaims(entry,count > 10000);
+            for (var index = 0; index < Math.min(count,10000); index++) {
+                var child = children.get(index);
+                if (child == null || child.node() == null) continue;
+                var ancestor = entry;
+                while (ancestor != null && ancestor.key() != child.node()) ancestor = ancestor.parent;
+                if (ancestor == null) claims.add(child.node()); // never claim an ancestor to suppress a cycle
+            }
+            claimNodes(entry,claims,claims);
+            if (count > options.maxSemanticChildren()) throw new IllegalStateException("Semantic child limit");
+            var next = new ArrayList<Object>(count);
             var keys = Collections.newSetFromMap(new IdentityHashMap<Object,Boolean>());
             var logical = new IdentityHashMap<Object,Logical>();
-            var claims = Collections.newSetFromMap(new IdentityHashMap<Node,Boolean>());
             var added = 0;
             for (var child : children) {
                 if (!keys.add(child.key())) throw new IllegalStateException("Duplicate semantic child");
                 var depth = 0;
                 for (var ancestor = entry; ancestor != null; ancestor = ancestor.parent) {
                     if (ancestor.key() == child.key()) throw new IllegalStateException("Semantic cycle");
-                    if (ancestor.target instanceof Logical && ++depth >= 64) throw new IllegalStateException("Semantic depth limit");
+                    if (ancestor.session != null && ++depth > 64) throw new IllegalStateException("Semantic depth limit");
                 }
                 if (child.node() != null) {
-                    claims.add(child.node());
                     if (!sensitive && includedReal(child.node())) next.add(child.node());
                 } else if (!sensitive) {
                     var target = entry.logicalChildren.get(child.key());
@@ -1266,7 +1300,7 @@ public final class SceneObserver {
                     next.add(target); logical.put(child.key(),target);
                 }
             }
-            claimNodes(entry,claims,next);
+            suppressAliases(entry,next);
             // Replacements release their outgoing owned subtrees first. Unchanged keys keep their incarnations,
             // and recursive attachment never temporarily exceeds the global cap.
             for (var previous : entry.logicalChildren.entrySet()) if (!logical.containsKey(previous.getKey())) {
@@ -1281,6 +1315,7 @@ public final class SceneObserver {
             entry.logicalChildren.clear(); entry.logicalChildren.putAll(logical); entry.expansionFailed = false;
             return next;
         } catch (RuntimeException failure) {
+            suppressAliases(entry,List.of());
             if (!entry.expansionFailed) projectionFailures++;
             entry.expansionFailed = true; clearLogicalChildren(entry); retry.add(entry); return List.of();
         }

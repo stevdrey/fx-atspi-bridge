@@ -120,3 +120,20 @@ Acceptance includes Window-owned popups with null ownerNode, scene/root and priv
 adapter replacement/reorder/no-op updates and cleanup, mixed descendants, availability events, queued actions/text/
 selection and bulk denial/recovery. Run focused/full Java, Python and expanded independent libatspi QA; preserve
 historical benchmarks and local #1/#16 files, then publish, await CI, reply and resolve the three threads.
+
+### Local high review follow-up
+
+Reserve identifiable real children before rejecting collection size, duplicate descriptors, cycles or semantic depth.
+Retire their physical aliases on failure, retaining claims until actual release/session disposal and recovering on
+observed changes. Bound each descriptor inspection and retained claims to 10,000 per session. If a callback exceeds that
+hard bound, keep its session observations for recovery and publish an inert model while unidentified aliases could
+exist; do not iterate or retain the unbounded tail. This conservative quarantine ends on recovery or owner disposal.
+Bulk selection must deny whenever declared real children were filtered from the published container, including
+exclusion, password ancestry and source-window exclusion. Neither SelectAll nor ClearSelection may invoke its callback
+in that state, including requests admitted before exclusion. Reuse existing action admission/FX synchronization.
+Count all semantic edges, real and logical, against depth 64; ordinary physical edges do not consume that budget.
+Boundary and mixed-chain regressions must verify bounded expansion, inert failure, recovery and listener disposal.
+Keep public APIs unchanged. Verify initial/live failed reservations, physical traversal order, IDs/events/geometry,
+filtered bulk no-effects and recovery, and deep real/mixed chains. Run focused/full checks, Python and existing desktop
+QA, record exact source/JAR hashes and actual results, then publish to PR #41 and await successful CI. Preserve local
+#1/#16 changes and historical performance evidence; do not extend performance/memory qualification.

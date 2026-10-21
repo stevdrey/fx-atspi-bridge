@@ -293,6 +293,8 @@ matrix or memory characterization was repeated, and no benchmark budget was chan
 
 ## PR #41 — fourth review round (three comments)
 
+This section records the follow-up published at `64fd1ee`; the local high-review corrections are recorded below.
+
 The follow-up to `d3eafc7` centralizes ContextMenu anchoring on ownerNode, falling back to ownerWindow.scene.root.
 Protected or undetermined anchors exclude the entire popup, including its content-sized geometry. Authorization and
 shared real-child observations use the same anchor, with subscriptions rebound on owner Scene/root changes. Observed
@@ -336,3 +338,47 @@ every recorded hash matched the tested files. Desktop results and fixed fixture 
 by the updated evidence manifest. JavaFX test fixtures terminated before independent desktop QA. The earlier performance
 collections remain evidence only for their recorded revisions; no complete quick/full matrix or memory characterization
 was repeated, and no budget changed. Existing local #1/#16 verification changes are preserved outside this patch.
+
+## PR #41 — local high-review corrections (three findings)
+
+The follow-up to `64fd1ee` reserves identifiable real Nodes before validating expansion size, duplicate keys, cycles
+and depth. Invalid expansions suppress physical aliases of those claims and retain them through observed recovery or
+actual release/disposal. Ancestors are never claimed to suppress an invalid cycle. Both initial traversal orders and
+already-published aliases remain protected. Descriptor reads and retained claims are bounded to 10,000 per session;
+if an application returns more, the uninspected tail could contain arbitrary physical aliases, so the published model
+becomes inert until that session recovers or disposes. Existing observations remain for event-driven recovery; no
+tail is traversed/retained and no periodic work is scheduled. Builtin collection overflow retains its existing local
+failure behavior; this conservative whole-model quarantine applies to a custom session violating the hard bound.
+
+Bulk selection now checks declared real-node claims that were filtered from the published children. Exclusion,
+password ancestry or source-window policy deny both SelectAll and ClearSelection before the callback, including
+observer-backed direct execution. Published-child state/policy checks remain in force. The 64-edge semantic depth
+budget now includes real and logical edges, while ordinary physical edges retain their prior traversal contract.
+No public adapter API, action coordinator or native ownership mechanism changed.
+
+Actual final checks:
+
+- `./gradlew test --tests '*SemanticObserverTest' --tests '*SceneObserverTest' --tests '*ActionExecutorTest' --tests '*SelectionProtocolTest' --no-daemon` — **Passed**, 96 focused FX/protocol tests. The final full check also includes the subsequently added queued filtered-child regression and final descriptor-count caching/internal visibility cleanup.
+- `./gradlew check :examples:fx-lab:installDist generatePomFileForMavenJavaPublication --no-daemon` — **Passed**, 263 Java/native tests, zero failures/errors/skips. The invalid-signal native failure-path test emits its expected fixed GLib diagnostic. Actual suite counts and regression names are retained in `review-local-high/java-check.json`.
+- `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **Passed**, 219 tests, one existing conditional skip.
+- `python3 examples/fx-lab/scripts/semantics_qa.py examples/fx-lab/build/install/fx-lab/bin/fx-lab /tmp/sc08-local-review-final-qa` — **Passed**, all 22 existing independent libatspi scenarios on Fedora 44 / GNOME / Wayland, libatspi 2.60.7. Two Unicode caret events were received; previous privacy, selection, identity, menu and collision cases remain enabled.
+- `python3 docs/verification/data/issue-8/review-local-high/run_probe.py examples/fx-lab/build/install/fx-lab/lib /tmp/sc08-local-review-probe` — **Passed**, five assertions against the installed JARs: no aliases for collection overflow or duplicate descriptors, excluded ToggleButton unchanged by SelectAll and ClearSelection, and real semantic chains limited to 64 active levels. Source, runner and actual output are retained in `review-local-high/`.
+
+The FX regressions cover 12 combinations of failure mode (limit/duplicate/cycle), physical traversal order and
+initial/live invalid descriptors. They assert secret name/text/ID absence, retirement without a secret TextDeleted
+event, no physical alias/geometry, sensitivity transitions, valid recovery, reference-preserving actual release,
+consistent parents and no retained extra subscriptions or idle projections after recovery. The hard-tail case uses
+an AbstractList that fails the test if descriptor index 10,000 is read. It verifies whole-model inertness, denied
+generic actions/writes without effects, recovery and owner disposal, context cleanup and no idle publications.
+
+Bulk regressions cover direct-node exclusion, physical-ancestor exclusion, source-window exclusion and password
+ancestry. Commands captured while eligible are denied after synchronization, with unchanged real CheckBox state and
+zero callbacks; explicit reinclusion restores both operations. The private-bus regression removes a child from the
+snapshot while leaving its container eligible, then asserts AccessDenied for queued SelectAll/ClearSelection, no
+effect and balanced native invocation/export/introspection cleanup. Real-only and mixed real/logical depth tests
+cover exactly 64 edges, overflow, recovery, tree consistency, preserved root references and physical-listener disposal.
+
+`review-local-high/environment.json` pins base commit `64fd1ee`, all final main/test/probe source hashes and installed
+JAR hashes. Desktop QA and the standalone FX probe ran sequentially after JavaFX test fixtures terminated. Historical
+SC-01 evidence remains qualified only for its recorded revisions; no latency/allocation budget, complete quick/full
+matrix or pending memory characterization was changed or repeated. Local #1/#16 verification changes remain excluded.
