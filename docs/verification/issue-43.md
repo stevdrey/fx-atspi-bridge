@@ -12,7 +12,7 @@ JavaFX 27 as declared by Gradle. Commands below run from the issue worktree.
 
 | Command / check | Actual outcome | What it establishes / limitation |
 |---|---|---|
-| `node --test .agents/scripts/pr-size-preflight.test.mjs` | Passed: 26 tests, zero failures/skips | 0/30/31/40/41 locally and in the actual embedded CI code; aggregate Git states, renames, ignored/unusual names, explicit bases, malformed payloads, ordinary/publication commands, directory overrides, fixture/summary acceptance and independent evidence rejection |
+| `node --test .agents/scripts/pr-size-preflight.test.mjs` | Passed: 27 tests, zero failures/skips | 0/30/31/40/41 locally and in the actual embedded CI code; aggregate Git states, renames, ignored/unusual names, explicit bases, malformed payloads, ordinary/publication commands, directory overrides, fixture/summary acceptance and independent evidence rejection |
 | `./gradlew check generatePomFileForMavenJavaPublication --no-daemon` | Passed: 272 tests, zero failures/errors/skips; example compilation and POM generation passed | Existing Java/native regressions; does not claim supported Fedora/GNOME/Wayland desktop QA |
 | `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` | Passed: 223 tests, 1 skipped | Existing baseline tooling; one CI-only prerequisite assertion skipped because REQUIRE_ATSPI_TESTS was unset |
 | `git diff --check` | Passed | No whitespace errors |
@@ -38,7 +38,11 @@ inference; review ambiguities as documented. There is no performance-change clai
 
 ## Live CI and administrative follow-up
 
-PR execution will be recorded after publication. Enable **PR file count** as a
+[PR #45](https://github.com/stevdrey/fx-atspi-bridge/pull/45) ran
+[PR file count](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/39839738906)
+successfully on its initial publication: 16 files, no generated outputs. A follow-up
+push exercises the synchronize event. Build/analysis status is recorded in the PR;
+local boundary/API-stub tests are not live 40/41-file PR demonstrations. Enable **PR file count** as a
 required GitHub Actions status check for `main` after the workflow is available,
 alongside existing protections. No ruleset or required-check configuration was
 changed. Until configured, a failing workflow alone cannot block a merge. Live

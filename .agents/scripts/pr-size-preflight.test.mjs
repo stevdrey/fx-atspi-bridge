@@ -264,3 +264,9 @@ test('a generated staged output cannot be hidden by restoring the worktree', t =
   put(cwd, file); git(cwd, 'add', '.'); unlinkSync(join(cwd, file));
   assert.equal(check(cwd).status, 2);
 });
+
+test('ordinary multiline scripts and heredocs do not undergo shell or Git validation', t => {
+  const cwd = repository(t); git(cwd, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const cmd = "python3 - <<'PY'\nprint(\"it's a test\")\nPY";
+  const r = hook(cwd, cmd); assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout + r.stderr, '');
+});

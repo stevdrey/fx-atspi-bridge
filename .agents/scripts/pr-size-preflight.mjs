@@ -27,6 +27,8 @@ function shellWords(command) {
   flush(); return segments.filter(s => s.length);
 }
 function publicationTargets(command, cwd, depth = 0) {
+  // Avoid parsing arbitrary test scripts/heredocs unless publication is even plausible.
+  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\bpr\s+create)\b/.test(command)) return new Set();
   if (depth > 3) throw new Error('Shell wrapper nesting exceeds preflight limit');
   const targets = new Set();
   let uncertainCwd = false;
