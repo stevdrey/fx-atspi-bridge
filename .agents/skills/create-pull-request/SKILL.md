@@ -78,13 +78,14 @@ Closes #<primary-issue-number>
 
 ## Publication checklist
 
-1. Confirm title begins with exactly `[Issue-<primary-number>]`.
-2. Confirm all six required headings appear in order.
-3. Confirm implementation claims match the diff and related documentation.
-4. Confirm verification claims match executed commands / observed CI, explicitly noting limitations.
-5. Confirm the Issue link and closing keywords have the intended effect.
-6. Confirm risks, migrations, and unresolved blockers are visible instead of buried.
-7. Create or update the PR only after these checks; preserve valid prior discussion when updating a PR.
-8. After publishing, report the PR URL and any important verification limitations.
+1. Run `node .agents/scripts/pr-size-preflight.mjs` before each push or PR creation/update (use the actual parent base for stacked PRs). Enforce 40 files per entire PR and reject generated test/QA/benchmark artifacts at any count; see `docs/verification/pr-size-guard.md`.
+2. Confirm title begins with exactly `[Issue-<primary-number>]`.
+3. Confirm all six required headings appear in order.
+4. Confirm implementation claims match the diff and related documentation.
+5. Confirm verification claims match executed commands / observed CI, explicitly noting limitations.
+6. Confirm the Issue link and closing keywords have the intended effect.
+7. Confirm risks, migrations, and unresolved blockers are visible instead of buried.
+8. Create or update the PR only after these checks; preserve valid prior discussion when updating a PR.
+9. After publishing, report the PR URL and any important verification limitations.
 
 Never modify unrelated PRs or fabricate Issue identifiers, test execution, approvals, or rollout assurances.

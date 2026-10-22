@@ -317,3 +317,11 @@ The project's own code and example are distributed under the [Apache License 2.0
 ## Product development
 
 See [docs](docs/README.md), the [roadmap](docs/wiki/Roadmap.md), and [agent guidance](AGENTS.md). The product is an accessibility bridge only: no MCP server, tools or client are planned in this repository. Geometry and richer control support remain roadmap items.
+
+## Contributing
+
+Keep each entire PR at **40 changed files or fewer** (31–40 warns), including all
+commits and updates. Run `node .agents/scripts/pr-size-preflight.mjs` before
+publishing (Node.js >=22 and Git). Generated test/QA/benchmark outputs are prohibited
+at any count; preserve tests and small authored fixtures and report concise results.
+See the [publication policy and required-check setup](docs/verification/pr-size-guard.md).
