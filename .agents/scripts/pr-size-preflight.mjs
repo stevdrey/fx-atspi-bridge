@@ -28,13 +28,14 @@ function shellWords(command) {
 }
 function publicationTargets(command, cwd, depth = 0) {
   // Avoid parsing arbitrary test scripts/heredocs unless publication is even plausible.
-  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\bpr\s+create)\b/.test(command)) return new Set();
+  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\bpr\s+create)\b/.test(command)) return [];
   if (depth > 3) throw new Error('Shell wrapper nesting exceeds preflight limit');
-  const targets = new Set();
+  const targets = [];
   let uncertainCwd = false;
   const addTarget = target => {
     if (uncertainCwd) throw new Error('Dynamic publication directory requires manual preflight');
-    targets.add(target);
+    if (targets.length >= 8) throw new Error('At most eight publication commands may be inspected');
+    targets.push(target);
   };
   const staticPath = value => {
     if (!value || /[$`~*?{}<>]/.test(value)) throw new Error('Dynamic publication directory requires manual preflight');
@@ -52,11 +53,11 @@ function publicationTargets(command, cwd, depth = 0) {
     }
     if (executable === 'git') {
       let i = 1;
-      const directories = [];
+      const directories = [], config = [];
       for (; i < words.length; i++) {
         if (words[i] === '-C' && words[i + 1]) directories.push(words[++i]);
         else if (words[i].startsWith('-C') && words[i].length > 2) directories.push(words[i].slice(2));
-        else if (words[i] === '-c' && words[i + 1]) i++;
+        else if (words[i] === '-c' && words[i + 1]) config.push('-c', words[++i]);
         else if (words[i].startsWith('--git-dir') || words[i].startsWith('--work-tree')) {
           if (words.includes('push')) throw new Error('Git directory override requires manual preflight');
           break;
@@ -66,22 +67,71 @@ function publicationTargets(command, cwd, depth = 0) {
       if (words[i] === 'push') {
         let target = cwd;
         for (const directory of directories) target = resolve(target, staticPath(directory));
-        addTarget(target);
+        addTarget({ cwd: target, kind: 'push', args: words.slice(i + 1), config });
       }
     } else if (executable === 'gh') {
       let i = 1;
       while (['-R', '--repo'].includes(words[i]) && words[i + 1]) i += 2;
-      if (words[i] === 'pr' && words[i + 1] === 'create') addTarget(cwd);
+      if (words[i] === 'pr' && words[i + 1] === 'create') addTarget({ cwd, kind: 'pr' });
     }
   }
   return targets;
 }
 const decoder = new TextDecoder('utf-8', { fatal: true });
-function git(cwd, ...args) {
-  const result = spawnSync('git', args, { cwd, encoding: 'buffer', timeout: 3000,
+const deadline = performance.now() + 20000;
+function remaining() {
+  const value = Math.floor(deadline - performance.now());
+  if (value <= 0) throw new Error('Aggregate inspection deadline exceeded');
+  return value;
+}
+function gitResult(cwd, args, allowed = [0]) {
+  const result = spawnSync('git', args, { cwd, encoding: 'buffer', timeout: Math.min(3000, remaining()),
     maxBuffer: 8 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
-  if (result.error || result.status !== 0) throw new Error(`git ${args[0]} failed`);
+  remaining();
+  if (result.error || !allowed.includes(result.status)) throw new Error(`git ${args[0]} failed`);
   return decoder.decode(result.stdout);
+}
+function git(cwd, ...args) { return gitResult(cwd, args); }
+function validatePush(target) {
+  const args = target.args, positionals = [];
+  let deletion = false, noFollowTags = false;
+  const flags = new Set(['-u', '--set-upstream', '-f', '--force', '--force-with-lease', '--force-if-includes',
+    '--atomic', '--no-verify', '--verify', '--dry-run', '-n', '--porcelain', '--quiet', '-q', '--verbose', '-v', '--progress', '--no-progress', '--signed', '--no-signed', '--no-thin', '--thin']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--no-follow-tags') noFollowTags = true;
+    else if (['--delete', '-d'].includes(arg)) deletion = true;
+    else if (arg === '--') { positionals.push(...args.slice(i + 1)); break; }
+    else if (['-o', '--push-option', '--receive-pack', '--exec'].includes(arg)) {
+      if (!args[++i]) throw new Error('Unverifiable push options');
+    } else if (/^--(?:force-with-lease|push-option|receive-pack|exec|signed)=/.test(arg) || flags.has(arg)) continue;
+    else if (arg.startsWith('-')) throw new Error('Push may publish other refs; switch to the target branch and push HEAD explicitly');
+    else positionals.push(arg);
+  }
+  const refs = positionals.slice(1);
+  const configured = gitResult(target.cwd, [...target.config, 'config', '--get-regexp',
+    '^(remote\\..*\\.(push|mirror)|push\\.(default|followTags))$'], [0, 1]);
+  for (const line of configured.split('\n').filter(Boolean)) {
+    const separator = line.search(/\s/), key = line.slice(0, separator).toLowerCase(), value = line.slice(separator).trim();
+    if (key.endsWith('.mirror') && value !== 'false') throw new Error('Push may publish other refs; disable mirror publication');
+    if (key === 'push.followtags' && value !== 'false' && !noFollowTags) throw new Error('Push may publish other refs; use --no-follow-tags');
+    if (!refs.length && ((key.startsWith('remote.') && key.endsWith('.push')) ||
+        (key === 'push.default' && !['simple', 'current', 'upstream', 'nothing'].includes(value)))) {
+      throw new Error('Push may publish other refs; push HEAD explicitly without matching or configured refspecs');
+    }
+  }
+  if (deletion || (refs.length && refs.every(ref => !ref.replace(/^\+/, '').split(':')[0]))) return false;
+  if (refs.length) {
+    const branch = gitResult(target.cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD'], [0, 1]).trim();
+    for (const ref of refs) {
+      const source = ref.replace(/^\+/, '').split(':')[0];
+      if (!source) continue;
+      if (!['HEAD', branch, `refs/heads/${branch}`].includes(source) || /[*?]/.test(ref)) {
+        throw new Error('Push source is not checked-out HEAD; switch to that branch before publication');
+      }
+    }
+  }
+  return true;
 }
 function nullFields(value) {
   if (!value) return [];
@@ -119,9 +169,39 @@ function changedFiles(cwd, baseRef) {
   const final = diffEntries(git(root, 'diff', ...options, base, '--'));
   const deleted = new Set(final.filter(entry => entry.removed).map(entry => entry.filename));
   for (const entry of groups.flat()) {
-    if (!entry.removed && !deleted.has(entry.filename) && policy.evidenceReason(entry.filename)) prohibited.add(entry.filename);
+    if (!entry.removed && !deleted.has(entry.filename) && policy.evidenceReason(entry.filename)) prohibited.add(JSON.stringify(entry.filename));
   }
+  for (const entry of historyEvidence(root, base)) prohibited.add(entry);
   return { count: paths.size, prohibited };
+}
+function historyEvidence(root, base) {
+  const commits = git(root, 'rev-list', '--reverse', `--max-count=${policy.MAX_HISTORY_COMMITS + 1}`, `${base}..HEAD`).trim().split('\n').filter(Boolean);
+  if (commits.length > policy.MAX_HISTORY_COMMITS) throw new Error('Feature history exceeds inspection capacity');
+  const result = new Set();
+  let records = 0;
+  const blob = (sha, file) => {
+    const value = git(root, 'ls-tree', '-z', sha, '--', file);
+    return value ? value.slice(0, value.indexOf('\t')).split(' ')[2] : null;
+  };
+  for (const commit of commits) {
+    if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error('Invalid commit metadata');
+    const parents = git(root, 'show', '-s', '--format=%P', commit, '--').trim().split(' ').filter(Boolean);
+    const options = ['--name-status', '-z', '--find-renames'];
+    const entries = parents.length ? diffEntries(git(root, 'diff', ...options, parents[0], commit, '--')) :
+      diffEntries(git(root, 'diff-tree', '--root', '--no-commit-id', '-r', ...options, commit, '--'));
+    records += entries.length;
+    if (records > policy.MAX_HISTORY_FILES || entries.length >= 3000) throw new Error('Feature history exceeds inspection capacity');
+    for (const entry of entries) {
+      if (entry.removed || !policy.evidenceReason(entry.filename)) continue;
+      if (parents.length > 1) {
+        const value = blob(commit, entry.filename);
+        if (!value) throw new Error('Missing result blob');
+        if (parents.slice(1).some(parent => blob(parent, entry.filename) === value)) continue;
+      }
+      result.add(`${JSON.stringify(entry.filename)} at ${commit.slice(0, 12)}`);
+    }
+  }
+  return result;
 }
 async function hookInput() {
   const chunks = [];
@@ -153,6 +233,7 @@ function options(args) {
 async function main() {
   const { hook, base } = options(process.argv.slice(2));
   let cwd = process.cwd();
+  const results = [];
   if (hook) {
     const payload = await hookInput();
     cwd = payload.cwd;
@@ -162,32 +243,49 @@ async function main() {
       cwd = resolve(cwd, inputCwd);
     }
     const targets = publicationTargets(payload.tool_input.command, cwd);
-    for (const target of targets) inspect(realpathSync(target), base, true);
-    return;
+    const inspected = new Set();
+    for (const target of targets) {
+      remaining();
+      target.cwd = realpathSync(target.cwd);
+      if (target.kind === 'push' && !validatePush(target)) continue;
+      if (!inspected.has(target.cwd)) {
+        results.push(inspect(target.cwd, base)); inspected.add(target.cwd);
+      }
+    }
+  } else results.push(inspect(realpathSync(cwd), base));
+  remaining();
+  const warnings = [];
+  for (const result of results) {
+    if (result.prohibited.size) {
+      console.error('BLOCKED: Generated evidence is prohibited, including intermediate commits: ' +
+        [...result.prohibited].slice(0, 10).join(', ') +
+        '. Remove captures from feature history; deleting later is insufficient. Keep an authored summary.');
+      process.exitCode = 2;
+    }
+    if (result.level === 'BLOCKED') {
+      console.error(`BLOCKED: ${result.message} Split into independently reviewable PRs; preserve required tests, security controls and documentation.`);
+      process.exitCode = 2;
+    } else if (result.level === 'WARNING') {
+      const warning = `WARNING: ${result.message} Review scope before adding more changes.`;
+      console.error(warning); warnings.push(warning);
+    }
   }
-  inspect(realpathSync(cwd), base, false);
+  if (hook && !process.exitCode && warnings.length) console.log(JSON.stringify({ systemMessage: warnings.join('\n') }));
+  if (!hook && !process.exitCode && !warnings.length) console.log(`PASS: ${results[0].message}`);
 }
-function inspect(cwd, base, hook) {
+function inspect(cwd, base) {
   const { count, prohibited } = changedFiles(cwd, base);
   const level = policy.countLevel(count);
   const message = `PR preflight: ${count}/${policy.MAX_FILES} changed files relative to ${JSON.stringify(base)}.`;
-  if (prohibited.size) {
-    console.error('BLOCKED: Generated test/QA/benchmark outputs are prohibited at any file count: ' +
-      [...prohibited].slice(0, 10).map(p => JSON.stringify(p)).join(', ') +
-      '. Keep outputs outside Git; retain an authored summary. See docs/verification/pr-size-guard.md.');
-    process.exitCode = 2;
-  }
-  if (level === 'BLOCKED') {
-    console.error(`BLOCKED: ${message} Split into independently reviewable PRs; preserve required tests, security controls and documentation.`);
-    process.exitCode = 2;
-  } else if (level === 'WARNING') {
-    console.error(`WARNING: ${message} Review scope before adding more changes.`);
-    if (hook) console.log(JSON.stringify({ systemMessage: `WARNING: ${message}` }));
-  } else if (!hook && !prohibited.size) console.log(`PASS: ${message}`);
+  return { level, message, prohibited };
 }
+const timer = setTimeout(() => {
+  console.error('BLOCKED: Aggregate inspection deadline exceeded before the provider timeout.');
+  process.exit(2);
+}, Math.max(1, deadline - performance.now()));
 try { await main(); }
 catch (error) {
-  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight)/.test(error.message);
-  console.error(`BLOCKED: PR preflight could not verify scope: ${safe ? error.message : 'Git, path or input validation failed'}. Refresh the intended base (git fetch origin main), check --base/PR_PREFLIGHT_BASE and retry.`);
+  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight|At most eight publication commands may be inspected|Aggregate inspection deadline exceeded|Push |Unverifiable push options|Feature history exceeds inspection capacity|Invalid commit metadata|Missing result blob)/.test(error.message);
+  console.error(`BLOCKED: PR preflight could not verify scope: ${safe ? error.message : 'Git, path or input validation failed'}. Check the source ref and base, refresh origin/main and retry.`);
   process.exitCode = 2;
-}
+} finally { clearTimeout(timer); }

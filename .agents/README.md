@@ -29,7 +29,9 @@ manual preflight. For a legitimate stacked PR, use `--base origin/<parent>` or
 `PR_PREFLIGHT_BASE`, matching its actual GitHub base, never to hide scope.
 
 Commit authored source/tests, small intentional reproducibility fixtures, and
-safe human-readable verification summaries. Generated snapshots, screenshots,
+safe human-readable verification summaries. Generated captures are prohibited throughout feature history, including additions
+deleted by a later commit. Only checked-out HEAD/branch pushes are supported; switch
+to the intended source branch before publishing. Generated snapshots, screenshots,
 raw benchmark/QA results, logs, dumps, reports and evidence-only bundles are
 **prohibited**, including in separate evidence PRs, regardless of count. No raw
 capture exception is provided by #43. If necessary for an investigation, retain

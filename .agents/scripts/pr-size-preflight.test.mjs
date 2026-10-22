@@ -5,14 +5,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import policy from './pr-policy.cjs';
+import { runCI } from './pr-policy-fixtures.mjs';
 
 const script = fileURLToPath(new URL('./pr-size-preflight.mjs', import.meta.url));
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const workflow = readFileSync(join(root, '.github/workflows/pr-size-guard.yml'), 'utf8');
-const ciScript = workflow.split('          script: |\n')[1].split('\n').map(l => l.replace(/^ {12}/, '')).join('\n');
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ci = new AsyncFunction('github', 'context', 'core', ciScript);
 function command(cmd, args, cwd, input, env = {}) {
   return spawnSync(cmd, args, { cwd, encoding: 'utf8', input, timeout: 30000,
     env: { ...process.env, PR_PREFLIGHT_BASE: '', ...env } });
@@ -49,36 +45,6 @@ function payload(cwd, shellCommand, extra = {}) {
 function hook(cwd, shellCommand, extra = {}) {
   return command(process.execPath, [script, '--hook'], cwd, JSON.stringify(payload(cwd, shellCommand, extra)));
 }
-async function runCI(count, files = Array.from({ length: count ?? 0 }, (_, i) => ({ filename: `src/file-${i}.java`, status: 'modified' })), options = {}) {
-  const events = { failures: [], warnings: [], info: [], tables: [], pages: [] };
-  let calls = 0;
-  const github = { rest: { pulls: {
-    async get() {
-      calls++;
-      if (options.apiFailure) throw new Error('private server detail');
-      return { data: { changed_files: count, head: { sha: calls > 1 && options.stale ? 'other' : 'head' }, base: { sha: 'base' } } };
-    },
-    async listFiles({ page, per_page }) {
-      events.pages.push(page);
-      if (options.listFailure) throw new Error('private list error');
-      return { data: files.slice((page - 1) * per_page, page * per_page) };
-    },
-  } } };
-  const summary = { addHeading() { return this; }, addTable(table) { events.tables.push(table); return this; }, async write() {} };
-  const core = { summary, setFailed: m => events.failures.push(m), warning: m => events.warnings.push(m), info: m => events.info.push(m) };
-  await ci(github, { repo: { owner: 'example', repo: 'project' }, issue: { number: 43 } }, core);
-  return events;
-}
-
-test('CI executable is generated exactly from canonical policy and never checks out code', () => {
-  assert.equal(workflow, policy.renderWorkflow());
-  assert.match(workflow, /branches: \[main\]/);
-  assert.match(workflow, /types: \[opened, reopened, synchronize, ready_for_review, edited\]/);
-  assert.match(workflow, /permissions:\n  pull-requests: read\n/);
-  assert.match(workflow, /name: PR file count/);
-  assert.doesNotMatch(workflow, /checkout|pull_request_target|contents: write|secrets\./);
-  assert.match(workflow, /actions\/github-script@[0-9a-f]{40}/);
-});
 for (const count of [0, 30, 31, 40, 41]) {
   test(`local and actual CI boundaries at ${count}`, async t => {
     const cwd = repository(t); createFiles(cwd, count);
@@ -212,23 +178,6 @@ test('artifact diagnostics escape control characters without reading contents', 
   const r = check(cwd); assert.equal(r.status, 2);
   assert.match(r.stderr, /x\\n::error/); assert.doesNotMatch(r.stderr, /\n::error|SECRET-CONTENT/);
 });
-test('CI invalid counts, API failures, incomplete/duplicate metadata and stale revisions fail closed', async () => {
-  for (const count of [undefined, null, -1, 1.5, '30', Number.MAX_SAFE_INTEGER + 1]) {
-    assert.equal((await runCI(count, [])).failures.length, 1);
-  }
-  for (const options of [{ apiFailure: true }, { listFailure: true }, { stale: true }]) {
-    const e = await runCI(1, undefined, options); assert.equal(e.failures.length, 1);
-    assert.doesNotMatch(e.failures[0], /private/);
-  }
-  assert.equal((await runCI(2, [{ filename: 'one', status: 'added' }])).failures.length, 1);
-  assert.equal((await runCI(2, Array(2).fill({ filename: 'same', status: 'added' }))).failures.length, 1);
-  assert.equal((await runCI(1, [{ filename: 'bad', status: 'unknown' }])).failures.length, 1);
-});
-test('CI paginates all paths and still detects evidence after first page', async () => {
-  const files = Array.from({ length: 101 }, (_, i) => ({ filename: `src/${i}.java`, status: 'modified' }));
-  files[100] = { filename: 'qa-results/run.json', status: 'added' };
-  const e = await runCI(101, files); assert.deepEqual(e.pages, [1, 2]); assert.equal(e.failures.length, 2);
-});
 test('both provider configs execute the canonical hook with documented Bash input', t => {
   const cwd = repository(t);
   // Exercise config commands from a subdirectory in this actual worktree, no publication occurs.
@@ -269,4 +218,94 @@ test('ordinary multiline scripts and heredocs do not undergo shell or Git valida
   const cwd = repository(t); git(cwd, 'update-ref', '-d', 'refs/remotes/origin/main');
   const cmd = "python3 - <<'PY'\nprint(\"it's a test\")\nPY";
   const r = hook(cwd, cmd); assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout + r.stderr, '');
+});
+
+test('local history rejects generated evidence introduced and removed before HEAD', t => {
+  const cwd = repository(t), file = 'qa-results/transient.json';
+  put(cwd, file); git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'capture');
+  unlinkSync(join(cwd, file)); git(cwd, 'add', '-A'); git(cwd, 'commit', '-qm', 'delete capture');
+  const result = check(cwd); assert.equal(result.status, 2); assert.match(result.stderr, /intermediate commits/);
+  assert.doesNotMatch(result.stdout, /PASS/);
+});
+test('authored fixtures can be added and removed across intermediate commits', t => {
+  const cwd = repository(t), file = 'src/test/resources/fixtures/snapshot.json';
+  put(cwd, file); git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'fixture');
+  unlinkSync(join(cwd, file)); git(cwd, 'add', '-A'); git(cwd, 'commit', '-qm', 'remove fixture');
+  assert.match(check(cwd).stdout, /0\/40/);
+});
+test('merge inheritance from the updated integration base is not new evidence', t => {
+  const cwd = repository(t); git(cwd, 'branch', 'integration');
+  put(cwd, 'feature.txt'); git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'feature');
+  git(cwd, 'switch', '-q', 'integration'); put(cwd, 'qa-results/old.json');
+  git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'historical integration capture');
+  git(cwd, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(cwd, 'switch', '-q', 'feature/preflight'); git(cwd, 'merge', '--no-ff', '-qm', 'merge integration', 'integration');
+  assert.match(check(cwd).stdout, /1\/40/);
+});
+test('a push of another branch, matching refs, wildcards or tags fails closed', t => {
+  const cwd = repository(t); git(cwd, 'switch', '-qc', 'huge'); createFiles(cwd, 41);
+  git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'huge'); git(cwd, 'switch', '-q', 'feature/preflight');
+  for (const cmd of ['git push origin huge', 'git push origin HEAD huge', 'git push --all origin',
+    'git push --tags origin', 'git push --mirror origin', 'git push origin refs/heads/*:refs/heads/*']) {
+    const r = hook(cwd, cmd); assert.equal(r.status, 2, cmd); assert.match(r.stderr, /BLOCKED/);
+  }
+  assert.equal(hook(cwd, 'git push origin HEAD:refs/heads/feature').status, 0);
+  assert.equal(hook(cwd, 'git push origin feature/preflight').status, 0);
+  git(cwd, 'config', 'push.default', 'matching');
+  assert.equal(hook(cwd, 'git push origin').status, 2);
+  assert.equal(hook(cwd, 'git push origin HEAD').status, 0);
+  git(cwd, 'config', '--unset', 'push.default'); git(cwd, 'config', 'remote.origin.push', 'huge');
+  assert.equal(hook(cwd, 'git push origin').status, 2);
+  assert.equal(hook(cwd, 'git push origin HEAD').status, 0);
+  git(cwd, 'checkout', '-q', '--detach'); assert.equal(hook(cwd, 'git push origin HEAD').status, 0);
+});
+test('all warning targets produce one valid JSON response', t => {
+  const launch = repository(t), a = repository(t), b = repository(t);
+  createFiles(a, 31); createFiles(b, 40);
+  const r = hook(launch, `git -C "${a}" push origin HEAD; git -C "${b}" push origin HEAD`);
+  assert.equal(r.status, 0, r.stderr);
+  const response = JSON.parse(r.stdout); assert.match(response.systemMessage, /31\/40/); assert.match(response.systemMessage, /40\/40/);
+  assert.equal(r.stdout.trim().split('\n').length, 1); assert.doesNotMatch(r.stdout, /permissionDecision/);
+});
+test('publication target capacity is denied before Git inspection', t => {
+  const cwd = repository(t); git(cwd, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const result = hook(cwd, Array(9).fill('git push origin HEAD').join('; '));
+  assert.equal(result.status, 2); assert.match(result.stderr, /At most eight publication commands/);
+});
+test('stalled input receives an explicit denial from a timer below both host timeouts', t => {
+  const cwd = repository(t);
+  const hostTimeout = Math.min(...['.claude/settings.json', '.codex/hooks.json'].map(file =>
+    JSON.parse(readFileSync(join(root, file), 'utf8')).hooks.PreToolUse[0].hooks[0].timeout * 1000));
+  // Exercise the production timer callback with stdin held open, accelerating only
+  // timer scheduling in the child so CI load cannot turn this into a wall-clock race.
+  const childCode = `const original=setTimeout; globalThis.setTimeout=(callback,delay,...args)=>{if(delay>20000||delay>=${hostTimeout})throw new Error('deadline exceeds host timeout');return original(callback,Math.min(delay,100),...args)}; process.argv=[process.execPath,${JSON.stringify(script)},'--hook']; import(${JSON.stringify(new URL('./pr-size-preflight.mjs', import.meta.url).href)});`;
+  const runner = `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{cwd:${JSON.stringify(cwd)},stdio:['pipe','pipe','pipe']}); child.stdin.write('{'); child.stdout.pipe(process.stdout); child.stderr.pipe(process.stderr); child.on('exit',code=>process.exit(code));`;
+  const result = command(process.execPath, ['-e', runner], cwd);
+  assert.equal(result.status, 2, result.stderr); assert.match(result.stderr, /deadline exceeded/);
+  assert.doesNotMatch(result.stdout, /PASS/);
+});
+
+test('slow successful operations share a deadline across repositories', t => {
+  const cwd = repository(t), a = repository(t), b = repository(t);
+  const shellCommand = `git -C "${a}" push origin HEAD; git -C "${b}" push origin HEAD`;
+  // Advance only the child process's monotonic clock at each budget check. Real Git
+  // commands still execute, but two individually small inspections exhaust one budget.
+  const runner = `let elapsed=0; Object.defineProperty(globalThis,'performance',{value:{now:()=>elapsed+=500}}); process.argv=[process.execPath,${JSON.stringify(script)},'--hook']; import(${JSON.stringify(new URL('./pr-size-preflight.mjs', import.meta.url).href)});`;
+  const result = command(process.execPath, ['-e', runner], cwd, JSON.stringify(payload(cwd, shellCommand)));
+  assert.equal(result.status, 2, result.stderr); assert.match(result.stderr, /Aggregate inspection deadline exceeded/);
+  assert.doesNotMatch(result.stdout, /PASS/);
+});
+
+test('artifact path diagnostics remain escaped when a path begins with a quote', t => {
+  const cwd = repository(t); put(cwd, '"prefix/qa-results/x\n::error::injected.json');
+  const result = check(cwd); assert.equal(result.status, 2);
+  assert.match(result.stderr, /x\\n::error/); assert.doesNotMatch(result.stderr, /\n::error/);
+});
+test('deletions do not inspect an unrelated HEAD but follow-tag publication stays blocked', t => {
+  const cwd = repository(t); createFiles(cwd, 41);
+  assert.equal(hook(cwd, 'git push --delete origin old-branch').status, 0);
+  assert.equal(hook(cwd, 'git push origin :old-branch').status, 0);
+  git(cwd, 'config', 'push.followTags', 'true');
+  assert.equal(hook(cwd, 'git push --delete origin old-branch').status, 2);
+  assert.equal(hook(cwd, 'git push --no-follow-tags --delete origin old-branch').status, 0);
 });

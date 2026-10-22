@@ -62,3 +62,29 @@ Document required `PR file count` status-check setup on main as a separate admin
 step. Preserve all intermediate build/security requirements when splitting work.
 Rollback removes tooling only; no runtime migration. Do not archive this worktree
 while the implementation remains under review.
+
+## Review corrections and trusted bootstrap
+
+Address the six Codex comments on `f6f919b`: scan all feature commits for generated
+outputs independently of net file count; only publish the checked-out source ref;
+share a 20-second inspection budget across at most eight publication commands;
+serialize one hook response; correct the ruleset record; add a metadata-only
+`pull_request_target` companion named `Trusted PR file count`.
+
+The user selected [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46). Install both generated CI workflows and
+canonical metadata-policy tests on main first. Preserve the required `PR file count`
+check throughout. Once the base workflow is installed and observed, add the uniquely
+named trusted companion to ruleset 25669164 without removing existing checks or
+adding bypass actors. Until that merge/activation, keep the trusted-base review
+thread open and mark the dependency explicitly; do not auto-merge either PR.
+
+History inspection is bounded to 200 commits, 10,000 changed-file records and complete
+per-commit pagination (less than the API's 3,000-file truncation boundary). Unknown or
+oversized history fails closed. CI gets read-only contents permission for commit/tree
+metadata, a 120-second request budget and at most 350 requests. No head code, patches,
+file contents, caches or untrusted artifacts are executed or logged. Merge inheritance
+of an unchanged blob from either parent is not a new generated result; merge-created
+or modified captures remain prohibited. Local limits match CI and use NUL-safe Git
+metadata. Existing artifacts inherited unchanged from the integration base remain
+out of scope, while newly introduced-then-deleted artifacts require removing them
+from the feature history, not just the final tree.

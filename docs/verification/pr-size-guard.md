@@ -32,8 +32,10 @@ retention/cleanup per #39. See [summary format](README.md#result-summaries-and-p
 Both guards reject output directories named `test-results`, `test-reports`,
 `junit-reports`, `benchmark-results`, `qa-results`, `raw-evidence` or
 `evidence-bundle(s)`; raw file extensions and manifest/receipt names under `docs/verification/`
-and root `snapshots`/`screenshots`/`qa-output`/`benchmark-output` capture directories; and distinctive root/runtime report names. Removed outputs
-still count but are allowed to be cleaned up. Authored `.java`/`.py` harnesses,
+and root `snapshots`/`screenshots`/`qa-output`/`benchmark-output` capture directories; and distinctive root/runtime report names. Removed baseline outputs
+still count and can be cleaned up, but captures introduced in any feature commit
+are rejected even if subsequently removed. Remove them from the feature history
+before publication; do not assume a later deletion or eventual squash makes them safe. Authored `.java`/`.py` harnesses,
 `src/test/resources/fixtures/snapshot.json`, parser XML fixtures, source assets and
 `docs/verification/issue-N.md` summaries are supported. No broad ignore patterns or
 fixture-directory exemption hides changes. Historical unchanged outputs are not scanned.
@@ -76,6 +78,8 @@ Use the same actual GitHub base. For automatic hooks in a stacked session, set
 again when retargeting; no implicit network fetch occurs. Missing/unrelated bases,
 Git failures/timeouts, invalid options/encoding and malformed hook input exit 2,
 never PASS. Git calls are bounded to 3 seconds and 8 MiB each, hook JSON to 1 MiB;
+all input and inspections share a 20-second deadline and at most eight publication
+commands, so the script deliberately denies before the host timeout;
 provider hook timeout is 30 seconds. Diagnostics show escaped paths, never contents
 or raw Git/API errors.
 
@@ -113,22 +117,41 @@ heredocs, complex control flow, remote pushes and API tools may evade recognitio
 produce conservative errors. For those, run the manual preflight in the exact target
 worktree, then publish there. Disabled/unavailable/untrusted hooks, changed local
 scripts, direct API publication and differing local counts cannot bypass required CI.
-Warnings return a visible message without granting permissions. Ordinary commands
+Only HEAD or the checked-out branch may be a push source. Matching/configured
+implicit refspecs, other branches, wildcards, --all/--mirror/--tags and follow-tag
+publication are rejected; switch to the intended branch and push HEAD explicitly.
+Branch-deletion commands publish no source and do not require scope inspection.
+Warnings from all targets are emitted in one JSON response, without granting permissions. Ordinary commands
 have no Git scope checks. Hooks remain a usability preflight, **not a security boundary**.
 
 ## Authoritative CI and required-check setup
 
-`Pull Request Size Guard / PR file count` runs for PRs targeting `main`, including
-drafts/docs-only work: opened, reopened, synchronize, ready-for-review and edited.
-The job uses GitHub PR `changed_files` metadata, paginated file metadata and a second
-revision check; invalid/unavailable counts, incomplete lists and changes during
-inspection fail closed. API lists are limited to 3,000; larger PRs cannot pass.
-There is no checkout or PR source execution and the only token permission is
-`pull-requests: read`. Counts, thresholds and generated-output count appear in the
-job summary. To change policy, edit `.agents/scripts/pr-policy.cjs`, run
-`node .agents/scripts/pr-policy.cjs --write-workflow`, and run the focused tests.
-The workflow contains generated **executable source**, not generated test results;
-tests enforce exact parity with the canonical module.
+`Pull Request Size Guard / PR file count` provides PR-head feedback and preserves
+its existing required context. The companion `Trusted Pull Request Publication
+Guard / Trusted PR file count` uses **pull_request_target**, executing the protected
+base workflow's inline policy. Require the companion as well after bootstrap: a
+head-controlled workflow by itself is not an authoritative security boundary.
+Both run for main-targeting opened, reopened, synchronize, ready-for-review and
+edited events, including drafts and docs-only changes.
+
+The guard reads authoritative PR counts, paginated net file lists, all feature
+commits and per-commit file metadata. Count is still the net aggregate PR diff;
+intermediate file records are used only for the separate evidence prohibition.
+Parent tree/blob metadata distinguishes unchanged merge inheritance from new
+captures. API patch fields are never inspected, logged or persisted. Missing or
+incomplete metadata, changed revisions and exceeded inspection capacity fail closed:
+200 commits, 10,000 history-file records, fewer than the API's 3,000-file truncation
+boundary per commit, 350 requests and a 120-second request deadline. Requests have
+at most five seconds each. No checkout, PR-code execution, artifact/cache downloads,
+secret interpolation or write permissions are used. Token permissions are only
+`pull-requests: read` and `contents: read` (commit/tree metadata).
+
+Edit `.agents/scripts/pr-policy.cjs`, run
+`node .agents/scripts/pr-policy.cjs --write-workflow`, then run
+`node --test .agents/scripts/pr-*.test.mjs`. Both standalone workflows are generated
+executable source, not test results, and tests enforce exact parity. Their runtime
+policy comes from the base revision for the trusted companion; changing PR-head
+code cannot change that run's policy.
 
 **Separate repository-admin action:** a failed job alone does not prevent merging.
 After merging the workflow, let it run on a PR, then open **Settings → Rules →
@@ -138,5 +161,11 @@ existing checks. Require branches up to date if checking the latest base is need
 Keep existing protections; avoid routine bypass actors. Save and verify a 41-file
 PR is blocked, a 40-file PR warns/passes, and a small PR with generated results is
 blocked. If the check is absent, run a PR targeting main and refresh the selector.
-Rulesets are not installed by this workflow. Do not claim enforcement configured
-until an administrator verifies those settings. No admin change is bundled here.
+Rulesets are not installed by a workflow. Current state: ruleset 25669164 already
+requires PR file count (app 15368), has no bypass actors and applies only to main;
+its read-back is recorded in issue-43.md. The separate [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46)
+must be reviewed and merged first. Then observe its base-revision run on #45 and add
+**Trusted PR file count** from the same GitHub Actions app without removing the
+existing required check. Until this activation the trusted companion is not an
+enforced boundary. Do not disable the existing rule, add a bypass or auto-merge to
+bootstrap the workflow. Preserve both required contexts afterwards.
