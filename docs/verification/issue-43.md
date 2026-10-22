@@ -98,3 +98,25 @@ date. Manual preflight passed at 19/40 paths and `git diff --check` passed. This
 change affects only the local hook; both canonical CI policies and bootstrap #46
 are unchanged. The trusted companion is still not required and #46 remains open
 at this verification point; no rule or merge was performed as part of this fix.
+
+
+## Follow-up review — branch and repository context
+
+Both findings on `ce9165d` were reproduced using disposable repositories without
+executing a push. A small checkout allowed `git switch huge && git push origin HEAD`
+even though `huge` had 41 changed files. A small repository likewise allowed a push
+whose `GIT_DIR`/`GIT_WORK_TREE` selected a different 41-file repository.
+
+The local parser now denies publication after switch/checkout in the same payload,
+including supported wrappers, and denies repository-variable redirection. Regression
+checks preserve command-local/child-shell environment scope and distinguish persistent
+HEAD mutations from child exports. Errors show no variable values or private paths.
+Seven new test cases cover the reproductions, conservative file-only checkout,
+`git -C`, wrappers, multiple targets, ordinary commands and innocuous variables.
+
+Verification: `node --test .agents/scripts/pr-*.test.mjs` passed all 68 tests with
+zero failures/skips. `java -version` confirmed Zulu JDK 27; the wrapper check/POM
+command passed with six tasks up to date. Manual preflight passed at 19/40 files,
+and `git diff --check` passed. No generated run outputs were retained in Git.
+Work remains in PR #45; workflows, rules and bootstrap #46 are unchanged by this
+follow-up.

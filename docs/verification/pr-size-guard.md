@@ -121,6 +121,16 @@ Only HEAD or the checked-out branch may be a push source. Matching/configured
 implicit refspecs, other branches, wildcards, --all/--mirror/--tags and follow-tag
 publication are rejected; switch to the intended branch and push HEAD explicitly.
 Branch-deletion commands publish no source and do not require scope inspection.
+A preceding `git switch` or `git checkout` in the same command makes later
+publication unverifiable, including transitions inside supported child shells and
+file-only checkout. Execute the transition in a separate tool invocation, then
+publish from the selected branch. The hook does not execute or simulate transitions.
+`GIT_DIR` and `GIT_WORK_TREE` assignments affecting publication are also denied,
+including direct prefixes, `env`, standalone assignments and `export`. Use the
+actual target working directory or `git -C` instead. Unknown `env` options require
+manual preflight. Diagnostics omit variable values. Innocuous assignments remain
+supported; command-scoped variables and child exports do not taint later parent
+commands, while child-shell Git HEAD changes remain visible to the guard.
 For `gh pr create` and its `pr new` alias, explicit `--head`/`-H` selection is denied,
 including equal/attached/clustered spellings, qualified heads and the current branch
 name. The selected *remote* tip cannot be proven to match inspected local HEAD

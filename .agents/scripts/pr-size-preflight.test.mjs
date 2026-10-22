@@ -391,3 +391,106 @@ test('quoted gh subcommands receive the same source validation', t => {
     const result = hook(cwd, cmd); assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Explicit gh head selection/);
   }
 });
+
+test('branch transitions before publication deny instead of inspecting the old HEAD', t => {
+  const cwd = repository(t);
+  git(cwd, 'switch', '-qc', 'huge'); createFiles(cwd, 41);
+  git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'huge'); git(cwd, 'switch', '-q', 'feature/preflight');
+  assert.match(check(cwd).stdout, /0\/40/);
+  for (const cmd of [
+    'git switch huge && git push origin HEAD',
+    'git checkout huge; git push origin HEAD',
+    `git -C "${cwd}" switch huge && git -C "${cwd}" push origin HEAD`,
+    'git -c advice.detachedHead=false checkout huge && gh pr create --fill',
+    'git checkout -- README.md && git push origin HEAD',
+  ]) {
+    const result = hook(cwd, cmd);
+    assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Branch change before publication/);
+    assert.equal(result.stdout, ''); assert.equal(git(cwd, 'branch', '--show-current'), 'feature/preflight');
+  }
+  // The supported alternative executes the transition separately, then inspects its actual HEAD.
+  git(cwd, 'switch', '-q', 'huge');
+  const selected = hook(cwd, 'git push origin HEAD');
+  assert.equal(selected.status, 2); assert.match(selected.stderr, /41\/40/);
+});
+test('branch uncertainty survives supported child shells and every later publication', t => {
+  const cwd = repository(t); git(cwd, 'branch', 'huge');
+  for (const cmd of [
+    "bash -lc 'git switch huge && git push origin HEAD'",
+    "sh -c 'git checkout huge'; git push origin HEAD",
+    "git switch huge && bash -lc 'gh pr create --fill'",
+    "bash -c 'git switch huge'; zsh -c 'git push origin HEAD'",
+    "git push origin HEAD; bash -c 'git checkout huge'; gh pr new --fill",
+    "bash -c 'git checkout -- README.md'; git push origin HEAD",
+  ]) {
+    const result = hook(cwd, cmd);
+    assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Branch change before publication/);
+    assert.equal(result.stdout, '');
+  }
+});
+test('branch commands without later publication and read-only chains stay allowed', t => {
+  const cwd = repository(t);
+  for (const cmd of ['git switch other', 'git checkout -- README.md', 'git status && git push origin HEAD',
+    'git push origin HEAD; git switch other', "bash -c 'git push origin HEAD; git checkout other'"]) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 0, cmd + result.stderr);
+  }
+});
+test('Git environment redirection cannot publish an uninspected 41-file repository', t => {
+  const cwd = repository(t), target = repository(t); createFiles(target, 41);
+  git(target, 'add', '.'); git(target, 'commit', '-qm', 'huge');
+  assert.match(check(cwd).stdout, /0\/40/); assert.equal(check(target).status, 2);
+  const dir = `GIT_DIR="${target}/.git"`, tree = `GIT_WORK_TREE="${target}"`;
+  for (const cmd of [
+    `${dir} ${tree} git push origin HEAD`,
+    `env ${dir} ${tree} git push origin HEAD`,
+    `/usr/bin/env ${dir} ${tree} gh pr create --fill`,
+    `export ${dir} ${tree}; git push origin HEAD`,
+    `${dir}; ${tree}; gh pr new --fill`,
+    `${dir} git push origin HEAD`, `${tree} git push origin HEAD`,
+    'export GIT_DIR; git push origin HEAD',
+  ]) {
+    const result = hook(cwd, cmd);
+    assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Git environment override/);
+    assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes(target));
+  }
+});
+test('Git environment overrides propagate into child shells without exposing values', t => {
+  const cwd = repository(t);
+  for (const cmd of [
+    "GIT_DIR=private-value bash -lc 'git push origin HEAD'",
+    "env GIT_WORK_TREE=private-value sh -c 'gh pr create --fill'",
+    "bash -c 'export GIT_DIR=private-value; git push origin HEAD'",
+    "export GIT_WORK_TREE=private-value; zsh -c 'git push origin HEAD'",
+    "git push origin HEAD; export GIT_DIR=private-value; gh pr create --fill",
+    "bash -c 'GIT_DIR=private-value; bash -c \"git push origin HEAD\"'",
+  ]) {
+    const result = hook(cwd, cmd);
+    assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Git environment override/);
+    assert.equal(result.stdout, ''); assert.doesNotMatch(result.stderr, /private-value/);
+  }
+});
+test('innocuous assignments and command-scoped or child-shell variables do not leak', t => {
+  const cwd = repository(t);
+  for (const cmd of [
+    'FLAG=GIT_DIR=private-value git push origin HEAD',
+    'env FLAG=1 command git push origin HEAD',
+    'export FLAG=1; git push origin HEAD',
+    'GIT_DIR=private-value echo noop; git push origin HEAD',
+    'env GIT_WORK_TREE=private-value git status; git push origin HEAD',
+    "bash -c 'export GIT_DIR=private-value; git status'; git push origin HEAD",
+    "bash -c 'GIT_WORK_TREE=private-value'; gh pr create --fill",
+    'gh pr create --title "GIT_DIR=private-value" --body "git checkout huge" --fill',
+  ]) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 0, cmd + result.stderr);
+  }
+});
+test('ordinary environment commands skip inspection while unparsed env publication denies', t => {
+  const cwd = repository(t);
+  assert.equal(hook(cwd, 'env -i GIT_DIR=private-value git push origin HEAD').status, 2);
+  git(cwd, 'update-ref', '-d', 'refs/remotes/origin/main');
+  for (const cmd of ['GIT_DIR=private-value git status', 'env GIT_WORK_TREE=private-value git status',
+    'export GIT_DIR=private-value; git status', "bash -c 'git checkout other'"]) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 0, cmd + result.stderr);
+    assert.equal(result.stdout + result.stderr, '');
+  }
+});

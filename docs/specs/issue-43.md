@@ -103,3 +103,23 @@ No new network access, runtime changes, CI policy changes or bootstrap changes.
 Verify a clean small checkout cannot select a separate 41-file branch; explicit
 qualified and same-name heads must also deny. Flag-like title/body values must not
 be mistaken for options; implicit-head publication must retain threshold checks.
+
+
+## Follow-up review — publication context changes
+
+The review of `ce9165d` reproduced two local-hook bypasses: switching from a small
+checkout to a 41-file branch in the same command, and selecting another repository
+through `GIT_DIR`/`GIT_WORK_TREE`. Deny publication after a preceding `git switch` or
+`git checkout` in the same payload, including file-only checkout and transitions in
+supported child shells. Treat the affected repository as uncertain conservatively;
+execute the transition in a separate tool invocation before publishing.
+
+Detect repository-variable assignments directly, through `env`, standalone shell
+assignments and `export`; propagate them into supported wrappers. Reject affected
+push/PR-create targets with static, value-free diagnostics. Unknown `env` options
+fail closed rather than hiding a target. Command-scoped variables and child exports
+must not leak into later parent commands; Git HEAD changes in child shells do persist.
+Preserve ordinary commands, innocuous variables and publication before a later
+transition. Regression acceptance includes both 41-file reproductions, Git `-C`,
+wrappers, multiple targets, conservative checkout and diagnostic confidentiality.
+No CI policy, bootstrap, administrator-rule or runtime changes are required.

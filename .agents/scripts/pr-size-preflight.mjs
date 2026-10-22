@@ -26,30 +26,56 @@ function shellWords(command) {
   if (quote) throw new Error('Malformed shell command');
   flush(); return segments.filter(s => s.length);
 }
-function publicationTargets(command, cwd, depth = 0) {
+function publicationTargets(command, cwd, depth = 0, state = { headChanged: false }, inheritedGitEnvironment = false) {
   // Avoid parsing arbitrary test scripts/heredocs unless publication is even plausible.
-  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\b(?:create|new))\b/.test(command)) return [];
+  if (depth === 0 && !/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\b(?:create|new))\b/.test(command)) return [];
   if (depth > 3) throw new Error('Shell wrapper nesting exceeds preflight limit');
   const targets = [];
-  let uncertainCwd = false;
-  const addTarget = target => {
+  let uncertainCwd = false, gitEnvironment = inheritedGitEnvironment;
+  const repositoryVariable = /^(?:GIT_DIR|GIT_WORK_TREE)(?:=|$)/;
+  const appendTarget = target => {
     if (uncertainCwd) throw new Error('Dynamic publication directory requires manual preflight');
     if (targets.length >= 8) throw new Error('At most eight publication commands may be inspected');
     targets.push(target);
+  };
+  const addTarget = (target, environment) => {
+    if (state.headChanged) throw new Error('Branch change before publication requires separate commands; switch or checkout first, then publish');
+    if (environment) throw new Error('Git environment override requires manual preflight; use the target working directory or git -C instead');
+    appendTarget(target);
   };
   const staticPath = value => {
     if (!value || /[$`~*?{}<>]/.test(value)) throw new Error('Dynamic publication directory requires manual preflight');
     return value;
   };
   for (let words of shellWords(command)) {
-    while (words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) || ['command', 'exec', 'env', '--'].includes(words[0]))) words = words.slice(1);
-    const executable = basename(words[0] || '');
+    let commandEnvironment = gitEnvironment, environmentWrapper = false;
+    while (words.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
+        if (repositoryVariable.test(words[0])) commandEnvironment = true;
+      } else if (basename(words[0]) === 'env') environmentWrapper = true;
+      else if (!['command', 'exec', '--'].includes(words[0])) break;
+      words = words.slice(1);
+      // Do not silently miss a publication behind unparsed env options.
+      if (environmentWrapper && words[0]?.startsWith('-') && words[0] !== '--') {
+        throw new Error('Unverifiable environment wrapper; use the target working directory and publish separately');
+      }
+    }
+    if (!words.length) {
+      if (!environmentWrapper) gitEnvironment = commandEnvironment;
+      continue;
+    }
+    const executable = basename(words[0]);
+    if (executable === 'export') {
+      if (words.slice(1).some(word => repositoryVariable.test(word))) gitEnvironment = true;
+      continue;
+    }
     if (executable === 'cd') {
       try { cwd = resolve(cwd, staticPath(words[1])); } catch { uncertainCwd = true; }
       continue;
     }
     if (['sh', 'bash', 'zsh'].includes(executable) && /^-[a-z]*c[a-z]*$/.test(words[1] || '') && words[2]) {
-      for (const target of publicationTargets(words[2], cwd, depth + 1)) addTarget(target);
+      // Filesystem/HEAD mutations survive child shells; exported variables do not.
+      for (const target of publicationTargets(words[2], cwd, depth + 1, state, commandEnvironment)) appendTarget(target);
     }
     if (executable === 'git') {
       let i = 1;
@@ -60,14 +86,16 @@ function publicationTargets(command, cwd, depth = 0) {
         else if (words[i] === '-c' && words[i + 1]) config.push('-c', words[++i]);
         else if (words[i].startsWith('--git-dir') || words[i].startsWith('--work-tree')) {
           if (words.includes('push')) throw new Error('Git directory override requires manual preflight');
+          if (words.some(word => ['switch', 'checkout'].includes(word))) state.headChanged = true;
           break;
         } else if (words[i].startsWith('-')) continue;
         else break;
       }
+      if (['switch', 'checkout'].includes(words[i])) state.headChanged = true;
       if (words[i] === 'push') {
         let target = cwd;
         for (const directory of directories) target = resolve(target, staticPath(directory));
-        addTarget({ cwd: target, kind: 'push', args: words.slice(i + 1), config });
+        addTarget({ cwd: target, kind: 'push', args: words.slice(i + 1), config }, commandEnvironment);
       }
     } else if (executable === 'gh') {
       let i = 1;
@@ -77,7 +105,7 @@ function publicationTargets(command, cwd, depth = 0) {
         else break;
       }
       if (words[i] === 'pr' && ['create', 'new'].includes(words[i + 1])) {
-        addTarget({ cwd, kind: 'pr', args: words.slice(i + 2) });
+        addTarget({ cwd, kind: 'pr', args: words.slice(i + 2) }, commandEnvironment);
       }
     }
   }
@@ -340,7 +368,7 @@ const timer = setTimeout(() => {
 }, Math.max(1, deadline - performance.now()));
 try { await main(); }
 catch (error) {
-  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight|At most eight publication commands may be inspected|Aggregate inspection deadline exceeded|Push |Unverifiable push options|Unverifiable gh pr create options|Explicit gh head selection is not verified|Feature history exceeds inspection capacity|Invalid commit metadata|Missing result blob)/.test(error.message);
+  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight|Git environment override requires manual preflight|Branch change before publication requires separate commands|Unverifiable environment wrapper|At most eight publication commands may be inspected|Aggregate inspection deadline exceeded|Push |Unverifiable push options|Unverifiable gh pr create options|Explicit gh head selection is not verified|Feature history exceeds inspection capacity|Invalid commit metadata|Missing result blob)/.test(error.message);
   console.error(`BLOCKED: PR preflight could not verify scope: ${safe ? error.message : 'Git, path or input validation failed'}. Check the source ref and base, refresh origin/main and retry.`);
   process.exitCode = 2;
 } finally { clearTimeout(timer); }
