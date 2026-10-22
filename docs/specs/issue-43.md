@@ -75,8 +75,8 @@ The user selected [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge
 canonical metadata-policy tests on main first. Preserve the required `PR file count`
 check throughout. Once the base workflow is installed and observed, add the uniquely
 named trusted companion to ruleset 25669164 without removing existing checks or
-adding bypass actors. Until that merge/activation, keep the trusted-base review
-thread open and mark the dependency explicitly; do not auto-merge either PR.
+adding bypass actors. Keep the deployment dependency explicit until merge/activation;
+the earlier review thread has been resolved. Do not auto-merge either PR.
 
 History inspection is bounded to 200 commits, 10,000 changed-file records and complete
 per-commit pagination (less than the API's 3,000-file truncation boundary). Unknown or
@@ -88,3 +88,18 @@ or modified captures remain prohibited. Local limits match CI and use NUL-safe G
 metadata. Existing artifacts inherited unchanged from the integration base remain
 out of scope, while newly introduced-then-deleted artifacts require removing them
 from the feature history, not just the final tree.
+
+## Follow-up review — explicit GitHub CLI heads
+
+The new Codex comment on `5b87e33` demonstrates that `gh pr create --head/-H` can
+publish an already-pushed branch other than the inspected checkout. Fail closed on
+all explicit head selection, including the current branch name: without a network
+lookup, its remote tip cannot be proven identical to local HEAD. Contributors must
+check out the intended branch and omit the head option, or use the documented manual
+preflight/API workflow. Preserve ordinary command and title/body argument behavior.
+Recognize separated/equal/attached and clustered shorthand head flags, `gh pr new`,
+and supported global --repo/-R spellings. Unknown publication options fail closed.
+No new network access, runtime changes, CI policy changes or bootstrap changes.
+Verify a clean small checkout cannot select a separate 41-file branch; explicit
+qualified and same-name heads must also deny. Flag-like title/body values must not
+be mistaken for options; implicit-head publication must retain threshold checks.

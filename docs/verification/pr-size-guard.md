@@ -121,6 +121,15 @@ Only HEAD or the checked-out branch may be a push source. Matching/configured
 implicit refspecs, other branches, wildcards, --all/--mirror/--tags and follow-tag
 publication are rejected; switch to the intended branch and push HEAD explicitly.
 Branch-deletion commands publish no source and do not require scope inspection.
+For `gh pr create` and its `pr new` alias, explicit `--head`/`-H` selection is denied,
+including equal/attached/clustered spellings, qualified heads and the current branch
+name. The selected *remote* tip cannot be proven to match inspected local HEAD
+without a network lookup. Check out the intended branch and omit the head flag,
+or run the manual preflight on that source before using an API publication flow.
+This is deliberately conservative, not a claim that same-name remote refs match.
+Known title/body options consume their values, so literal `--head` text is safe;
+unknown publication options fail closed. Global --repo/-R spellings are recognized,
+and `gh pr create --help` does not inspect Git.
 Warnings from all targets are emitted in one JSON response, without granting permissions. Ordinary commands
 have no Git scope checks. Hooks remain a usability preflight, **not a security boundary**.
 

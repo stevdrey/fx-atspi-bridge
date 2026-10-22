@@ -28,7 +28,7 @@ function shellWords(command) {
 }
 function publicationTargets(command, cwd, depth = 0) {
   // Avoid parsing arbitrary test scripts/heredocs unless publication is even plausible.
-  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\bpr\s+create)\b/.test(command)) return [];
+  if (!/\b(?:git\b[\s\S]*?\bpush|gh\b[\s\S]*?\b(?:create|new))\b/.test(command)) return [];
   if (depth > 3) throw new Error('Shell wrapper nesting exceeds preflight limit');
   const targets = [];
   let uncertainCwd = false;
@@ -71,8 +71,14 @@ function publicationTargets(command, cwd, depth = 0) {
       }
     } else if (executable === 'gh') {
       let i = 1;
-      while (['-R', '--repo'].includes(words[i]) && words[i + 1]) i += 2;
-      if (words[i] === 'pr' && words[i + 1] === 'create') addTarget({ cwd, kind: 'pr' });
+      while (i < words.length) {
+        if (['-R', '--repo'].includes(words[i]) && words[i + 1]) i += 2;
+        else if (words[i].startsWith('--repo=') || /^-R.+/.test(words[i])) i++;
+        else break;
+      }
+      if (words[i] === 'pr' && ['create', 'new'].includes(words[i + 1])) {
+        addTarget({ cwd, kind: 'pr', args: words.slice(i + 2) });
+      }
     }
   }
   return targets;
@@ -131,6 +137,54 @@ function validatePush(target) {
       }
     }
   }
+  return true;
+}
+function validatePrCreate(target) {
+  const valueFlags = new Set(['--assignee', '--attach', '--base', '--body', '--body-file', '--head', '--label',
+    '--milestone', '--project', '--recover', '--reviewer', '--template', '--title', '--repo']);
+  const switchFlags = new Set(['--draft', '--dry-run', '--editor', '--fill', '--fill-first', '--fill-verbose',
+    '--no-maintainer-edit', '--web', '--help']);
+  const shortValues = new Set('aBbFHlmprTtR');
+  const shortSwitches = new Set('defw');
+  let headSelected = false, help = false;
+  const value = (args, i, attached) => {
+    if (attached !== undefined) return attached;
+    if (i + 1 >= args.length) throw new Error('Unverifiable gh pr create options');
+    return args[i + 1];
+  };
+  for (let i = 0; i < target.args.length; i++) {
+    const arg = target.args[i];
+    if (arg.startsWith('--')) {
+      const equal = arg.indexOf('=');
+      const name = equal === -1 ? arg : arg.slice(0, equal);
+      if (switchFlags.has(name)) {
+        if (name === '--help') {
+          const setting = equal === -1 ? 'true' : arg.slice(equal + 1);
+          if (!['true', 'false'].includes(setting)) throw new Error('Unverifiable gh pr create options');
+          help = setting === 'true';
+        }
+        continue;
+      }
+      if (!valueFlags.has(name)) throw new Error('Unverifiable gh pr create options');
+      const attached = equal === -1 ? undefined : arg.slice(equal + 1);
+      value(target.args, i, attached);
+      if (name === '--head') headSelected = true;
+      if (attached === undefined) i++;
+    } else if (arg.startsWith('-') && arg.length > 1) {
+      for (let j = 1; j < arg.length; j++) {
+        const flag = arg[j];
+        if (shortSwitches.has(flag)) continue;
+        if (!shortValues.has(flag)) throw new Error('Unverifiable gh pr create options');
+        const attached = j + 1 < arg.length ? arg.slice(j + 1) : undefined;
+        value(target.args, i, attached);
+        if (flag === 'H') headSelected = true;
+        if (attached === undefined) i++;
+        break;
+      }
+    } else throw new Error('Unverifiable gh pr create options');
+  }
+  if (help) return false;
+  if (headSelected) throw new Error('Explicit gh head selection is not verified; check out the intended branch and omit --head/-H');
   return true;
 }
 function nullFields(value) {
@@ -248,6 +302,7 @@ async function main() {
       remaining();
       target.cwd = realpathSync(target.cwd);
       if (target.kind === 'push' && !validatePush(target)) continue;
+      if (target.kind === 'pr' && !validatePrCreate(target)) continue;
       if (!inspected.has(target.cwd)) {
         results.push(inspect(target.cwd, base)); inspected.add(target.cwd);
       }
@@ -285,7 +340,7 @@ const timer = setTimeout(() => {
 }, Math.max(1, deadline - performance.now()));
 try { await main(); }
 catch (error) {
-  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight|At most eight publication commands may be inspected|Aggregate inspection deadline exceeded|Push |Unverifiable push options|Feature history exceeds inspection capacity|Invalid commit metadata|Missing result blob)/.test(error.message);
+  const safe = /^(git \S+ failed|No verified merge base|Incomplete Git output|Invalid Git status|Incomplete Git filename|Hook input exceeds 1 MiB|Malformed hook JSON|Invalid PreToolUse Bash payload|Use \[--hook\] \[--base REF\]|Invalid base reference|Invalid command working directory|Malformed shell command|Shell wrapper nesting exceeds preflight limit|Dynamic publication directory requires manual preflight|Git directory override requires manual preflight|At most eight publication commands may be inspected|Aggregate inspection deadline exceeded|Push |Unverifiable push options|Unverifiable gh pr create options|Explicit gh head selection is not verified|Feature history exceeds inspection capacity|Invalid commit metadata|Missing result blob)/.test(error.message);
   console.error(`BLOCKED: PR preflight could not verify scope: ${safe ? error.message : 'Git, path or input validation failed'}. Check the source ref and base, refresh origin/main and retry.`);
   process.exitCode = 2;
 } finally { clearTimeout(timer); }

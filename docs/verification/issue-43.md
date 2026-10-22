@@ -78,5 +78,23 @@ parent and authored source fixtures remain supported. CI capacity is 200 commits
 The selected rollout uses [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46). After it is reviewed and merged,
 observe `Trusted PR file count` from the base revision on #45, then add it to the
 ruleset **alongside** `PR file count`, keeping both bound to app 15368 and no bypass.
-Until then the trusted-base finding remains open: the companion is prepared but is
-not yet installed/required on main. No automatic merge or rule weakening is planned.
+The earlier trusted-base review thread has been resolved; deployment is still
+pending because the companion is not yet installed/required on main. No automatic merge or rule weakening is planned.
+
+## Follow-up review — GitHub CLI explicit heads
+
+The new comment on `5b87e33` identified that `gh pr create --head/-H` could select an
+already-pushed branch outside the inspected checkout. The fix rejects all explicit
+head selection without adding network access, including qualified/same-name heads,
+long equal syntax, short attached syntax and shorthand clusters. `gh pr new` and
+supported global repo spellings use the same guard. Known string-valued options
+consume their arguments so flag-like title/body content is preserved. True help skips
+Git inspection; `--help=false` retains validation. Quoted subcommands receive the same
+checks; unknown publication options deny rather than produce a false PASS.
+
+Verification: `node --test .agents/scripts/pr-*.test.mjs` passed all 61 tests with
+zero failures/skips. The JDK 27 wrapper check/POM command passed with six tasks up to
+date. Manual preflight passed at 19/40 paths and `git diff --check` passed. This
+change affects only the local hook; both canonical CI policies and bootstrap #46
+are unchanged. The trusted companion is still not required and #46 remains open
+at this verification point; no rule or merge was performed as part of this fix.

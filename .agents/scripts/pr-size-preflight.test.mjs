@@ -309,3 +309,85 @@ test('deletions do not inspect an unrelated HEAD but follow-tag publication stay
   assert.equal(hook(cwd, 'git push --delete origin old-branch').status, 2);
   assert.equal(hook(cwd, 'git push --no-follow-tags --delete origin old-branch').status, 0);
 });
+
+test('explicit gh heads cannot select an uninspected 41-file branch', t => {
+  const cwd = repository(t); git(cwd, 'switch', '-qc', 'huge'); createFiles(cwd, 41);
+  git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'huge'); git(cwd, 'switch', '-q', 'feature/preflight');
+  assert.match(check(cwd).stdout, /0\/40/);
+  for (const option of ['--head huge', '--head=huge', '-H huge', '-Hhuge', '-H=huge', '-dHhuge']) {
+    const result = hook(cwd, `gh pr create ${option} --fill`);
+    assert.equal(result.status, 2, option); assert.match(result.stderr, /Explicit gh head selection/);
+    assert.doesNotMatch(result.stdout, /PASS/);
+  }
+});
+test('qualified and same-name remote heads require the conservative fallback', t => {
+  const cwd = repository(t);
+  for (const head of ['owner:huge', 'owner:feature/preflight', 'feature/preflight', 'HEAD']) {
+    const result = hook(cwd, `gh pr create --head "${head}" --fill`);
+    assert.equal(result.status, 2, head); assert.match(result.stderr, /omit --head\/-H/);
+  }
+});
+test('gh global repo spellings and the pr new alias cannot bypass head validation', t => {
+  const cwd = repository(t);
+  for (const prefix of ['gh', 'gh -R owner/repo', 'gh --repo owner/repo', 'gh -Rowner/repo', 'gh --repo=owner/repo']) {
+    for (const subcommand of ['create', 'new']) {
+      const result = hook(cwd, `${prefix} pr ${subcommand} -Hhuge --fill`);
+      assert.equal(result.status, 2, prefix + subcommand); assert.match(result.stderr, /Explicit gh head selection/);
+      assert.equal(hook(cwd, `${prefix} pr ${subcommand} --fill`).status, 0);
+    }
+  }
+});
+test('head-like title, body and other option values are not parsed as head options', t => {
+  const cwd = repository(t);
+  for (const cmd of [
+    'gh pr create --title "Document --head huge" --body "Use -Hhuge carefully"',
+    'gh pr create --title=--head --body "--head" --fill',
+    'gh pr create -t--head -b-Hhuge --fill',
+    'gh pr create -db--head -t "--head"',
+    'gh pr create --body-file "--head" --template "-Hhuge" --reviewer "Hreviewer" --fill',
+  ]) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 0, cmd + result.stderr);
+  }
+});
+test('implicit gh heads preserve count checks on create and new', t => {
+  const cwd = repository(t); createFiles(cwd, 41);
+  for (const cmd of ['gh pr create --fill', 'gh pr new --draft --fill-first', 'gh --repo=owner/repo pr create -df']) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 2); assert.match(result.stderr, /41\/40/);
+  }
+});
+test('malformed or unknown gh publication options fail closed', t => {
+  const cwd = repository(t);
+  for (const cmd of ['gh pr create --head', 'gh pr create -H', 'gh pr create --head=',
+    'gh pr create --head huge --head feature/preflight', 'gh pr create --future-option huge',
+    'gh pr create -xHhuge', 'gh pr create --title', 'gh pr create unexpected']) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 2, cmd); assert.match(result.stderr, /BLOCKED/);
+    assert.doesNotMatch(result.stdout, /PASS/);
+  }
+});
+test('gh help and ordinary quoted text do not inspect Git or reject head-like strings', t => {
+  const cwd = repository(t); git(cwd, 'update-ref', '-d', 'refs/remotes/origin/main');
+  for (const cmd of ['gh pr create --help', 'gh pr new --help', 'echo "gh pr create --head huge"']) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout + result.stderr, '');
+  }
+});
+test('each gh publication validates its head even after its checkout was inspected', t => {
+  const cwd = repository(t);
+  const result = hook(cwd, 'gh pr create --fill; gh pr create --head huge --fill');
+  assert.equal(result.status, 2); assert.match(result.stderr, /Explicit gh head selection/); assert.equal(result.stdout, '');
+});
+
+test('help=false cannot bypass source or file-count checks', t => {
+  const cwd = repository(t);
+  const selected = hook(cwd, 'gh pr create --help=false --head huge --fill');
+  assert.equal(selected.status, 2); assert.match(selected.stderr, /Explicit gh head selection/);
+  createFiles(cwd, 41);
+  const implicit = hook(cwd, 'gh pr create --help=false --fill');
+  assert.equal(implicit.status, 2); assert.match(implicit.stderr, /41\/40/);
+  assert.equal(hook(cwd, 'gh pr create --help=true').status, 0);
+});
+test('quoted gh subcommands receive the same source validation', t => {
+  const cwd = repository(t);
+  for (const cmd of ['gh "pr" "create" -Hhuge --fill', "gh 'pr' 'new' --head=huge --fill"]) {
+    const result = hook(cwd, cmd); assert.equal(result.status, 2, cmd); assert.match(result.stderr, /Explicit gh head selection/);
+  }
+});
