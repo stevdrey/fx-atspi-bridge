@@ -30,6 +30,8 @@ jobs:
         env:
           REQUIRE_FX_TOOLKIT: '1'  # fail instead of skipping the JavaFX toolkit tests when no display/toolkit is available
         run: xvfb-run -a ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
+      - name: Test publication preflight and embedded CI policy
+        run: node --test .agents/scripts/pr-*.test.mjs
       - name: Test baseline tooling
         env:
           REQUIRE_ATSPI_TESTS: '1'  # fail instead of skipping the probe suite when the bindings are missing
