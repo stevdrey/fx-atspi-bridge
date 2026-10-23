@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -562,6 +563,43 @@ class SceneObserverTest {
             });
             assertEquals(List.of(0, idlePublications), result, "nothing is scheduled or published while idle");
         } finally { onFx(() -> { harness.observer.close(); return null; }); }
+    }
+
+    @Test void changedIdHandoffsStayImmutableAcrossLaterBatchesAndClose() throws Exception {
+        onFx(() -> {
+            var first = new Button("first");
+            var second = new Button("second");
+            show(new VBox(first, second));
+            var harness = new Harness().start();
+            try {
+                var initial = harness.published.getFirst();
+                var initialContents = Set.copyOf(initial);
+                var firstId = harness.id(first);
+                var secondId = harness.id(second);
+                first.setAccessibleText("first changed");
+                harness.endBatch();
+                var firstChange = harness.published.getLast();
+                var firstSnapshot = harness.last;
+                second.setAccessibleText("second changed");
+                harness.endBatch();
+                var secondChange = harness.published.getLast();
+                first.setAccessibleText("first again");
+                second.setAccessibleText("second again");
+                harness.endBatch();
+                var denseChange = harness.published.getLast();
+                assertEquals(List.of(firstId, secondId), List.copyOf(denseChange), "changed-ID order is preserved");
+                assertThrows(UnsupportedOperationException.class, firstChange::clear);
+                assertThrows(UnsupportedOperationException.class, () -> denseChange.add("external"));
+                harness.observer.close();
+                assertEquals(initialContents, initial, "disposal does not mutate the initial publication");
+                assertEquals(Set.of(firstId), firstChange, "later batches do not mutate an earlier changed-ID set");
+                assertEquals(Set.of(secondId), secondChange);
+                assertEquals(Set.of(firstId, secondId), denseChange);
+                assertEquals("first changed", firstSnapshot.get(firstId).name(), "earlier snapshots remain immutable");
+                assertFalse(harness.observer.active());
+                return null;
+            } finally { harness.observer.close(); }
+        });
     }
 
     @Test void changesInOneBatchArePublishedOnceAndCoherently() throws Exception {

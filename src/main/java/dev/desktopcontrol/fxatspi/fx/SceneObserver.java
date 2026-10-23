@@ -895,7 +895,8 @@ public final class SceneObserver {
             }
         }
         try {
-            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+            // Sparse batches need only a few targets/ancestors; grow normally for deeper trees.
+            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>(Math.max(4, dirty.size())));
             var pending = new ArrayDeque<Observed>();
             while (!dirty.isEmpty() || !pending.isEmpty()) {
                 if (pending.isEmpty()) {
@@ -991,8 +992,9 @@ public final class SceneObserver {
         } finally { showing.clear(); sensitivity.clear(); physicalState.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
         indexAutomationIds();
-        var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
-        touched.clear();
+        // Relinquish this exclusive set before calling the sink; published IDs are never mutated again.
+        var changed = Collections.unmodifiableSet(touched);
+        touched = new LinkedHashSet<>();
         publications++;
         if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
     }
@@ -1004,14 +1006,19 @@ public final class SceneObserver {
      * Old entries are removed before new ones are inserted, so atomic swaps in one batch are valid.
      */
     private void indexAutomationIds() {
-        var affected = new HashSet<String>();
+        HashSet<String> affected = null;
         for (var id : touched) {
             var raw = rawAutomation.remove(id);
             if (raw != null) rawAutomationIndex.remove(raw,id);
             var candidate = automationCandidates.remove(id);
-            if (candidate != null) { removeHolder(candidate.value(),id); affected.add(candidate.value()); }
+            if (candidate != null) {
+                removeHolder(candidate.value(),id);
+                if (affected == null) affected = new HashSet<>();
+                affected.add(candidate.value());
+            }
         }
-        for (var id : List.copyOf(touched)) {
+        // This pass indexes holders without modifying touched; affected holders are appended afterward.
+        for (var id : touched) {
             var item = model.get(id);
             var entry = item == null ? null : observed.get(registry.target(id));
             if (entry == null || entry.rawAutomationId.isEmpty() || item.semantics().automationId().isEmpty()) continue;
@@ -1025,8 +1032,10 @@ public final class SceneObserver {
             var value = item.semantics().automationId();
             automationCandidates.put(id,new AutomationCandidate(value,entry.automationTransformed));
             automationHolders.computeIfAbsent(value,_ -> new HashSet<>()).add(id);
+            if (affected == null) affected = new HashSet<>();
             affected.add(value);
         }
+        if (affected == null) return;
         for (var value : affected) {
             var holders = automationHolders.get(value);
             if (holders == null) continue;

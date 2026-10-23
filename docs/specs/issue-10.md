@@ -261,3 +261,25 @@ the quiescent baseline and external-client condition. Documentation can correct
 the test procedure without inventing a bridge-code or JavaFX-version fix.
 Previously Failed campaigns remain Failed; external load does not retroactively
 invalidate them. Budgets, workload, guards and retry rules remain unchanged.
+
+## Sparse-allocation follow-up after the controlled campaign
+
+The complete controlled 6c503d2 campaign retains 44 valid runs and 91/92 checks:
+dense 100-node latency passes all three repetitions (17.339/17.976/18.186 ms),
+but sparse r1 allocation is 34.170898 KiB/sample > 34. Its paired bridge-off
+allocation also rises to 30.185 KiB versus approximately 18.5 KiB in later
+repetitions. Preserve this valid failure; do not infer its exact cause from a
+later profile or replace it with a median. External-client GPU work is greatly
+reduced, not claimed to be zero throughout benchmark rendering.
+
+Measure and remove avoidable observer publication allocations: size its temporary
+identity work set from the trusted current dirty batch; transfer the exclusive
+changed-ID set through an immutable wrapper and replace the FX-owned field before
+calling the sink; avoid a redundant stable-pass ID-list copy and allocate the
+affected-automation-ID set only when needed. Preserve insertion order, identity
+semantics, collision/privacy processing and cleanup. No shared mutable collection
+may cross the FX/provider boundary. Test retained changed-ID sets/snapshots across
+later sparse/dense batches and disposal, including mutation rejection. Compare the
+same bounded allocation probe and directed runs before/after, then require a new
+clean forced build, external clients and complete fixed-budget matrix for the new
+production JAR. No benchmark, JVM, JavaFX, budget, validity or retry changes.

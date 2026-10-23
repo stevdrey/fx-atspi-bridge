@@ -402,3 +402,52 @@ latency correction is established in its release notes and it is not adopted.
 The production library, JavaFX 27 runtime and all workload/budget code stay intact.
 The user agrees to keep the animated client minimized during the new campaign.
 The existing b5ab365 91/92 campaign above remains Failed.
+
+
+## Sparse projection correction and controlled-campaign result
+
+The controlled **6c503d2** campaign completed the forced build (286 Java tests),
+49/49 external cases and 44 valid quick runs with zero retries. It remains
+**Failed: 91/92 comparisons Passed**. The previously pending dense 100-node p99
+passes all repetitions: **17.339 / 17.976304 / 18.186098 ms <= 29**. All source
+and installed-JAR fingerprints match b5ab365; only authored investigation
+instructions changed. The new valid failure is sparse 100-node r1 allocation:
+**34.1708984375 KiB/sample > 34**. Its paired off-control also allocates more
+than later repetitions; the exact origin of that common variance is unconfirmed.
+Do not discard this result or infer its precise allocation stack from a later run.
+A copy revalidates to the same outcome and all 112 original files retain hashes.
+During collection the external client's average graphics utilization is 0.738%;
+this is reduced interference, not a claim of zero global GPU load while QA renders.
+
+Remove measured avoidable FX observer allocation: size the temporary identity
+work set from the current dirty batch (minimum four), transfer the exclusively
+owned insertion-ordered changed-ID set through an immutable wrapper and replace
+the observer field before the sink call, avoid a redundant ID-list copy in the
+stable indexing pass, and create the affected-automation-ID set only when needed.
+Identity, atomic ID swaps/collisions, privacy, publication order and teardown
+contracts remain intact. Temporary work is released per flush; retained changed
+IDs are owned by immutable snapshots/provider handoffs with existing bounds.
+There is no public API, dependency, timer, queue or native-boundary change.
+
+A private, bounded FX-thread allocation probe constructs its synthetic inputs
+outside the interval, warms 2,048 updates and measures 512 name-only publications.
+Three old/new pairs allocate **1489.703 / 1489.313 / 1488.969** versus
+**1122.000 / 1121.875 / 1122.000 bytes/publication**, approximately 24.6% less.
+The probe checks retained IDs and cleanup; it is diagnostic, not an SC-01 budget.
+Matched original sparse foreground benchmark controls, three repetitions each,
+allocate **24.261 / 24.259 / 24.283** versus **23.872 / 23.977 / 23.878 KiB/sample**.
+Their p99 values are **17.914 / 18.449 / 17.249** versus **18.779 / 19.246 / 19.531 ms**,
+all below 29 ms; no latency speedup is claimed by these small controls.
+
+`changedIdHandoffsStayImmutableAcrossLaterBatchesAndClose` retains sparse/dense
+sets and an earlier snapshot across later batches/disposal, rejects external
+mutation and checks ordered IDs. Mandatory FX/native targeted build Passed:
+37 SceneObserver tests; 267 Python and 77 Node regressions Passed. An earlier
+paired-control attempt timed out under a newly locked GNOME session, produced no
+accepted JSON and remains retained. After user unlock, a continuous bounded idle/
+suspend inhibitor covers controls and qualification without configuration changes.
+
+The corrected production JAR requires its own clean forced functional collection
+and complete 44-run/92-comparison matrix. Results below must retain that measured
+commit and must not reuse the 6c503d2 collection as qualification of changed bytes.
+Budgets, fixture, JavaFX 27, JDK 27, validity guards and retry policy are unchanged.
