@@ -11,7 +11,7 @@ Read `README.md`, `.agents/README.md`, relevant `docs/adr/`, `docs/security/` an
 - Prioritize correctness, security, bounded resource use and responsiveness. Do not trade confidentiality or deterministic cleanup for speed. Support performance claims with measurements.
 - Keep JavaFX objects on the FX thread; keep native registrations, invocation ownership and replies on the provider thread. Never hold shared locks while invoking application callbacks, actions, native blocking calls or modal dialogs.
 - Bound queues, inputs and retention. Define expiry, saturation and disposal. Do not expose passwords or log field values.
-- Follow Spec Context: establish observable acceptance criteria and affected boundaries before implementation; retain evidence under `docs/verification/`.
+- Follow Spec Context: establish observable acceptance criteria and affected boundaries before implementation; retain concise authored result summaries under `docs/verification/`, never generated test/QA/benchmark outputs.
 - Keep canonical guidance in `.agents/`; provider-specific files may only point here.
 
 Precedence: explicit task → accepted ADR → security invariants → this file and `.agents/README.md` → skills → local conventions. If a conflict affects correctness, document and resolve it; never silently weaken an invariant.

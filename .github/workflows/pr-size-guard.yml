@@ -1,0 +1,177 @@
+name: Pull Request Size Guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+# Supersede runs for the same PR. Edits are never skipped: a skipped job would report success to the required check.
+concurrency:
+  group: pr-size-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  file-count:
+    name: PR file count
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Enforce changed-file and generated-evidence policy
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
+        with:
+          script: |
+            // Generated executable source from .agents/scripts/pr-policy.cjs; do not edit inline.
+
+            const MAX_FILES = 40;
+
+            const WARNING_FILES = 30;
+
+            const MAX_HISTORY_COMMITS = 200;
+
+            const MAX_HISTORY_FILES = 10000;
+
+            function countLevel(count) {
+              if (!Number.isSafeInteger(count) || count < 0) throw new Error('Invalid changed-file count');
+              return count > MAX_FILES ? 'BLOCKED' : count > WARNING_FILES ? 'WARNING' : 'PASS';
+            }
+
+            function evidenceReason(filename) {
+              // Context matters: SnapshotTest.java, parser fixtures and authored summaries are valid.
+              const p = filename.toLowerCase();
+              const outputDirectory = /(^|\/)(test-results|test-reports|junit-reports|benchmark-results|qa-results|raw-evidence|evidence-bundle|evidence-bundles)(\/|$)/;
+              const verificationData = /^docs\/verification\//;
+              const rootCapture = /^(snapshots|screenshots|qa-output|benchmark-output)\//;
+              const qaCapture = /(^|\/)(qa|benchmarks?|verification)\/(screenshots|snapshots|runs|logs|dumps)\//;
+              const generatedExtension = /\.(jsonl?|ndjson|csv|tsv|txt|log|xml|html?|png|jpe?g|webp|gif|snap|dump|hprof|jfr|bin|zip|gz|sha256)$/;
+              if (outputDirectory.test(p)) return 'generated test/QA/benchmark output directory';
+              // Gradle output trees at the root or below subprojects, but never inside source sets (e.g. a `build` package).
+              if (/^(?:(?!src\/)[^/]+\/)*build\/(reports|test-results|tmp|jacoco)(\/|$)/.test(p)) return 'generated Gradle build output directory';
+              if ((verificationData.test(p) || qaCapture.test(p) || rootCapture.test(p)) &&
+                  (generatedExtension.test(p) || /(^|\/)(manifest|receipt)([.-]|$)/.test(p))) {
+                return 'raw verification capture or evidence index';
+              }
+              if (/^(test-[^/]+\.xml|hs_err_pid\d+\.log|replay_pid\d+\.log)$/.test(p) ||
+                  /(^|\/)(heapdump[^/]*\.hprof|core\.\d+)$/.test(p)) return 'generated runtime/test report';
+              return null;
+            }
+
+            function validFiles(files) {
+              return Array.isArray(files) && files.every(f => f && typeof f.filename === 'string' && f.filename &&
+                ['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'].includes(f.status));
+            }
+
+            async function ciCheck({ github, context, core }) {
+              let count, level;
+              const blocked = () => core.setFailed(`${count}/${MAX_FILES} changed files. Split into independently reviewable PRs; preserve tests, security checks and documentation.`);
+              try {
+                const started = Date.now();
+                let requests = 0, records = 0;
+                const call = async (method, params) => {
+                  const remaining = 120000 - (Date.now() - started);
+                  if (++requests > 350 || remaining <= 0) throw new Error('Metadata inspection capacity exceeded');
+                  const response = await method({ ...params, request: { signal: AbortSignal.timeout(Math.min(5000, remaining)) } });
+                  if (Date.now() - started >= 120000) throw new Error('Metadata inspection deadline exceeded');
+                  return response;
+                };
+                const params = { ...context.repo, pull_number: context.issue.number };
+                const { data: before } = await call(github.rest.pulls.get, params);
+                count = before.changed_files; level = countLevel(count);
+                if (!Number.isSafeInteger(before.commits) || before.commits < 0 || before.commits > MAX_HISTORY_COMMITS) {
+                  throw new Error('Unverifiable PR commit count');
+                }
+                const files = [];
+                for (let page = 1; page <= 30; page++) {
+                  const { data } = await call(github.rest.pulls.listFiles, { ...params, per_page: 100, page });
+                  if (!validFiles(data) || data.length > 100) throw new Error('Invalid PR file list');
+                  files.push(...data);
+                  if (data.length < 100) break;
+                }
+                if (files.length !== count || new Set(files.map(f => f.filename)).size !== count) throw new Error('Incomplete PR file list');
+                const commits = [];
+                for (let page = 1; page <= 3; page++) {
+                  const { data } = await call(github.rest.pulls.listCommits, { ...params, per_page: 100, page });
+                  if (!Array.isArray(data) || data.length > 100) throw new Error('Invalid commit list');
+                  commits.push(...data);
+                  if (data.length < 100) break;
+                }
+                const shaPattern = /^[0-9a-f]{40,64}$/;
+                if (commits.length !== before.commits || new Set(commits.map(c => c.sha)).size !== commits.length ||
+                    commits.some(c => !shaPattern.test(c.sha)) || (commits.length && commits.at(-1).sha !== before.head?.sha)) {
+                  throw new Error('Incomplete or stale PR history');
+                }
+                const treeCache = new Map(), rootCache = new Map();
+                const parentBlob = async (sha, filename) => {
+                  if (!rootCache.has(sha)) {
+                    const { data } = await call(github.rest.git.getCommit, { ...context.repo, commit_sha: sha });
+                    if (!shaPattern.test(data.tree?.sha)) throw new Error('Missing parent tree');
+                    rootCache.set(sha, data.tree.sha);
+                  }
+                  let tree = rootCache.get(sha);
+                  const parts = filename.split('/');
+                  if (parts.length > 64 || parts.some(p => !p)) throw new Error('Invalid metadata path');
+                  for (let i = 0; i < parts.length; i++) {
+                    if (!treeCache.has(tree)) {
+                      const { data } = await call(github.rest.git.getTree, { ...context.repo, tree_sha: tree });
+                      if (data.truncated || !Array.isArray(data.tree)) throw new Error('Incomplete parent tree');
+                      treeCache.set(tree, data.tree);
+                    }
+                    const entry = treeCache.get(tree).find(e => e.path === parts[i]);
+                    if (!entry) return null;
+                    if (!shaPattern.test(entry.sha)) throw new Error('Invalid parent entry');
+                    if (i === parts.length - 1) return entry.type === 'blob' ? entry.sha : null;
+                    if (entry.type !== 'tree') return null;
+                    tree = entry.sha;
+                  }
+                };
+                const prohibited = new Set(files.filter(f => f.status !== 'removed' && evidenceReason(f.filename)).map(f => JSON.stringify(f.filename)));
+                for (const commit of commits) {
+                  let parents = null, seen = new Set();
+                  for (let page = 1; page <= 30; page++) {
+                    const { data } = await call(github.rest.repos.getCommit, { ...context.repo, ref: commit.sha, per_page: 100, page });
+                    if (data.sha !== commit.sha || !validFiles(data.files) || data.files.length > 100 ||
+                        !Array.isArray(data.parents) || data.parents.some(p => !shaPattern.test(p.sha))) throw new Error('Invalid commit metadata');
+                    if (parents && JSON.stringify(parents) !== JSON.stringify(data.parents)) throw new Error('Changed parent metadata');
+                    parents = data.parents;
+                    for (const file of data.files) {
+                      if (seen.has(file.filename) || ++records > MAX_HISTORY_FILES) throw new Error('Incomplete or oversized history');
+                      seen.add(file.filename);
+                      if (file.status === 'removed' || !evidenceReason(file.filename)) continue;
+                      let inherited = false;
+                      // getCommit reports differences against the first parent; check other merge parents.
+                      if (parents.length > 1) {
+                        if (!shaPattern.test(file.sha)) throw new Error('Missing result blob');
+                        for (const parent of parents.slice(1)) {
+                          if (await parentBlob(parent.sha, file.filename) === file.sha) { inherited = true; break; }
+                        }
+                      }
+                      if (!inherited) prohibited.add(`${JSON.stringify(file.filename)} at ${commit.sha.slice(0, 12)}`);
+                    }
+                    if (data.files.length < 100) break;
+                    if (page === 30) throw new Error('Commit files may be truncated');
+                  }
+                }
+                const { data: after } = await call(github.rest.pulls.get, params);
+                if (!before.head?.sha || !before.base?.sha || before.head.sha !== after.head?.sha ||
+                    before.base.sha !== after.base?.sha || after.changed_files !== count || after.commits !== before.commits) throw new Error('PR changed during inspection');
+                await core.summary.addHeading('Pull request publication policy').addTable([
+                  [{ data: 'Metric', header: true }, { data: 'Value', header: true }],
+                  ['Changed files (entire net PR diff)', String(count)], ['Warning range', `${WARNING_FILES + 1}–${MAX_FILES}`],
+                  ['Maximum allowed (inclusive)', String(MAX_FILES)], ['Feature commits inspected', String(commits.length)],
+                  ['Recognizable generated outputs (including history)', String(prohibited.size)],
+                ]).write();
+                if (level === 'BLOCKED') blocked();
+                else if (level === 'WARNING') core.warning(`${count}/${MAX_FILES} changed files. Review scope before adding changes.`);
+                else if (!prohibited.size) core.info(`PASS: ${count}/${MAX_FILES} changed files.`);
+                if (prohibited.size) core.setFailed(`Generated evidence is prohibited at any file count, including intermediate commits: ${[...prohibited].slice(0, 10).join(', ')}. Remove captures from feature history; deleting them later is insufficient. Keep an authored summary outside raw outputs.`);
+              } catch {
+                // An over-limit count is already decisive; report it even when history inspection cannot complete.
+                if (level === 'BLOCKED') blocked();
+                core.setFailed('Could not verify complete PR metadata/history within inspection limits. Check API availability, history size and revisions, then retry; unknown scope never passes.');
+              }
+            }
+
+            await ciCheck({ github, context, core });
