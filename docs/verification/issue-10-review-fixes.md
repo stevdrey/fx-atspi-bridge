@@ -381,3 +381,24 @@ cleanup by 2026-10-30. No generated evidence is published through feature histor
 Reproduction uses the canonical commands above with fresh private directories.
 The full #15 profile, Orca #32 and native-Wayland/other-system qualification remain
 separate stable-release gates even if quick performance later passes.
+
+## Controlled desktop follow-up: acceptance pending
+
+The next investigation identifies an external rendering load rather than another
+bridge allocation. With no QA JVM running, 60 half-second GPU readings have
+median 35%, range 31–47%. A separate 20-second DRM-client interval accounts for
+approximately 16.8% graphics work in an animated X11 client, 14.3% in Xwayland and
+2.8% in the compositor. Duplicate file descriptors are deduplicated by DRM client
+identity; resident memory is not mistaken for engine utilization.
+
+After explicit user minimization, all global readings over the matched 20-second
+interval are 0%; the animated client's engine utilization is 0.043%, with Xwayland
+and compositor counters at 0%. No unrelated process is stopped, no configuration
+is changed, and private application identities remain outside the report.
+This establishes the source of idle graphics activity; its effect on canonical
+latency still requires matched controls and a fresh complete campaign.
+JavaFX 27.0.1 was resolved into private storage for investigation, but no related
+latency correction is established in its release notes and it is not adopted.
+The production library, JavaFX 27 runtime and all workload/budget code stay intact.
+The user agrees to keep the animated client minimized during the new campaign.
+The existing b5ab365 91/92 campaign above remains Failed.

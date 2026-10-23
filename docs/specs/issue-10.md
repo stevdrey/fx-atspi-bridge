@@ -241,3 +241,23 @@ the canonical failure or permission to bypass it. Preserve the full Failed
 campaign and revalidate a copy; original hashes must remain identical. Publish
 only authored outcomes and source/JAR identities. Further latency correction
 requires its own attributable full campaign; #15 and #32 remain separate.
+
+## GPU interference follow-up (2026-10-23)
+
+The latency investigation must include unrelated graphics activity on the test
+host. Numeric DRM telemetry outside QA observes 31–47% GPU use; client counters
+attribute approximately 17% to an animated X11 application and 14% to Xwayland,
+with approximately 3% compositor work. After the user minimizes that application,
+20 seconds of global GPU readings are all 0%; its own graphics-engine time falls
+below 0.1%. No application is killed and no desktop, GPU, vsync or JavaFX setting
+changes. Application names, PIDs and raw client data remain private outside Git.
+
+Test the causal effect using matched bridge-off/on controls with the original
+50 warmups and 200 samples, JavaFX 27 and the unchanged production JAR. Do not
+substitute those controls for acceptance or discard any valid excess. If the
+condition removes the observed interference, repeat the forced functional build,
+49 external cases and complete canonical 44-run/92-comparison matrix, recording
+the quiescent baseline and external-client condition. Documentation can correct
+the test procedure without inventing a bridge-code or JavaFX-version fix.
+Previously Failed campaigns remain Failed; external load does not retroactively
+invalidate them. Budgets, workload, guards and retry rules remain unchanged.
