@@ -22,9 +22,50 @@ Acceptance: both generated workflows match canonical source; actual embedded cod
 passes 0/30/31/40 and fails 41, transient evidence and incomplete histories; authored
 fixtures remain allowed; readonly permissions and trusted event are checked.
 
-Rollout: review and merge this bootstrap first; do not auto-merge. Let the trusted
-base job run on #45, then add `Trusted PR file count` (GitHub Actions, app 15368) to
-ruleset 25669164 while preserving `PR file count` and empty bypass actors. Complete
-#45's local-hook changes afterwards. Until that activation, the trusted companion
-is not an enforced boundary and the review finding remains open. Never disable the
-existing required context to bootstrap this change.
+## Event-policy prerequisite and rollout
+
+GitHub's [target-event policy](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
+will block `pull_request_target` by default for affected public repositories on
+November 2, 2026. A successful run during evaluation is not sufficient evidence
+that the workflow will remain allowed after enforcement. This repository is public.
+
+1. Before requiring the trusted check, install the explicit repository Actions
+   event policy from `.github/actions-policies/trusted-pr-size-guard.json` using
+   Settings → Actions → Policies or the [Actions policies API](https://docs.github.com/en/rest/actions/policies).
+   It must be **active**, target only `.github/workflows/trusted-pr-size-guard.yml`,
+   and allow only `pull_request_target`. It changes no token permissions or actor
+   restrictions. Do not create a repository-wide event exemption.
+2. Read back the saved policy and list applicable policies, including inherited
+   policies. Verify its ID, active enforcement, exact workflow path and event rule.
+   Inspect Actions → Policy insights for any applicable event/actor denial. If
+   configuration is unavailable, evaluate-only or conflicting, stop activation;
+   preserve the existing required check and do not add the trusted context.
+3. Review and merge this bootstrap first; do not auto-merge. Trigger a fresh
+   target-event run on #45 after the workflow exists on main. Confirm that the run
+   uses this workflow from main, is allowed by the effective event policies and
+   produces `Trusted PR file count` successfully. Record the run URL and source
+   revision; a stubbed test or PR-head job cannot satisfy this prerequisite.
+4. Only after steps 1–3 succeed, add `Trusted PR file count` (GitHub Actions,
+   app 15368) to ruleset 25669164 alongside `PR file count`, preserving empty
+   bypass actors. Recheck effective required contexts and a fresh PR run. If any
+   prerequisite fails, leave the companion optional and fix the prerequisite.
+
+The manifest is authored administrator input, not a workflow or an automatically
+applied policy. Repository policy [8485](https://github.com/stevdrey/fx-atspi-bridge/settings/actions/rules/8485)
+has been installed and read back with the exact manifest scope; the live-run and
+required-context gates remain pending. Inspect existing policies before applying it; update its existing
+ID instead of creating a duplicate. Example repository-admin commands:
+
+```sh
+gh api repos/stevdrey/fx-atspi-bridge/actions/policies --method POST \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  --input .github/actions-policies/trusted-pr-size-guard.json
+gh api repos/stevdrey/fx-atspi-bridge/actions/policies/POLICY_ID \
+  -H 'X-GitHub-Api-Version: 2026-03-10'
+gh api 'repos/stevdrey/fx-atspi-bridge/actions/policies?has_parents=true' \
+  -H 'X-GitHub-Api-Version: 2026-03-10'
+```
+
+The local-hook fixes are carried by #45. Until the event-policy and live-run gates
+are verified and the second check is required, the trusted companion is not an
+enforced boundary. Never disable the existing context to bootstrap this change.
