@@ -6,7 +6,9 @@ Architecture and security documents describe a target, not completed functionali
 
 Load skills from `skills/README.md`. Run narrow meaningful checks during development and the applicable full build once at completion. Report unavailable tests precisely. Never claim desktop QA based only on unit tests. Use a Fedora/GNOME/Wayland session for the supported desktop qualification; Xvfb is only an additional harness.
 
-Publish reviewed changes on a topic branch and PR. PR titles use `[Issue-N]`, with real issue numbers. Avoid redundant remote reads or repeated passing checks. Do not weaken repository protections or request extra host privileges just to simplify a task.
+Prepare reviewed changes on a topic branch and PR; publish when explicitly authorized for that action. PR titles use `[Issue-N]`, with real issue numbers. Avoid redundant remote reads or repeated passing checks. Do not weaken repository protections or request extra host privileges just to simplify a task.
+
+Use the [skill index](skills/README.md) for the GitHub workflow: `create-issue` for new proposals, `implement-spec-context` for an existing Issue, implementation and verification, `create-pull-request` for PR preparation/publication, and `github-issue-executive-summary` for a completed Issue's stakeholder outcome. Write all GitHub content in English. Drafts do not authorize remote writes; Issue creation, PR publication and completion comments require explicit authorization for their respective actions. Keep each skill canonical under `.agents/skills/`; provider-specific entries only point there.
 
 ## Publication preflight
 

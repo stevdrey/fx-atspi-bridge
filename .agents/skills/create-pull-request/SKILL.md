@@ -26,7 +26,7 @@ Use [PR #161](https://github.com/stevdrey/dokene/pull/161) as the writing-style 
 - `<number>` is the numeric ID of the primary linked GitHub Issue, without `#`, braces, or placeholders in the final title.
 - Preserve useful existing context such as `[Messaging][Phase 3]` after the required prefix, when relevant.
 - Summarize the actual change, not only the Issue name. Avoid vague titles and duplicating the prefix.
-- Example: `[Issue-123] [Messaging][Phase 3] Add the outbound message state machine`.
+- Format example for a proposed change (not a delivery claim): `[Issue-44] Standardize GitHub communication skills`.
 - If multiple Issues are addressed, select one primary Issue for the prefix; link the others in the body. Do not combine numbers inside the prefix.
 
 ## PR body template
@@ -57,7 +57,7 @@ Use these headings **in this order**, with concrete evidence and no empty or inv
 
 ## Risk & rollout
 
-<Risks, compatibility, tenant/security implications, database migrations, release flags, rollout, and rollback strategy when applicable. Say "Not applicable" with a reason for genuinely inapplicable topics.>
+<Relevant compatibility, privacy, FX/provider ownership, native/resource, platform and rollout risks; rollback approach. Say "Not applicable" with a reason for genuinely inapplicable topics.>
 
 ## Notes for reviewers
 
@@ -71,10 +71,18 @@ Closes #<primary-issue-number>
 - Keep `What` and `Why` distinct: outcome versus motivation.
 - Group `Changes` by subsystem (schema, domain, application, API, UI, tests, docs) as appropriate; describe observable behavior and important contracts, not a raw file dump.
 - In `How to test / verify`, provide runnable commands relative to a stated working directory and list honest results. Do not label tests as passed unless they actually passed; distinguish CI status from local checks.
-- In `Risk & rollout`, discuss migration/backward compatibility, rollback, security, tenant isolation, deployment toggles, and operational implications **when relevant**. Do not claim a migration is reversible if it has not been validated.
+- In `Risk & rollout`, discuss compatibility, rollback, password/redaction, FX/provider thread ownership, native cleanup, bounded resources and platform qualification **when relevant**. Do not claim rollback is validated without evidence.
 - In `Notes for reviewers`, call attention to important architectural or security decisions, unusual edge cases, limitations, and dependencies.
 - Use precise technical English, Markdown headings, and actionable content. Avoid generic filler, marketing language, and speculation stated as fact.
 - Include `Closes #N` **only** when this PR is intended to fully close that Issue on merge. Otherwise use `Refs #N`, `Part of #N`, or another non-closing reference, including for additional Issues where appropriate.
+
+## Publication and review communication
+
+Write PR titles, descriptions, review comments, merge-approval comments and linked Issue comments in English even when the conversation is in another language. Keep descriptions and comments concise: explain the resulting behavior, why it matters, validation and unresolved blockers. A draft is not authorization to publish or update a PR, push commits, comment, approve or merge. Reuse existing explicit authorization for its stated scope; otherwise prepare the concrete draft and leave the remote action pending.
+
+Review comments should identify actionable findings with evidence and impact. State which checks passed, failed or were not run and whether blockers remain. Do not invent review rounds, human approval, deployment or merge readiness. An approval statement requires successful applicable validation and no unresolved blockers; submitting a review or merging additionally requires authorization. Use `github-issue-executive-summary` for the separate stakeholder-facing Issue outcome after implementation is complete; PR authorization alone does not authorize that comment.
+
+Use an available GitHub connector or a scratch Markdown file with `gh ... --body-file <file>` for multiline content. Before an authorized creation, check for an existing PR for the same head/base; update the intended PR rather than duplicate it. After an ambiguous write, read remote state before retrying. Preserve unrelated discussion when editing.
 
 ## Publication checklist
 
