@@ -20,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.management.ThreadMXBean;
+import java.lang.management.ManagementFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,6 +110,32 @@ class NodeStoreTest {
         assertEquals(100, dense.size());
         assertEquals("initial", dense.get("n99").name());
         assertNull(shrunk.get("n99"));
+    }
+
+    @Test void denseSmallTreeCompactionDoesNotAllocateAnotherFullHashTable() {
+        var store = new NodeStore();
+        for (var i = 0; i < 103; i++) store.put("n" + i, node("n" + i, "initial"));
+        var initial = store.freeze();
+        for (var round = 0; round < 3; round++) {
+            for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "warmup"));
+            store.freeze();
+        }
+        for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "latest"));
+        var allocations = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+        assertTrue(allocations.isThreadAllocatedMemorySupported());
+        allocations.setThreadAllocatedMemoryEnabled(true);
+        var thread = Thread.currentThread().threadId();
+        var before = allocations.getThreadAllocatedBytes(thread);
+        var dense = store.freeze();
+        var bytes = allocations.getThreadAllocatedBytes(thread) - before;
+        assertTrue(bytes < 2048, "a correctly sized exclusive delta must not allocate a duplicate full table: " + bytes);
+        assertEquals(103, dense.size());
+        assertEquals("latest", dense.get("n0").name());
+        assertEquals("initial", initial.get("n0").name(), "published bases remain immutable");
+        for (var i = 1; i < 103; i++) store.remove("n" + i);
+        var shrunk = store.freeze();
+        assertEquals(Map.of("n0", node("n0", "latest")), shrunk);
+        assertEquals(103, dense.size(), "shrinking cannot mutate a previous view");
     }
 
     @Test void nullNodesAreRejected() {

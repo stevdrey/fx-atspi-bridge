@@ -18,6 +18,7 @@ package dev.desktopcontrol.fxatspi;
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -86,6 +87,52 @@ class FfmTest {
             var tuple = api.variant("('after failure', 7)");
             try { assertEquals(7, api.integer(tuple, 1)); }
             finally { api.release(tuple); }
+        }
+    }
+
+    @Test void signalBatchReusesOnlyTheCurrentPayloadAndRecoversFromParseFailure() {
+        try (var api = new Ffm(); var signals = api.signals()) {
+            var first = signals.parameters("('first', 7)");
+            assertSame(first, signals.parameters(new String("('first', 7)")));
+            assertEquals("first", api.text(first, 0));
+            var replacement = signals.parameters("('second', 8)");
+            assertEquals("second", api.text(replacement, 0));
+            assertEquals(8, api.integer(replacement, 1));
+            assertThrows(IllegalStateException.class, () -> signals.parameters("(invalid payload"));
+            var recovered = signals.parameters("('first', 7)");
+            assertEquals("first", api.text(recovered, 0));
+            assertEquals(7, api.integer(recovered, 1));
+        }
+    }
+
+    @Test void signalBatchBoundsPathStorageAndRejectsInvalidPathsBeforeNativeEmission() {
+        try (var api = new Ffm(); var signals = api.signals()) {
+            var first = signals.path("/first");
+            for (var i = 1; i < 64; i++) signals.path("/item" + i);
+            assertTrue(first.scope().isAlive());
+            var next = signals.path("/next");
+            assertFalse(first.scope().isAlive(), "previous path storage is released at the batch bound");
+            assertTrue(next.scope().isAlive());
+            assertThrows(IllegalArgumentException.class,
+                    () -> signals.emit(MemorySegment.NULL, "invalid-path", "org.example.Test", "Changed", "('safe',)"));
+            assertEquals("safe", api.text(signals.parameters("('safe',)"), 0));
+            signals.close();
+            signals.close();
+            assertFalse(next.scope().isAlive());
+            assertThrows(IllegalStateException.class, () -> signals.parameters("('closed',)"));
+        }
+    }
+
+    @Test void signalBatchRejectsOtherThreadsWithoutReleasingTheOwnersPayload() throws Exception {
+        try (var api = new Ffm(); var signals = api.signals()) {
+            var value = signals.parameters("('owner',)");
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                worker.submit(() -> {
+                    assertThrows(WrongThreadException.class, signals::close);
+                    assertThrows(WrongThreadException.class, () -> signals.parameters("('other',)"));
+                }).get(5, TimeUnit.SECONDS);
+            }
+            assertEquals("owner", api.text(value, 0));
         }
     }
 

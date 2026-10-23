@@ -1411,6 +1411,7 @@ public final class SceneObserver {
     }
 
     private List<String> childIds(Observed entry) {
+        if (entry.children.isEmpty()) return List.of();
         var ids = new ArrayList<String>(entry.children.size());
         List<Object> retained = null;
         for (var index = 0; index < entry.children.size(); index++) {

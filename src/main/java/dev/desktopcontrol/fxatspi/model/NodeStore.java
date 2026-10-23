@@ -29,7 +29,8 @@ import java.util.stream.Stream;
  * shares a base map that is never modified once shared and copies only the changes made since the last compaction,
  * so publishing after a few changes costs O(changes) rather than O(nodes). Changes are merged into a new base once they
  * exceed an eighth of it (a preferred floor of {@link #COMPACTION_MIN}, capped at half the live tree for small or
- * shrinking trees). Compaction builds a base sized for the live tree, so removed entries release their capacity.
+ * shrinking trees). Compaction uses a base sized for the live tree, reusing a correctly presized exclusive delta
+ * when possible and rebuilding after a high-water excess or tombstones so removed entries release their capacity.
  */
 public final class NodeStore {
     /** Preferred compaction floor for larger trees; small/shrinking trees cap it at half their live cardinality. */
@@ -37,7 +38,9 @@ public final class NodeStore {
     /** Shared with published views; replaced, never modified. */
     private Map<String, AccessibleNode> base = Map.of();
     /** Changes over {@link #base}; a {@code null} value removes a base entry. */
-    private HashMap<String, AccessibleNode> delta = new HashMap<>();
+    private HashMap<String, AccessibleNode> delta = HashMap.newHashMap(0);
+    /** Largest entry count or explicit presizing hint since the current delta was created. */
+    private int deltaPeak;
     private int size;
 
     public AccessibleNode get(String id) { return delta.containsKey(id) ? delta.get(id) : base.get(id); }
@@ -48,6 +51,7 @@ public final class NodeStore {
         var previous = get(id);
         if (previous == null) size++;
         delta.put(id, node);
+        deltaPeak = Math.max(deltaPeak, delta.size());
         return previous;
     }
 
@@ -58,12 +62,14 @@ public final class NodeStore {
         size--;
         if (base.containsKey(id)) delta.put(id, null);
         else delta.remove(id);
+        deltaPeak = Math.max(deltaPeak, delta.size());
         return previous;
     }
 
     public void clear() {
         base = Map.of();
-        delta = new HashMap<>();
+        delta = HashMap.newHashMap(0);
+        deltaPeak = 0;
         size = 0;
     }
 
@@ -80,12 +86,15 @@ public final class NodeStore {
     int pendingChanges() { return delta.size(); }
 
     private void compact() {
-        // Sized for the live tree: no rehash while merging, and tombstones never inflate the shared base's table.
-        var merged = HashMap.<String, AccessibleNode>newHashMap(size);
+        // An unpublished delta already presized exactly for the live tree can become the base without copying.
+        // Any high-water excess or tombstone requires a fresh live-sized table, so shrinkage releases capacity.
+        var reuse = deltaPeak == size && !delta.containsValue(null);
+        var merged = reuse ? delta : HashMap.<String, AccessibleNode>newHashMap(size);
         for (var entry : base.entrySet()) if (!delta.containsKey(entry.getKey())) merged.put(entry.getKey(), entry.getValue());
-        for (var entry : delta.entrySet()) if (entry.getValue() != null) merged.put(entry.getKey(), entry.getValue());
+        if (!reuse) for (var entry : delta.entrySet()) if (entry.getValue() != null) merged.put(entry.getKey(), entry.getValue());
         base = merged;
-        delta = HashMap.newHashMap(Math.min(size, COMPACTION_MIN));
+        deltaPeak = Math.min(size, COMPACTION_MIN);
+        delta = HashMap.newHashMap(deltaPeak);
     }
 
     /** Neither map is modified after construction; entries are copied out so callers cannot write through them. */

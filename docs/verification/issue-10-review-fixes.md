@@ -176,3 +176,96 @@ remain in owner-only temporary storage outside Git. The rewritten feature histor
 contains no generated captures, manifests, per-run JSON, fixture logs or evidence
 bundles. Temporary local storage is not a durable artifact service; future
 reproduction reruns the commands.
+
+## Remaining-budget investigation (2026-10-23)
+
+This follow-up preserves the 58d2aa1 90/92 campaign above as Failed. Its temporary
+raw captures did not survive the session restart. The authored metrics and source/
+JAR identities remain; no exact stack or GC root is invented for those lost samples.
+Fresh diagnostics below use a preserved ab507ce distribution and owner-only local
+state storage outside Git. They are not canonical qualification.
+
+### Findings and corrections
+
+- A 1,000-sample diagnostic reproduces a 32.869 ms bridge-on p99 versus 17.341 ms
+  bridge-off. The slow on-pulses are about 33 ms elapsed but only 1–2 ms FX CPU,
+  without overlapping recorded GC. The observer trace shows one 100-node flush
+  per pulse, typically 0.15–0.46 ms; repeated flushes are not the cause.
+- Allocation sampling identifies repeated signal preparation, variant parsing,
+  dense snapshot compaction and leaf-child list construction. A provider-owned
+  batch now reuses only the last consecutive signal payload within one reconcile
+  call. It preserves every signal and its order. Temporary path/error buffers
+  rotate after 64 emissions. Replacing/closing the batch releases the owned native
+  reference, strings and temporary arena on the provider thread. No queue, timer,
+  shared lock, persistent application-value cache or public API is introduced.
+- [GLib Variant.parse](https://docs.gtk.org/glib/type_func.Variant.parse.html) returns
+  a nonfloating owning reference; [Gio DBusConnection.emit_signal](https://docs.gtk.org/gio/method.DBusConnection.emit_signal.html)
+  borrows nonfloating parameters. Batch lifetime follows those contracts.
+- Dense small-tree compaction allocated another full table even when its exclusive
+  delta was already correctly presized. Reuse is permitted only when its explicit
+  presizing/peak-entry bound equals live cardinality and no tombstones exist. A
+  high-water excess or tombstones still builds a fresh live-sized base. Published
+  views remain immutable. Leaf projection also returns the immutable empty child
+  list directly instead of allocating a new empty list.
+
+| Resource | Owner and bound | Release / failure |
+| --- | --- | --- |
+| Cached parsed payload | Provider, one most-recent value per reconcile | Unref and clear on replacement/close, including parse failure |
+| Native path/error storage | Confined provider arena, at most 64 emissions before rotation | Close on rotation and batch close; invalid paths never enter native emission |
+| Snapshot delta | FX owner; expected/peak mapping count tracked on every mutation | Reuse only at the live-size bound without tombstones; otherwise fresh presized base |
+| Diagnostic captures | Private local state directory, synthetic fixture/classes/times only | Seven-day review/cleanup retention; never committed or uploaded |
+
+### Directed observations and regression evidence
+
+The signal-only candidate consistently reduces allocation from about 383 to 353
+KiB/sample. Its first directed repetition still exceeds 29 ms; it is retained as
+a failure, not omitted in favor of its median. These are diagnostic comparisons,
+not a completed quick matrix or proof that all latency tails are eliminated.
+
+| Repetition | Reference p99 (ms) | Signal-only p99 (ms) | Reference allocation (KiB/sample) | Signal-only allocation (KiB/sample) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 17.437 | 30.506 | 382.753 | 352.563 |
+| 2 | 28.730 | 23.061 | 382.792 | 352.612 |
+| 3 | 31.567 | 25.049 | 382.710 | 352.609 |
+
+The dense-compaction regression measures only freeze allocation on the calling
+thread, after warming its classes and constructing input nodes. It fails before
+the correction at **3,720 bytes**, and passes afterward below **2,048 bytes**; this
+is an implementation allocation regression, not a replacement SC-01 budget.
+Randomized immutable-view and shrinkage tests also pass. Native tests cover current
+payload reuse/replacement, malformed parse recovery, invalid paths, buffer rotation,
+idempotent close and wrong-thread rejection before releasing owned resources.
+
+Two directed structural controls with the original 50 warmups, 200 samples, 10 s
+idle and 100 structural cycles measured **0.521 and 0.403 MiB**, both below 2 MiB.
+A separate class-histogram pair measured 0.233 MiB off and 0.212 MiB on in the
+benchmark metric, with class-count growth below 0.6 MiB and no sustained growth in
+the main bridge ownership classes. Histogram instrumentation forces additional GC
+and is not qualification. The earlier 2.763 MiB observation is not reproduced;
+its exact cause remains unconfirmed. Reduced transient allocation is demonstrated,
+but no heap-leak diagnosis or final heap-budget pass is claimed from these controls.
+
+### Executed checks and pending qualification
+
+JDK remains Zulu 27+35, JavaFX 27, Gradle wrapper 9.8.1.
+
+- `./gradlew test --tests dev.desktopcontrol.fxatspi.FfmTest --tests dev.desktopcontrol.fxatspi.model.NodeStoreTest :examples:fx-lab:installDist --no-daemon --console=plain` — **Passed: 15 FFM and 6 model tests**. The separate red run of the allocation regression Failed as expected before the compaction change.
+- `REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'` — **267 Passed**.
+- `node --test .agents/scripts/pr-*.test.mjs` — **77 Passed**.
+- `./gradlew verifyConsumerIntegration --no-daemon --console=plain` — **Passed**, publication/notices and independent modular/classpath consumer builds. This does not claim fresh desktop consumer acceptance.
+- Benchmark source, baseline.conf, fixed budgets, validator, canonical plan/workload and retry rules are byte-unchanged from ab507ce.
+
+**Not complete:** fresh full check, desktop acceptance and the full 44-run/92-check
+quick campaign for this candidate. GNOME ScreenSaver.GetActive returned true after
+a directed candidate JVM failed to finish within its 90 s diagnostic deadline.
+Its timeout and the subsequently interrupted heap diagnostic are retained. The
+session is blocked, so these attempts cannot become performance evidence. No
+settings are changed or lock bypassed. A temporary idle inhibitor is used only
+during active QA, and the user has been asked to unlock the graphical session.
+This host has no Xvfb installation; CI can verify its own Xvfb-based code checks,
+but that would not substitute for the required real desktop qualification.
+
+P2 remains open. The previous 49/49 and 90/92 results retain their source attribution;
+they do not certify this changed production runtime. After unlock, repeat the
+clean forced build, independent clients and canonical quick commands above, retain
+every valid failure and record the new source/JAR hashes and exact outcomes.

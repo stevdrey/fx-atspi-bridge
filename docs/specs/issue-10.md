@@ -187,3 +187,39 @@ privacy transitions require the current ancestor-sensitivity regression plus the
 external geometry/privacy suite. Keep all historical campaigns attributed to their
 original commits. Do not infer current-head acceptance from historical artifact
 equivalence. No workload, budget, validity or retry rule changes are authorized.
+
+## Remaining fixed-budget failures (2026-10-23)
+
+Preserve the clean 58d2aa1 campaign's valid 2.762955 MiB structural-heap and
+31.368477 ms p99 failures. Its temporary raw capture did not survive the session
+restart; the authored source/JAR identities, values and failure history remain.
+Investigate fresh paired controls and class-only GC/JFR timing diagnostics outside
+Git. Never claim an exact stack for the lost original pulse. Raw diagnostics belong
+in owner-only persistent local storage, with seven-day review/cleanup retention.
+
+A directed profile identifies repeated native signal preparation as an allocation
+source. Test a provider-owned signal batch scoped strictly to one reconcile call:
+one most-recent nonfloating GVariant, replaced on different payloads, and temporary
+path/error storage recycled after at most 64 emissions. No content, native reference
+or segment may survive batch close. Preserve signal order/count, sanitization, native
+thread ownership and failure cleanup. Native ownership follows GLib Variant.parse
+and Gio DBusConnection.emit_signal; no shared locks, queues or timers are added.
+
+Verify same-payload reuse, payload replacement, malformed data/path recovery,
+wrong-thread rejection, bounded temporary storage and idempotent disposal. Confirm
+benefit with matched directed runs before retaining the optimization. Investigate
+the heap failure separately using live-class counts and GC/TLAB logs; diagnostic
+instrumentation is never qualification. Finish with a clean forced build, external
+privacy/geometry/consumer suites and the full 44-run/92-comparison quick matrix,
+with original budgets, workload, guards and retry policy unchanged. Record every
+valid failure and retain only concise authored summaries in the 40-file PR.
+
+The same profile identifies dense small-tree compaction and empty leaf-child lists
+as avoidable allocations. Transfer an exclusive delta only if its presizing/peak
+entry bound equals the current live cardinality and it has no tombstones. Otherwise
+construct a fresh live-sized base, preserving shrinkage and immutable earlier views.
+Track that bound on every delta mutation and reset it on clear/replacement; never
+infer private HashMap capacity. An allocation-counter regression must fail on the
+previous duplicate-table path and pass without constructing an additional full
+table. Return the immutable empty list immediately for leaves; do not cache child
+IDs across structural changes or privacy-driven identity rotation.

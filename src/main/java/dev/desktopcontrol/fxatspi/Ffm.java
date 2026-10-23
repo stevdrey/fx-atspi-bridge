@@ -373,19 +373,77 @@ final class Ffm implements AutoCloseable {
         if (valid == 0) throw new IllegalArgumentException("Invalid object path");
         return nativePath;
     }
-    /** Parse and emit within one call-scoped arena; no application content survives this call. */
+    /** Standalone call; provider reconciliation uses one explicitly scoped batch. */
     void emitSignal(MemorySegment connection, String path, String iface, String member, String text) {
-        open();
-        try (Arena temporary = Arena.ofConfined()) {
-            var parameters = variant(temporary, text);
-            try {
-                var error = temporary.allocate(ADDRESS);
-                var nativePath = objectPath(temporary, path);
-                try { var ignored = (int) emitSignal.invokeExact(connection, NIL, nativePath, signalName(temporary, iface),
-                        signalName(temporary, member), parameters, error); }
-                catch (Throwable failure) { throw failed("g_dbus_connection_emit_signal", failure); }
-                check(error);
-            } finally { release(parameters); }
+        try (var signals = signals()) { signals.emit(connection, path, iface, member, text); }
+    }
+
+    SignalBatch signals() { open(); return new SignalBatch(); }
+
+    /**
+     * One provider reconcile call owns this batch. Only the last payload is retained; path/error buffers rotate
+     * after 64 emissions. Parsed variants are nonfloating owning references and GDBus borrows them for emission.
+     * Closing or replacing the payload releases that reference; nothing survives into the next reconciliation.
+     */
+    final class SignalBatch implements AutoCloseable {
+        private static final int BUFFER_LIMIT = 64;
+        private final Thread owner = Thread.currentThread();
+        private Arena temporary;
+        private MemorySegment error = NIL;
+        private int paths;
+        private String lastText;
+        private MemorySegment parameters = NIL;
+        private boolean disposed;
+
+        private void checkOwner() {
+            if (Thread.currentThread() != owner) throw new WrongThreadException("Signal batch owner");
+        }
+        private void openBatch() {
+            checkOwner();
+            if (disposed) throw new IllegalStateException("Signal batch closed");
+            open();
+        }
+        MemorySegment parameters(String text) {
+            openBatch();
+            if (text.equals(lastText)) return parameters;
+            var previous = parameters;
+            parameters = NIL; lastText = null;
+            release(previous);
+            parameters = variant(text);
+            lastText = text;
+            return parameters;
+        }
+        MemorySegment path(String value) {
+            openBatch();
+            if (temporary == null || paths == BUFFER_LIMIT) {
+                var next = Arena.ofConfined();
+                MemorySegment nextError;
+                try { nextError = next.allocate(ADDRESS); }
+                catch (RuntimeException | Error failure) { next.close(); throw failure; }
+                var previous = temporary;
+                temporary = next; error = nextError; paths = 0;
+                if (previous != null) previous.close();
+            }
+            paths++;
+            return objectPath(temporary, value);
+        }
+        void emit(MemorySegment connection, String path, String iface, String member, String text) {
+            var value = parameters(text);
+            var nativePath = path(path);
+            error.set(ADDRESS, 0, NIL);
+            try { var ignored = (int) emitSignal.invokeExact(connection, NIL, nativePath, signalName(temporary, iface),
+                    signalName(temporary, member), value, error); }
+            catch (Throwable failure) { throw failed("g_dbus_connection_emit_signal", failure); }
+            check(error);
+        }
+        @Override public void close() {
+            checkOwner();
+            if (disposed) return;
+            disposed = true;
+            var previous = parameters;
+            parameters = NIL; lastText = null;
+            try { release(previous); }
+            finally { if (temporary != null) { temporary.close(); temporary = null; error = NIL; } }
         }
     }
 

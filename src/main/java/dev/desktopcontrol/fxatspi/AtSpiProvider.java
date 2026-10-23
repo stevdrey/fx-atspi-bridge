@@ -605,36 +605,38 @@ final class AtSpiProvider {
         var changes = SnapshotDiff.diff(before, after, ids);
         reconciledChanges.addAndGet(changes.size());
         for (var change : changes) if (change instanceof Added(var id)) export(id);
-        for (var change : changes) {
-            switch (change) {
-                case Added(var id) -> signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
-                case SnapshotDiff.State(var id, var state, var value) -> stateEvent(id, state, value); // qualified: State is also the lifecycle enum
-                case SnapshotDiff.RoleChanged(var id, var role) -> event(id,"PropertyChange","('accessible-role', 0, 0, <uint32 "+role+">, @a{sv} {})");
-                case SnapshotDiff.AutomationId(var id, var value) -> event(id,"PropertyChange","('accessible-id', 0, 0, <"+Ffm.quote(value)+">, @a{sv} {})");
-                case SnapshotDiff.SelectionChanged(var id) -> event(id,"SelectionChanged","('', 0, 0, <0>, @a{sv} {})");
-                case SnapshotDiff.ActionsChanged(var id) -> event(id,"PropertyChange","('accessible-actions', 0, 0, <0>, @a{sv} {})");
-                case Name(var id, var name) -> event(id,"PropertyChange","('accessible-name', 0, 0, <"+Ffm.quote(name)+">, @a{sv} {})");
-                case TextDeleted(var id, var text) -> event(id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
-                case TextInserted(var id, var text) -> event(id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
-                case Caret(var id, var offset) -> event(id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
-                case BoundsChanged(var id, var bounds) -> event(id, "BoundsChanged",
-                        "('', 0, 0, <" + AtSpiObjects.rectangle(bounds) + ">, @a{sv} {})");
-                case ChildRemoved(var id, var index, var child) -> childEvent(id,"remove",index,child);
-                case ChildAdded(var id, var index, var child) -> childEvent(id,"add",index,child);
-                case Reshaped(var id) -> {
-                    // Same path, new interfaces: GDBus refuses a second Accessible registration, so unregister first.
-                    // Calls dispatch on this thread, so none can arrive between the two steps.
-                    unexport(id);
-                    export(id);
-                    signal("cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+        try (var signals = ffi.signals()) {
+            for (var change : changes) {
+                switch (change) {
+                    case Added(var id) -> signal(signals, "cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+                    case SnapshotDiff.State(var id, var state, var value) -> stateEvent(signals, id, state, value); // qualified: State is also the lifecycle enum
+                    case SnapshotDiff.RoleChanged(var id, var role) -> event(signals, id,"PropertyChange","('accessible-role', 0, 0, <uint32 "+role+">, @a{sv} {})");
+                    case SnapshotDiff.AutomationId(var id, var value) -> event(signals, id,"PropertyChange","('accessible-id', 0, 0, <"+Ffm.quote(value)+">, @a{sv} {})");
+                    case SnapshotDiff.SelectionChanged(var id) -> event(signals, id,"SelectionChanged","('', 0, 0, <0>, @a{sv} {})");
+                    case SnapshotDiff.ActionsChanged(var id) -> event(signals, id,"PropertyChange","('accessible-actions', 0, 0, <0>, @a{sv} {})");
+                    case Name(var id, var name) -> event(signals, id,"PropertyChange","('accessible-name', 0, 0, <"+Ffm.quote(name)+">, @a{sv} {})");
+                    case TextDeleted(var id, var text) -> event(signals, id,"TextChanged","('delete', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
+                    case TextInserted(var id, var text) -> event(signals, id,"TextChanged","('insert', 0, "+text.codePointCount(0,text.length())+", <"+Ffm.quote(text)+">, @a{sv} {})");
+                    case Caret(var id, var offset) -> event(signals, id,"TextCaretMoved","('', "+offset+", 0, <0>, @a{sv} {})");
+                    case BoundsChanged(var id, var bounds) -> event(signals, id, "BoundsChanged",
+                            "('', 0, 0, <" + AtSpiObjects.rectangle(bounds) + ">, @a{sv} {})");
+                    case ChildRemoved(var id, var index, var child) -> childEvent(signals, id,"remove",index,child);
+                    case ChildAdded(var id, var index, var child) -> childEvent(signals, id,"add",index,child);
+                    case Reshaped(var id) -> {
+                        // Same path, new interfaces: GDBus refuses a second Accessible registration, so unregister first.
+                        // Calls dispatch on this thread, so none can arrive between the two steps.
+                        unexport(id);
+                        export(id);
+                        signal(signals, "cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
+                    }
+                    case Removed(var id) -> { signal(signals, "cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
                 }
-                case Removed(var id) -> { signal("cache",PREFIX+"Cache","RemoveAccessible","("+reference(id)+",)"); unexport(id); }
             }
         }
         if (running) acknowledgeUpdate(after.policyRevision());
     }
-    private void childEvent(String id,String type,int index,String child) {
-        event(id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
+    private void childEvent(Ffm.SignalBatch signals, String id,String type,int index,String child) {
+        event(signals, id,"ChildrenChanged","("+Ffm.quote(type)+", "+index+", 0, <"+reference(child)+">, @a{sv} {})");
     }
     private void embedded(MemorySegment source, MemorySegment result) {
         embedOutstanding = false;
@@ -891,11 +893,11 @@ final class AtSpiProvider {
         if (failure instanceof Rejected rejected) ffi.returnError(invocation, rejected.errorName(), rejected.getMessage());
         else ffi.returnError(invocation, Rejected.INVALID_ARGS, "Operation failed");
     }
-    private void stateEvent(String id, String state, boolean value) { event(id, "StateChanged", "(" + Ffm.quote(state) + ", " + (value ? 1 : 0) + ", 0, <0>, @a{sv} {})"); }
-    private void event(String id, String member, String value) { signal(id,PREFIX+"Event.Object",member,value); }
-    private void signal(String id, String iface, String member, String value) {
+    private void stateEvent(Ffm.SignalBatch signals, String id, String state, boolean value) { event(signals, id, "StateChanged", "(" + Ffm.quote(state) + ", " + (value ? 1 : 0) + ", 0, <0>, @a{sv} {})"); }
+    private void event(Ffm.SignalBatch signals, String id, String member, String value) { signal(signals, id,PREFIX+"Event.Object",member,value); }
+    private void signal(Ffm.SignalBatch signals, String id, String iface, String member, String value) {
         if (!registered || !running) return;
-        try { ffi.emitSignal(connection, path(id), iface, member, value); }
+        try { signals.emit(connection, path(id), iface, member, value); }
         catch (Throwable error) { System.err.println("AT-SPI event failed: " + code(error)); }
     }
     private String xml(String id) { return id.equals(CACHE_ID) ? cacheXml() : AtSpiObjects.xml(snapshot.get().get(id)); }
