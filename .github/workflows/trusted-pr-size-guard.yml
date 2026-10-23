@@ -43,6 +43,7 @@ jobs:
               const qaCapture = /(^|\/)(qa|benchmarks?|verification)\/(screenshots|snapshots|runs|logs|dumps)\//;
               const generatedExtension = /\.(jsonl?|ndjson|csv|tsv|txt|log|xml|html?|png|jpe?g|webp|gif|snap|dump|hprof|jfr|bin|zip|gz|sha256)$/;
               if (outputDirectory.test(p)) return 'generated test/QA/benchmark output directory';
+              if (/(^|\/)build\/reports\/tests(\/|$)/.test(p)) return 'generated Gradle test report directory';
               if ((verificationData.test(p) || qaCapture.test(p) || rootCapture.test(p)) &&
                   (generatedExtension.test(p) || /(^|\/)(manifest|receipt)([.-]|$)/.test(p))) {
                 return 'raw verification capture or evidence index';

@@ -69,3 +69,19 @@ gh api 'repos/stevdrey/fx-atspi-bridge/actions/policies?has_parents=true' \
 The local-hook fixes are carried by #45. Until the event-policy and live-run gates
 are verified and the second check is required, the trusted companion is not an
 enforced boundary. Never disable the existing context to bootstrap this change.
+
+
+## Follow-up review — Gradle HTML reports
+
+Reject the conventional Gradle `build/reports/tests/` output tree at the repository
+root and under subprojects, including HTML pages and generated report assets.
+Apply the same canonical classifier to both generated workflows, net PR paths and
+intermediate commits. A report introduced and deleted later must still fail; removal
+of baseline reports remains allowed. Preserve authored HTML fixtures outside those
+output trees, including source/test-resource fixtures and their intermediate history.
+Do not classify arbitrary HTML by extension or add a blanket fixture-directory bypass.
+
+Verify root/module reports, added/modified/renamed report paths, transient captures,
+baseline removals and legitimate HTML fixtures through both actual embedded workflow
+programs. Regenerate both workflows from the canonical module. No runtime, permission,
+event-policy or required-check configuration changes are needed for this correction.

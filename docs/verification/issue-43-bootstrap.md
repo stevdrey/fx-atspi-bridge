@@ -47,3 +47,26 @@ insights for the fresh target-event run and required-context activation remain
 post-merge gates. A run allowed only by default evaluate mode cannot satisfy the
 explicit active-policy prerequisite. No branch-rule weakening or automatic merge
 was performed. Raw API responses are not committed.
+
+
+## Follow-up review — Gradle test reports and HTML fixtures
+
+The review of `4e8839b` reproduced a false PASS for root and subproject Gradle HTML
+reports. The canonical classifier now rejects files under `build/reports/tests/`
+at the root or below subprojects, including HTML pages and report CSS/JavaScript.
+Both checked-in workflows were regenerated from that source. Authored HTML fixtures
+outside the generated output tree remain permitted; no extension-wide HTML ban or
+blanket fixture exemption was introduced.
+
+`node --test .agents/scripts/pr-*.test.mjs` passed all 25 tests with zero failures
+or skips. Eight new tests execute both embedded workflows: root/subproject reports,
+added/modified/renamed paths, generated assets, introduction followed by deletion
+with a zero-file net diff, baseline-report removal with file counting, and legitimate
+HTML fixtures in both the net diff and intermediate history. Only authored path/API
+fixtures are committed; no actual generated report is added to Git.
+
+Manual preflight using the implementation script with this worktree as cwd passed
+at 9/40 paths; `git diff --check` passed. Publication CI is tracked in
+[PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46). Token permissions,
+event policy 8485 and ruleset configuration are unchanged. The existing post-merge
+target-event execution and required-context activation gates still apply.
