@@ -461,8 +461,8 @@ Budgets, fixture, JavaFX 27, JDK 27, validity guards and retry policy are unchan
 
 Clean measured source: **`c1a9bb1a4f3975688d8c706e42bb08162a22a6d6`**. New production bridge JAR,
 new forced functional collection and new complete canonical matrix: **Passed**.
-The later publication changes authored documentation only; the measurements
-remain attributed to this clean candidate. This is not reuse of c784278 or 6c503d2.
+The later publication changes authored documentation and the Python CI-step Git
+process environment only; the measurements remain attributed to this clean candidate. This is not reuse of c784278 or 6c503d2.
 
 | Gate | Actual result |
 | --- | --- |
@@ -473,7 +473,7 @@ remain attributed to this clean candidate. This is not reuse of c784278 or 6c503
 | Canonical SC-01 quick | 44/44 valid runs, zero retries; **92/92 comparisons Passed**, no exceedances |
 | Combined report | **Passed, exit 0**; functional/artifact/resource/performance gates Passed |
 | Copy revalidation and preservation | Same Passed report, exit 0; all 112 original capture files retain their hashes |
-| Python / Node regressions | 267 / 77 Passed before collection; no tooling changes afterward |
+| Python / Node regressions | 267 / 77 Passed before collection and again with the corrected CI Git environment |
 | Stable release | Still Blocked: full #15, Orca #32 and additional backend/platform coverage |
 
 The three previously affected 100-node metrics pass every repetition:
@@ -532,3 +532,35 @@ Generated captures/logs and all failed/interrupted diagnostics remain in owner-o
 persistent QA storage outside Git, for manual review/cleanup by 2026-10-30.
 Only authored summaries and reproducible source/tests are published. The temporary
 inhibitor is released after measurement; no desktop configuration is changed.
+
+
+## CI follow-up: temporary Git maintenance ownership
+
+The first documentation-head build at 43e8684 failed in Python 3.12 cleanup of
+`CleanTreeTest.test_clean_tree_passes_and_output_dir_is_excluded` and
+`test_output_dir_outside_the_repository_is_supported`: `Directory not empty`
+under temporary `.git/objects` and `.git`. Java/native check and both published
+consumers had already Passed. Retain this [Failed CI run](https://github.com/stevdrey/fx-atspi-bridge/actions/runs/40037200812);
+it is not a performance failure or a reason to relabel the matrix.
+
+The cleanup race is consistent with detached Git maintenance writing after the
+fixture command returned. Git 2.55's [documented configuration](https://github.com/git/git/blob/v2.55.0/Documentation/config/maintenance.adoc)
+defaults automatic maintenance to detached execution. Scope `gc.autoDetach=false`
+and `maintenance.autoDetach=false` through `GIT_CONFIG_COUNT` to the workflow's
+Python test step. Maintenance remains enabled and runs synchronously; temporary
+repositories are removed after their Git work completes. No global Git config,
+cleanup error suppression, retry or weakened assertion is introduced.
+
+Local Git 2.56 stress runs execute the five existing CleanTree tests 20 times with
+automatic commit-graph maintenance forced. Both before/after runs pass 100 cases;
+the CI cleanup failure itself is not reproduced locally. Trace2 records 100
+`git maintenance run --auto --quiet --detach` children before and 100
+`--no-detach` children afterward, with commit-graph writes in both. The trace
+verifies process lifetime policy rather than claiming a before-failing local test.
+With the exact two-setting CI environment, all 267 Python tests pass in 22.251 s;
+all 77 Node policy tests also pass. Assertions and test sources remain unchanged.
+
+The workflow is outside the recorded source/test/tool fingerprint set. All 132
+fingerprinted files, five installed JARs and 40 output fingerprints still match
+the c1a9bb1 collection; all 112 original capture hashes remain intact. No new
+runtime measurement is claimed for this CI-environment-only correction.

@@ -297,3 +297,11 @@ Prior Failed campaigns retain their attribution and outcomes. The graphics-load
 condition is documented; exact historical allocation variance is not claimed
 solved from a later trace. Full #15, Orca #32 and extra backend coverage remain
 separate stable-release requirements.
+
+
+The documentation-head CI exposed temporary Git repository deletion racing with
+background maintenance. Keep Git maintenance foreground only in the Python CI
+step using process-scoped configuration; preserve all assertions and cleanup
+errors. Existing forced-maintenance stress cases and the complete Python/Node
+suites pass. This changes neither the measured runtime nor any of its 132 source/
+test/tool, five JAR or 40 output fingerprints; retain c1a9bb1 matrix attribution.

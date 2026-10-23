@@ -40,4 +40,10 @@ jobs:
       - name: Test baseline tooling
         env:
           REQUIRE_ATSPI_TESTS: '1'  # fail instead of skipping the probe suite when the bindings are missing
+          # Temporary Git fixtures must finish maintenance before their directories are removed.
+          GIT_CONFIG_COUNT: '2'
+          GIT_CONFIG_KEY_0: gc.autoDetach
+          GIT_CONFIG_VALUE_0: 'false'
+          GIT_CONFIG_KEY_1: maintenance.autoDetach
+          GIT_CONFIG_VALUE_1: 'false'
         run: python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'
