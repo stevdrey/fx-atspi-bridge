@@ -1,26 +1,26 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import policy from './pr-policy.cjs';
 import { BASE, HEAD, embeddedWorkflow, runCI } from './pr-policy-fixtures.mjs';
 
-test('both standalone workflows exactly match canonical code and use read-only metadata', () => {
-  for (const trusted of [false, true]) {
-    const workflow = embeddedWorkflow(trusted);
-    assert.equal(workflow, policy.renderWorkflow(trusted));
-    assert.match(workflow, new RegExp(`  ${trusted ? 'pull_request_target' : 'pull_request'}:`));
-    assert.match(workflow, /branches: \[main\]/);
-    assert.match(workflow, /types: \[opened, reopened, synchronize, ready_for_review, edited\]/);
-    assert.match(workflow, /permissions:\n  pull-requests: read\n  contents: read\n/);
-    assert.match(workflow, new RegExp(`concurrency:\\n  group: ${trusted ? 'trusted-' : ''}pr-size-guard-\\$\\{\\{ github\\.event\\.pull_request\\.number \\}\\}\\n  cancel-in-progress: true\\n`));
-    assert.doesNotMatch(workflow, /^\s+if:/m);
-    assert.match(workflow, trusted ? /name: Trusted PR file count/ : /name: PR file count/);
-    assert.doesNotMatch(workflow, /checkout|contents: write|secrets\.|github\.event\.pull_request\.head|download-artifact|restore.*cache/);
-    assert.match(workflow, /actions\/github-script@[0-9a-f]{40}/);
-  }
+test('the single trusted workflow exactly matches canonical code and uses read-only metadata', () => {
+  const workflow = embeddedWorkflow();
+  assert.equal(workflow, policy.renderWorkflow());
+  assert.match(workflow, /\n  pull_request_target:\n/);
+  assert.doesNotMatch(workflow, /\n  pull_request:|branches:/);
+  assert.match(workflow, /types: \[opened, reopened, synchronize, ready_for_review, edited\]/);
+  assert.match(workflow, /permissions:\n  pull-requests: read\n  contents: read\n/);
+  assert.match(workflow, /name: Trusted PR file count/);
+  assert.match(workflow, /concurrency:\n  group: trusted-pr-size-guard-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true\n/);
+  assert.doesNotMatch(workflow, /^\s+if:/m);
+  assert.doesNotMatch(workflow, /checkout|contents: write|secrets\.|github\.event\.pull_request\.head|download-artifact|restore.*cache/);
+  assert.match(workflow, /actions\/github-script@[0-9a-f]{40}/);
+  assert.throws(() => readFileSync(new URL('../../.github/workflows/pr-size-guard.yml', import.meta.url)), /ENOENT/);
 });
-for (const trusted of [false, true]) for (const count of [0, 30, 31, 40, 41]) {
-  test(`${trusted ? 'trusted' : 'bootstrap'} CI boundary ${count}`, async () => {
-    const e = await runCI(count, undefined, { trusted });
+for (const count of [0, 30, 31, 40, 41]) {
+  test(`trusted CI boundary ${count}`, async () => {
+    const e = await runCI(count);
     assert.equal(e.failures.length, count > 40 ? 1 : 0);
     assert.equal(e.warnings.length, count > 30 && count <= 40 ? 1 : 0);
     assert.equal(e.tables.length, 1);
@@ -36,33 +36,17 @@ test('CI invalid counts, API failures, incomplete/duplicate metadata and stale r
   assert.equal((await runCI(2, Array(2).fill({ filename: 'same', status: 'added' }))).failures.length, 1);
   assert.equal((await runCI(1, [{ filename: 'bad', status: 'unknown' }])).failures.length, 1);
 });
-test('CI bounds every request with an abort signal', async () => {
-  const e = await runCI(1);
-  assert.equal(e.signals.length, 2);
-  for (const signal of e.signals) assert.ok(signal instanceof AbortSignal);
-});
-test('CI reports an over-limit count even when history inspection fails', async () => {
-  for (const trusted of [false, true]) {
-    const e = await runCI(45, undefined, { trusted, historyFailure: true });
-    assert.equal(e.failures.length, 2);
-    assert.match(e.failures[0], /^45\/40 changed files\. Split/);
-    assert.match(e.failures[1], /Could not verify complete PR metadata/);
-    assert.doesNotMatch(e.failures.join(''), /private/);
-  }
-});
 test('CI paginates all net paths and detects evidence after first page', async () => {
   const files = Array.from({ length: 101 }, (_, i) => ({ filename: `src/${i}.java`, status: 'modified' }));
   files[100] = { filename: 'qa-results/run.json', status: 'added' };
   const e = await runCI(101, files); assert.deepEqual(e.pages, [1, 2]); assert.equal(e.failures.length, 2);
 });
 test('introduced then deleted evidence fails even with a zero-file net PR diff', async () => {
-  for (const trusted of [false, true]) {
-    const file = { filename: 'qa-results/transient.json', status: 'added' };
-    const e = await runCI(0, [], { trusted, history: [
-      { sha: 'c'.repeat(40), files: [file] }, { sha: HEAD, files: [{ ...file, status: 'removed' }] },
-    ] });
-    assert.equal(e.failures.length, 1); assert.match(e.failures[0], /intermediate commits/); assert.doesNotMatch(e.info.join(''), /PASS/);
-  }
+  const file = { filename: 'qa-results/transient.json', status: 'added' };
+  const e = await runCI(0, [], { history: [
+    { sha: 'c'.repeat(40), files: [file] }, { sha: HEAD, files: [{ ...file, status: 'removed' }] },
+  ] });
+  assert.equal(e.failures.length, 1); assert.match(e.failures[0], /intermediate commits/); assert.doesNotMatch(e.info.join(''), /PASS/);
 });
 test('per-commit pagination detects transient captures after first page', async () => {
   const files = Array.from({ length: 101 }, (_, i) => ({ filename: `src/${i}.java`, status: 'added' }));
@@ -86,6 +70,39 @@ test('merge-inherited baseline captures are allowed but merge-created captures f
   options.trees[tree][0].sha = '2'.repeat(40);
   assert.equal((await runCI(0, [], options)).failures.length, 1);
 });
+test('CI accepts a head commit that is not last in the date-ordered commit list', async () => {
+  const first = { sha: HEAD, files: [] }, second = { sha: 'c'.repeat(40), files: [{ filename: 'src/a.java', status: 'added' }] };
+  const e = await runCI(0, [], { history: [first, second], head: HEAD });
+  assert.equal(e.failures.length, 0);
+  assert.equal((await runCI(0, [], { history: [first, second], head: '9'.repeat(40) })).failures.length, 1);
+});
+test('CI failures name the policy reason but never raw API messages', async () => {
+  const capacity = await runCI(1, undefined, { commitCount: 201 });
+  assert.match(capacity.failures[0], /: Unverifiable PR commit count\./);
+  const api = await runCI(1, undefined, { apiFailure: true });
+  assert.match(api.failures[0], /: API or unexpected error \(HTTP 502\)\./); assert.doesNotMatch(api.failures[0], /private/);
+});
+test('CI lists each generated path once, with its introducing commit', async () => {
+  const file = { filename: 'qa-results/run.json', status: 'added' };
+  const e = await runCI(1, [file], { history: [{ sha: HEAD, files: [file] }] });
+  assert.equal(e.failures.length, 1); assert.equal(e.failures[0].match(/qa-results\/run\.json/g).length, 1);
+  assert.match(e.failures[0], new RegExp(`at ${HEAD.slice(0, 12)}`));
+  assert.deepEqual(e.tables[0].at(-1), ['Recognizable generated outputs (including history)', '1']);
+});
+
+
+test('CI bounds metadata requests with abort signals', async () => {
+  const e = await runCI(1);
+  assert.equal(e.signals.length, 2);
+  for (const signal of e.signals) assert.ok(signal instanceof AbortSignal);
+});
+test('CI reports an over-limit count even when history inspection fails', async () => {
+  const e = await runCI(45, undefined, { historyFailure: true });
+  assert.equal(e.failures.length, 2);
+  assert.match(e.failures[0], /^45\/40 changed files\. Split/);
+  assert.match(e.failures[1], /Could not verify complete PR metadata/);
+  assert.doesNotMatch(e.failures.join(''), /private/);
+});
 
 const gradleOutputs = [
   'build/reports/tests/test/index.html',
@@ -106,11 +123,11 @@ const authoredFixtures = [
   'docs/examples/test-report.html',
   'src/main/java/example/build/reports/Report.java',
 ];
-for (const trusted of [false, true]) {
-  const label = trusted ? 'trusted' : 'bootstrap';
+{
+  const label = 'trusted';
   test(`${label} CI rejects root/subproject Gradle build outputs and report assets`, async () => {
     for (const filename of gradleOutputs) for (const status of ['added', 'modified', 'renamed']) {
-      const e = await runCI(1, [{ filename, status }], { trusted });
+      const e = await runCI(1, [{ filename, status }]);
       assert.equal(e.failures.length, 1, filename + status);
       assert.match(e.failures[0], /Generated evidence is prohibited/);
       assert.doesNotMatch(e.info.join(''), /PASS/);
@@ -118,7 +135,7 @@ for (const trusted of [false, true]) {
   });
   test(`${label} CI rejects Gradle outputs introduced then deleted from a zero-file net diff`, async () => {
     for (const filename of gradleOutputs) {
-      const e = await runCI(0, [], { trusted, history: [
+      const e = await runCI(0, [], { history: [
         { sha: 'c'.repeat(40), files: [{ filename, status: 'added' }] },
         { sha: HEAD, files: [{ filename, status: 'removed' }] },
       ] });
@@ -129,16 +146,16 @@ for (const trusted of [false, true]) {
   });
   test(`${label} CI allows removal of baseline Gradle outputs while counting those paths`, async () => {
     const e = await runCI(gradleOutputs.length,
-      gradleOutputs.map(filename => ({ filename, status: 'removed' })), { trusted });
+      gradleOutputs.map(filename => ({ filename, status: 'removed' })));
     assert.deepEqual(e.failures, []);
     assert.match(e.info.join(''), /PASS: 10\/40/);
     assert.equal(e.tables[0][1][1], '10');
   });
   test(`${label} CI preserves authored HTML fixtures and build-named sources in the net diff and intermediate history`, async () => {
     for (const filename of authoredFixtures) {
-      const net = await runCI(1, [{ filename, status: 'added' }], { trusted });
+      const net = await runCI(1, [{ filename, status: 'added' }]);
       assert.deepEqual(net.failures, [], filename); assert.match(net.info.join(''), /PASS: 1\/40/);
-      const transient = await runCI(0, [], { trusted, history: [
+      const transient = await runCI(0, [], { history: [
         { sha: 'c'.repeat(40), files: [{ filename, status: 'added' }] },
         { sha: HEAD, files: [{ filename, status: 'removed' }] },
       ] });

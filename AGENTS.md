@@ -12,6 +12,7 @@ Read `README.md`, `.agents/README.md`, relevant `docs/adr/`, `docs/security/` an
 - Keep JavaFX objects on the FX thread; keep native registrations, invocation ownership and replies on the provider thread. Never hold shared locks while invoking application callbacks, actions, native blocking calls or modal dialogs.
 - Bound queues, inputs and retention. Define expiry, saturation and disposal. Do not expose passwords or log field values.
 - Follow Spec Context: establish observable acceptance criteria and affected boundaries before implementation; retain concise authored result summaries under `docs/verification/`, never generated test/QA/benchmark outputs.
+- Before every push or PR creation/update, run `node .agents/scripts/pr-size-preflight.mjs`. The entire PR may change at most 40 files (31–40 warns); split cohesive work instead of removing required tests, security checks or documentation. Generated test-result artifacts are prohibited at any count; see [publication policy](docs/verification/pr-size-guard.md).
 - Keep canonical guidance in `.agents/`; provider-specific files may only point here.
 
 Precedence: explicit task → accepted ADR → security invariants → this file and `.agents/README.md` → skills → local conventions. If a conflict affects correctness, document and resolve it; never silently weaken an invariant.

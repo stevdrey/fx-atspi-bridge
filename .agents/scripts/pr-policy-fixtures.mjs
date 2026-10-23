@@ -6,22 +6,22 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 export const HEAD = 'a'.repeat(40);
 export const BASE = 'b'.repeat(40);
-export function embeddedWorkflow(trusted = false) {
-  return readFileSync(root + `.github/workflows/${trusted ? 'trusted-' : ''}pr-size-guard.yml`, 'utf8');
+export function embeddedWorkflow() {
+  return readFileSync(root + '.github/workflows/trusted-pr-size-guard.yml', 'utf8');
 }
 export async function runCI(count, files = Array.from({ length: count ?? 0 }, (_, i) => ({ filename: `src/file-${i}.java`, status: 'modified' })), options = {}) {
-  const workflow = embeddedWorkflow(options.trusted);
+  const workflow = embeddedWorkflow();
   const script = workflow.split('          script: |\n')[1].split('\n').map(l => l.replace(/^ {12}/, '')).join('\n');
   const ci = new AsyncFunction('github', 'context', 'core', script);
   const history = options.history ?? [{ sha: HEAD, parents: [{ sha: BASE }], files }];
-  const head = history.at(-1)?.sha ?? HEAD;
+  const head = options.head ?? history.at(-1)?.sha ?? HEAD;
   const events = { failures: [], warnings: [], info: [], tables: [], pages: [], commitPages: [], signals: [] };
   let calls = 0;
   const github = { rest: {
     pulls: {
       async get({ request }) {
         calls++; events.signals.push(request?.signal);
-        if (options.apiFailure) throw new Error('private server detail');
+        if (options.apiFailure) throw Object.assign(new Error('private server detail'), { status: 502 });
         return { data: { changed_files: count, commits: options.commitCount ?? history.length,
           head: { sha: calls > 1 && options.stale ? 'other' : head }, base: { sha: BASE } } };
       },
