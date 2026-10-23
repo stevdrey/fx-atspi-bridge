@@ -3,7 +3,7 @@
 Spec: [issue-10](../specs/issue-10.md). Historical campaign collected on 2026-10-21 America/Costa_Rica.
 Raw results are retained outside Git; this authored summary preserves their outcome and attribution.
 Current-head qualification is recorded in [the review follow-up](issue-10-review-fixes.md).
-The implementation adds QA/build/docs; production library sources and the benchmark workload are unchanged.
+At that original revision, the implementation added QA/build/docs; production library sources and the benchmark workload were unchanged. Later production corrections are attributed separately below.
 
 ## Outcome and gates
 

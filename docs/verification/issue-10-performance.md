@@ -90,7 +90,8 @@ All targeted failures and off-controls are retained; none replaces a matrix cell
 Temporary pulse/FX CPU instrumentation was removed before qualification;
 the setup-only source difference is described above. Raw JFR/native logs,
 temporary instrumentation and reduced outputs stay local. The reusable reducer is
-`examples/fx-lab/scripts/analyze_latency.py`: it reads SC10_CLOCK/SC10_PULSE log
+`python3 examples/fx-lab/scripts/analyze_latency.py PRIVATE_DIAGNOSTIC_DIRECTORY`:
+it reads SC10_CLOCK/SC10_PULSE log
 lines and JFR JSON events from a diagnostic directory; it is not a qualification tool. The 100-node diagnostic uses 50
 warmup/200 samples; 1,000-node profiles use 50 warmup/1,000 samples to inspect rare
 tails. Neither substitutes for fixed-budget evidence.
@@ -99,8 +100,9 @@ A 1,000-node off-pulse measured 144.037 ms, including 127.063 ms in the FX rende
 wait and 2.651 ms FX CPU. An on-pulse measured 136.054 ms, including 125.247 ms
 rendering wait and 2.066 ms FX CPU. Neither overlaps recorded GC. Stacks include
 `PaintCollector.waitForRenderingToComplete` and concurrent Prism/Marlin work.
-Other stalls require the additional attribution in the final diagnostic summary;
-these examples do not imply every tail has one cause.
+Other stalls remain unassigned by this summary; the largest 100-node diagnostic
+stall was not attributed to recorded locks, VM events or GC. These examples do not
+imply every tail has one cause.
 
 Sequential wall/monotonic anchors have 1 ms wall-clock quantization; preemption
 between reads prevents certifying maximum alignment error. FX thread IDs identify
@@ -133,7 +135,7 @@ native corrections but are not qualification. The original 44-run outcome and fa
 The successful c784278 campaign started fresh on a different runtime revision.
 Raw outputs, including intermediate failures, are retained outside Git.
 
-## Final quick matrix
+## Historical c784278 quick matrix
 
 **44/44 valid runs, zero retries; 92/92 comparisons passed; 0 exceeded unchanged limits.** Campaign: **Passed**; stable release: **Blocked**.
 
