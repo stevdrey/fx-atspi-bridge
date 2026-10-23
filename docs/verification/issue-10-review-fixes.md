@@ -1,5 +1,9 @@
 # Issue 10 / PR 42 — code-review fixes
 
+Latest completed campaign: **b5ab365, 49/49 desktop cases, 44/44 valid quick runs,
+91/92 fixed-budget comparisons; P2 remains open for latency**. See
+[the resumed verification](#resumed-desktop-and-complete-matrix-2026-10-23).
+
 A high-effort code review of PR 42 (`cfee61a`) reported ten findings. Each is corrected below with a
 regression or unit check. That 8264fe4 follow-up ran smoke/unit verification only;
 fresh desktop/performance qualification is recorded below.
@@ -245,7 +249,7 @@ and is not qualification. The earlier 2.763 MiB observation is not reproduced;
 its exact cause remains unconfirmed. Reduced transient allocation is demonstrated,
 but no heap-leak diagnosis or final heap-budget pass is claimed from these controls.
 
-### Executed checks and pending qualification
+### Executed checks before desktop resume
 
 JDK remains Zulu 27+35, JavaFX 27, Gradle wrapper 9.8.1.
 
@@ -255,7 +259,7 @@ JDK remains Zulu 27+35, JavaFX 27, Gradle wrapper 9.8.1.
 - `./gradlew verifyConsumerIntegration --no-daemon --console=plain` — **Passed**, publication/notices and independent modular/classpath consumer builds. This does not claim fresh desktop consumer acceptance.
 - Benchmark source, baseline.conf, fixed budgets, validator, canonical plan/workload and retry rules are byte-unchanged from ab507ce.
 
-**Not complete:** fresh full check, desktop acceptance and the full 44-run/92-check
+**State before the user unlocked the desktop:** fresh full check, desktop acceptance and the full 44-run/92-check
 quick campaign for this candidate. GNOME ScreenSaver.GetActive returned true after
 a directed candidate JVM failed to finish within its 90 s diagnostic deadline.
 Its timeout and the subsequently interrupted heap diagnostic are retained. The
@@ -269,3 +273,111 @@ P2 remains open. The previous 49/49 and 90/92 results retain their source attrib
 they do not certify this changed production runtime. After unlock, repeat the
 clean forced build, independent clients and canonical quick commands above, retain
 every valid failure and record the new source/JAR hashes and exact outcomes.
+
+## Resumed desktop and complete matrix (2026-10-23)
+
+After the user unlocked GNOME, the clean candidate
+`b5ab365f66fe300ff77418f53813b8f4e928008d` was measured from 20:35 to 21:08 UTC.
+The desktop remained under a temporary idle/suspend inhibitor only during QA.
+No desktop setting, backend, workload, budget, validity guard or retry rule changed.
+
+### Final acceptance result
+
+- Forced wrapper `check :examples:fx-lab:installDist --rerun-tasks --no-build-cache --no-daemon --console=plain` — **Passed**, 15 tasks executed, **286 Java tests**, zero failures/errors/skips; native and FX dependencies required. Publication/notices and independently rebuilt consumers passed.
+- `qualification.py collect` — **49/49 Passed**: acceptance 9, semantics 22, geometry 16, modular 1, classpath 1. The libatspi privacy/geometry transitions are `private-child`, `private-ancestor`, `restored-ancestor`.
+- Resource gate — **Passed**: ten close cycles including one bus loss; zero targets, pending actions and outstanding invocations after close. Balanced invocations 10, exports 70, definitions 40 and deadline sources 11. These assertions do not prove universal leak-freedom.
+- `run-baseline.sh ... quick` — **44/44 valid runs, zero retries**. Exact canonical plans, 50 warmups, 200 samples, 10 s idle and the prescribed structural/install cycles were retained; foreground window mode is recorded.
+- `qualification.py report ... --performance ...` — **Blocked**, exit 1: functional/artifacts/resources Passed; performance **91/92 Passed**. The only excess is `n100-d100-on-r3.json`, p99 **31.973222 ms > 29 ms**. It is a valid failure and was not retried or replaced.
+
+| Repetition | 100 nodes / dirty 10 / on: structural heap (MiB), limit 2 | 100 nodes / dirty 100 / on: p99 (ms), limit 29 |
+| ---: | ---: | ---: |
+| 1 | 0.295380 | 22.277880 |
+| 2 | 0.488670 | 20.149381 |
+| 3 | 0.368248 | **31.973222 — Failed** |
+
+The structural-heap budget now passes every repetition. The original 2.762955 MiB
+observation remains valid and its exact cause remains unconfirmed; passing new
+measurements do not establish a historical heap-leak diagnosis. Dense allocation
+is 346.887–347.224 KiB/sample, below the unchanged 403 KiB limit. The code removes
+demonstrated transient allocations, but **the latency acceptance criterion is
+still unmet**. All 91 other comparisons passed, including every allocation,
+idle CPU/RSS, install-churn and structural-heap check at all three tree sizes.
+
+### Remaining latency: renderer wait diagnosis
+
+Separate numeric-only shadow instrumentation records action, timer and completion
+times, FX CPU and pulse counters. It never changes the canonical measurement.
+Two 1,000-sample off/on diagnostic pairs have p99 21.808/17.739 ms and
+17.291/17.445 ms respectively. Both modes still contain roughly 32 ms individual
+pulses; the first off control also contains 99–127 ms outliers. All observations
+are retained. These longer, instrumented runs cannot replace the failed 200-sample
+canonical repetition.
+
+A further 1,000-sample pair enables only JavaFX pulse phases, wait stacks, GC and
+safepoint events, in private JFR recordings capped at 32 MiB each. In the slow
+33.650 ms off pulse and 33.105 ms on pulse:
+
+| Diagnostic phase / wait | Bridge off (ms) | Bridge on (ms) |
+| --- | ---: | ---: |
+| Timer callback to completion | 23.977 | 23.867 |
+| JavaFX `Waiting for previous rendering` | 21.003 | 22.155 |
+| FX-thread `CountDownLatch.await` park | 20.919 | 22.075 |
+| Renderer `Presenting` | 22.331 | 24.232 |
+
+The actual FX owner is named `GtkNativeMainLoopThread`; the renderer is
+`QuantumRenderer-0`. The wait is observed in both modes while presentation is
+active. Sequential wall-clock/nanosecond alignment has millisecond quantization
+and no certified maximum preemption error. This locates fresh diagnostic stalls
+in JavaFX rendering/presentation, not an exact stack for the canonical r3 sample.
+The earlier reducer's `renderWaitMs` only counts parks whose recorded stack
+contains `PaintCollector.waitForRenderingToComplete`; zero there does not exclude
+renderer waits with shorter recorded stacks.
+
+No demonstrated bridge-side change removes this presentation stall. No JavaFX
+pipeline, vsync, desktop policy, scheduling workaround or guard is changed merely
+to obtain a passing run. **P2 remains open** until a supported correction to the
+remaining latency cause is verified by another attributable complete campaign.
+The canonical Failed result is preserved; no 92/92 claim is made.
+
+### Provenance, revalidation and retention
+
+Fedora 44, kernel 7.2.11-200.fc44.x86_64, GNOME 50.6 / Mutter 50.6, Wayland session;
+actual JavaFX backend **XWayland**. JDK is Zulu27.28+101-CA, build 27+35, specification
+27; Gradle wrapper 9.8.1 and JavaFX 27. Functional/performance JVM version and
+distribution lines match, as do all five installed JAR hashes:
+
+| JAR | SHA-256 |
+| --- | --- |
+| `fx-atspi-bridge-0.1.0-SNAPSHOT.jar` | `d3bc278b0cc00cec007db1ba49d3662352590a87e3eadfa051c67413fb887517` |
+| `fx-lab.jar` | `3ed4d2a7c9f29834c8feab49c4a677c0736adfaa22725b48cdaea13e470fc8a4` |
+| `javafx-base-27-linux.jar` | `47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d` |
+| `javafx-controls-27-linux.jar` | `6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8` |
+| `javafx-graphics-27-linux.jar` | `93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0` |
+
+| Changed production source | SHA-256 |
+| --- | --- |
+| `Ffm.java` | `87afe20b8e8c9dd7d9203d83ec3c6ac7f670462dd7d3ff5c457fa65c4bb2835a` |
+| `AtSpiProvider.java` | `0427ceebd8539875a99eb681f923b35f22903bac7733dd4fb557ed5e5fe0a399` |
+| `fx/SceneObserver.java` | `2c8dfcff617e15abf572e7dba919ad4c7e38d4230c14f910473fa71db0ce081c` |
+| `model/NodeStore.java` | `b7b9a95eca4a88caf22eb3ce9c257b61e92d702b236c21157f2127aa97c8ef5e` |
+
+All **132 tracked source/build/test/tool fingerprints**, five installed JARs and
+40 output fingerprints match the post-build functional manifest after the matrix.
+The subsequent publication changes authored documentation only; measurement remains
+attributed to b5ab365, not relabeled as a new runtime campaign.
+
+A copy of the completed functional/quick directories was revalidated: same
+Blocked result and same 91/92 comparisons. All **112 original files** matched their
+pre-copy hashes afterward. Private `qualification-SHA256SUMS` digest:
+`ffb921192e59278e08f0e45ec6857617e49c2e697cb9a33e8f71df5b4836bd5f`.
+The qualification report digest is
+`bfab0219e1c86ab6d87493609846b3c1e2b81359e310d08f8da3f609dad0759d`;
+the failed r3 JSON digest is
+`8f203c808af920f5032e6ca460aa3955dc27331778780a3261ea4921e1f56002`.
+
+Raw campaigns, invalid/interrupted diagnostic attempts and bounded JFR captures
+remain in owner-only persistent local QA storage outside Git, for manual review/
+cleanup by 2026-10-30. No generated evidence is published through feature history.
+Reproduction uses the canonical commands above with fresh private directories.
+The full #15 profile, Orca #32 and native-Wayland/other-system qualification remain
+separate stable-release gates even if quick performance later passes.

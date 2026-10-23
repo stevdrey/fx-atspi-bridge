@@ -223,3 +223,21 @@ infer private HashMap capacity. An allocation-counter regression must fail on th
 previous duplicate-table path and pass without constructing an additional full
 table. Return the immutable empty list immediately for leaves; do not cache child
 IDs across structural changes or privacy-driven identity rotation.
+
+## Desktop resume outcome (2026-10-23)
+
+After explicit user unlock, measure clean b5ab365 without altering workloads,
+budgets, validity or retry rules. Forced check/publication/consumer builds pass
+286 Java tests; 49 external desktop cases pass, including ancestor-sensitive
+geometry transitions. Complete quick collection is 44 valid runs, zero retries,
+91/92 comparisons Passed. All three 100-node structural-heap repetitions pass
+(0.295/0.489/0.368 MiB <= 2), but dense r3 p99 remains 31.973222 ms > 29 ms.
+P2 stays open; the acceptance criterion is not weakened or declared complete.
+
+Numeric-only phase controls and bounded JavaFX JFR events observe 21–24 ms waits
+for prior rendering/presentation both with and without the bridge. Treat this as
+evidence for the remaining renderer-path investigation, not the exact trace of
+the canonical failure or permission to bypass it. Preserve the full Failed
+campaign and revalidate a copy; original hashes must remain identical. Publish
+only authored outcomes and source/JAR identities. Further latency correction
+requires its own attributable full campaign; #15 and #32 remain separate.

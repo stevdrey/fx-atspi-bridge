@@ -1,5 +1,10 @@
 # Verification — Issue 10 (SC-10)
 
+Latest completed runtime campaign (2026-10-23, `b5ab365`): **49/49 desktop cases,
+44/44 valid quick runs, zero retries, 91/92 budget comparisons Passed**. Structural
+heap passes; dense 100-node r3 p99 remains **31.973222 ms > 29 ms**. P2 stays open.
+See [resumed verification and renderer-wait diagnostics](issue-10-review-fixes.md#resumed-desktop-and-complete-matrix-2026-10-23).
+
 Spec: [issue-10](../specs/issue-10.md). Historical campaign collected on 2026-10-21 America/Costa_Rica.
 Raw results are retained outside Git; this authored summary preserves their outcome and attribution.
 Current-head qualification is recorded in [the review follow-up](issue-10-review-fixes.md).
