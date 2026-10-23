@@ -35,6 +35,7 @@ import java.util.Objects;
  */
 public final class SnapshotDiff {
     private SnapshotDiff() {}
+    private static final SemanticState[] SEMANTIC_STATES = SemanticState.values();
 
     /** One change to publish. */
     public sealed interface Change {}
@@ -94,7 +95,7 @@ public final class SnapshotDiff {
         if (old.enabled() != item.enabled()) { out.add(new State(id, "enabled", item.enabled())); out.add(new State(id, "sensitive", item.enabled())); }
         if (old.focused() != item.focused()) out.add(new State(id, "focused", item.focused()));
         if (old.showing() != item.showing()) { out.add(new State(id, "showing", item.showing())); out.add(new State(id, "visible", item.showing())); }
-        for (var state : SemanticState.values()) {
+        for (var state : SEMANTIC_STATES) {
             var present = item.semantics().states().contains(state);
             if (old.semantics().states().contains(state) != present) out.add(new State(id,state.name().toLowerCase(Locale.ROOT),present));
         }

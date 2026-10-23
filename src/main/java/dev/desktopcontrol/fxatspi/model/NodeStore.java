@@ -28,15 +28,16 @@ import java.util.stream.Stream;
  * The current model by id, owned by one thread, which publishes immutable views without copying every node. A view
  * shares a base map that is never modified once shared and copies only the changes made since the last compaction,
  * so publishing after a few changes costs O(changes) rather than O(nodes). Changes are merged into a new base once they
- * exceed an eighth of it (at least {@link #COMPACTION_MIN}), which amortizes the full copy over many publications.
+ * exceed an eighth of it (a preferred floor of {@link #COMPACTION_MIN}, capped at half the live tree for small or
+ * shrinking trees). Compaction builds a base sized for the live tree, so removed entries release their capacity.
  */
 public final class NodeStore {
-    /** Fewest pending changes that trigger a compaction, so small trees are not recopied on every publication. */
+    /** Preferred compaction floor for larger trees; small/shrinking trees cap it at half their live cardinality. */
     static final int COMPACTION_MIN = 256;
     /** Shared with published views; replaced, never modified. */
     private Map<String, AccessibleNode> base = Map.of();
     /** Changes over {@link #base}; a {@code null} value removes a base entry. */
-    private final HashMap<String, AccessibleNode> delta = new HashMap<>();
+    private HashMap<String, AccessibleNode> delta = new HashMap<>();
     private int size;
 
     public AccessibleNode get(String id) { return delta.containsKey(id) ? delta.get(id) : base.get(id); }
@@ -62,7 +63,7 @@ public final class NodeStore {
 
     public void clear() {
         base = Map.of();
-        delta.clear();
+        delta = new HashMap<>();
         size = 0;
     }
 
@@ -70,7 +71,8 @@ public final class NodeStore {
 
     /** An immutable view of the current contents; later changes to this store do not affect it. */
     public Map<String, AccessibleNode> freeze() {
-        if (delta.size() > Math.max(COMPACTION_MIN, base.size() / 8)) compact();
+        var threshold = Math.min(Math.max(COMPACTION_MIN, base.size() / 8), Math.max(1, size / 2));
+        if (delta.size() > threshold) compact();
         return new View(base, delta.isEmpty() ? Map.of() : new HashMap<>(delta), size);
     }
 
@@ -78,11 +80,12 @@ public final class NodeStore {
     int pendingChanges() { return delta.size(); }
 
     private void compact() {
+        // Sized for the live tree: no rehash while merging, and tombstones never inflate the shared base's table.
         var merged = HashMap.<String, AccessibleNode>newHashMap(size);
         for (var entry : base.entrySet()) if (!delta.containsKey(entry.getKey())) merged.put(entry.getKey(), entry.getValue());
         for (var entry : delta.entrySet()) if (entry.getValue() != null) merged.put(entry.getKey(), entry.getValue());
         base = merged;
-        delta.clear();
+        delta = HashMap.newHashMap(Math.min(size, COMPACTION_MIN));
     }
 
     /** Neither map is modified after construction; entries are copied out so callers cannot write through them. */

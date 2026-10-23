@@ -1,0 +1,31 @@
+if (!providers.gradleProperty('qaRepository').isPresent() || !providers.gradleProperty('qaOutput').isPresent()) {
+    throw new GradleException('Run the root verifyConsumerIntegration task')
+}
+subprojects {
+    apply plugin: 'application'
+    layout.buildDirectory = file("${rootProject.property('qaOutput')}/${project.name}")
+    repositories {
+        maven { url = uri(rootProject.property('qaRepository')) }
+        mavenCentral()
+    }
+    java { toolchain { languageVersion = JavaLanguageVersion.of(27) } }
+    sourceSets.main.java.srcDirs = [rootProject.file('src')]
+    if (project.name == 'modular') sourceSets.main.java.srcDir rootProject.file('modular')
+    configurations.configureEach { resolutionStrategy.cacheChangingModulesFor 0, 'seconds' }
+    dependencies { implementation "io.github.stevdrey:fx-atspi-bridge:${rootProject.property('bridgeVersion')}" }
+    application {
+        mainClass = 'qa.consumer.Launcher'
+        if (project.name == 'modular') mainModule = 'qa.consumer'
+        applicationDefaultJvmArgs = project.name == 'modular' ?
+                ['--enable-native-access=dev.desktopcontrol.fxatspi,javafx.graphics'] :
+                ['--enable-native-access=ALL-UNNAMED']
+    }
+    tasks.register('recordRuntime') {
+        dependsOn tasks.named('installDist')
+        doLast {
+            def output = layout.buildDirectory.file('runtime.txt').get().asFile
+            output.parentFile.mkdirs()
+            output.text = configurations.runtimeClasspath.files.collect { it.name }.sort().join('\n') + '\n'
+        }
+    }
+}

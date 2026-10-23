@@ -30,6 +30,8 @@ profile="${2:-quick}"
 resume=0
 [ "${3:-}" = "--resume" ] && resume=1
 warmup=50; samples=200; idle_seconds=10; install_churn=100; max_attempts=2
+# The benchmark window is kept above other windows and focused; every collection records this best-case condition.
+window=foreground
 case "$profile" in
   smoke) plan=("100:1:10:10"); warmup=10; samples=30; idle_seconds=3; install_churn=10 ;;
   quick) plan=("100:3:1,10,100:100" "1000:3:1,10,100:100" "10000:2:1,10:30") ;;
@@ -61,6 +63,7 @@ else
   {
     print_environment "$root" "$head_sha" "$profile" "$limits" "$java_bin" "${plan[@]}"
     echo "workload=warmup:$warmup,samples:$samples,idle:$idle_seconds,installChurn:$install_churn"
+    echo "window=$window"
     command_line "$root" "$script_dir/${0##*/}" "$out_abs" "$profile"
   } | write_environment "$out_abs/environment.txt"
 fi
@@ -75,7 +78,7 @@ for entry in "${plan[@]}"; do
         if [ "$dirty" = 10 ]; then extra=(--idle-seconds="$idle_seconds" --install-churn="$install_churn" --structural="$structural"); fi
         run_cell "$max_attempts" "$name" "$out_abs" \
           timeout -k 30 900 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty="$dirty" \
-          --warmup="$warmup" --samples="$samples" "${extra[@]}" --limits="$limits" \
+          --warmup="$warmup" --samples="$samples" "${extra[@]}" --limits="$limits" --window="$window" \
           --out="$out_abs/$name.json" \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }
         echo "done $name"

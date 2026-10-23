@@ -29,6 +29,9 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
                              boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
                              List<String> children, Set<Capability> capabilities, boolean actionEligible, boolean redacted,
                              Geometry geometry, Semantics semantics) {
+    private static final Semantics BUTTON_SEMANTICS = new Semantics("",
+            List.of(new SemanticAction("click", "Activate button", "")), Set.of(), false);
+
     /** Compatibility constructor for pre-semantic producers. */
     public AccessibleNode(String id, String name, Role role, String text, boolean editable, boolean enabled,
                           boolean showing, boolean focused, boolean focusable, int caret, String ancestor,
@@ -36,7 +39,7 @@ public record AccessibleNode(String id, String name, Role role, String text, boo
                           Geometry geometry) {
         this(id,name,role,text,editable,enabled,showing,focused,focusable,caret,ancestor,children,capabilities,
                 actionEligible,redacted,geometry,capabilities.contains(Capability.ACTION)
-                ? new Semantics("", List.of(new SemanticAction("click", "Activate button", "")), Set.of(), false) : Semantics.EMPTY);
+                ? BUTTON_SEMANTICS : Semantics.EMPTY);
     }
     public AccessibleNode semantics(Semantics value) {
         return new AccessibleNode(id,name,role,text,editable,enabled,showing,focused,focusable,caret,ancestor,children,

@@ -28,6 +28,10 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Explicit Linux x86_64 GIO/GLib/GObject C ABI, without JNI/JNA.
  *
@@ -46,6 +50,9 @@ final class Ffm implements AutoCloseable {
     private static final int NO_FLAGS = 0;
 
     final Arena arena = Arena.ofShared();
+    /** Eleven protocol constants only; never add application values or peer-controlled names to this map. */
+    private final Map<String, MemorySegment> signalNames = createSignalNames();
+
     private final SymbolLookup gio = SymbolLookup.libraryLookup("libgio-2.0.so.0", arena);
     private final SymbolLookup glib = SymbolLookup.libraryLookup("libglib-2.0.so.0", arena);
     private final SymbolLookup objects = SymbolLookup.libraryLookup("libgobject-2.0.so.0", arena);
@@ -100,6 +107,21 @@ final class Ffm implements AutoCloseable {
     private final MethodHandle errorFree = bind("g_error_free", FunctionDescriptor.ofVoid(ADDRESS));
     private final MethodHandle objectRef = bind("g_object_ref", FunctionDescriptor.of(ADDRESS, ADDRESS));
     private final MethodHandle objectUnref = bind("g_object_unref", FunctionDescriptor.ofVoid(ADDRESS));
+
+    private Map<String, MemorySegment> createSignalNames() {
+        var names = new HashMap<String, MemorySegment>();
+        for (var name : List.of("org.a11y.atspi.Cache", "org.a11y.atspi.Event.Object",
+                "AddAccessible", "RemoveAccessible", "PropertyChange", "StateChanged", "SelectionChanged",
+                "TextChanged", "TextCaretMoved", "BoundsChanged", "ChildrenChanged")) {
+            names.put(name, arena.allocateFrom(name));
+        }
+        return Map.copyOf(names);
+    }
+
+    private MemorySegment signalName(Arena temporary, String name) {
+        var constant = signalNames.get(name);
+        return constant == null ? temporary.allocateFrom(name) : constant;
+    }
 
     private MethodHandle bind(String name, FunctionDescriptor descriptor) {
         var symbol = gio.find(name).or(() -> glib.find(name)).or(() -> objects.find(name))
@@ -351,15 +373,19 @@ final class Ffm implements AutoCloseable {
         if (valid == 0) throw new IllegalArgumentException("Invalid object path");
         return nativePath;
     }
-    void emitSignal(MemorySegment connection, String path, String iface, String member, MemorySegment parameters) {
+    /** Parse and emit within one call-scoped arena; no application content survives this call. */
+    void emitSignal(MemorySegment connection, String path, String iface, String member, String text) {
         open();
         try (Arena temporary = Arena.ofConfined()) {
-            var error = temporary.allocate(ADDRESS);
-            var nativePath = objectPath(temporary, path);
-            try { var ignored = (int) emitSignal.invokeExact(connection, NIL, nativePath, temporary.allocateFrom(iface),
-                    temporary.allocateFrom(member), parameters, error); }
-            catch (Throwable failure) { throw failed("g_dbus_connection_emit_signal", failure); }
-            check(error);
+            var parameters = variant(temporary, text);
+            try {
+                var error = temporary.allocate(ADDRESS);
+                var nativePath = objectPath(temporary, path);
+                try { var ignored = (int) emitSignal.invokeExact(connection, NIL, nativePath, signalName(temporary, iface),
+                        signalName(temporary, member), parameters, error); }
+                catch (Throwable failure) { throw failed("g_dbus_connection_emit_signal", failure); }
+                check(error);
+            } finally { release(parameters); }
         }
     }
 
@@ -380,13 +406,15 @@ final class Ffm implements AutoCloseable {
 
     MemorySegment variant(String text) {
         open();
-        try (Arena temporary = Arena.ofConfined()) {
-            var error = temporary.allocate(ADDRESS);
-            MemorySegment value;
-            try { value = (MemorySegment) variantParse.invokeExact(NIL, temporary.allocateFrom(text), NIL, NIL, error); } catch (Throwable failure) { throw failed("g_variant_parse", failure); }
-            check(error);
-            return value;
-        }
+        try (Arena temporary = Arena.ofConfined()) { return variant(temporary, text); }
+    }
+    private MemorySegment variant(Arena temporary, String text) {
+        var error = temporary.allocate(ADDRESS);
+        MemorySegment value;
+        try { value = (MemorySegment) variantParse.invokeExact(NIL, temporary.allocateFrom(text), NIL, NIL, error); }
+        catch (Throwable failure) { throw failed("g_variant_parse", failure); }
+        check(error);
+        return value;
     }
     void release(MemorySegment value) {
         if (value.address() == 0) return;

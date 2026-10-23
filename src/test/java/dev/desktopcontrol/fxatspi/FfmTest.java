@@ -74,6 +74,21 @@ class FfmTest {
         }
     }
 
+    @Test void signalPreparationFailuresAreSanitizedBeforeUsingTheConnection() {
+        try (var api = new Ffm()) {
+            var failure = assertThrows(IllegalStateException.class,
+                    () -> api.emitSignal(MemorySegment.NULL, "/test", "org.example.Test", "Changed", "(invalid payload"));
+            assertEquals("Native call failed", failure.getMessage());
+            var pathFailure = assertThrows(IllegalArgumentException.class,
+                    () -> api.emitSignal(MemorySegment.NULL, "invalid-path", "org.a11y.atspi.Event.Object", "PropertyChange", "('safe',)"));
+            assertEquals("Invalid object path", pathFailure.getMessage());
+            // Preparation failures release call-scoped resources and leave the API usable.
+            var tuple = api.variant("('after failure', 7)");
+            try { assertEquals(7, api.integer(tuple, 1)); }
+            finally { api.release(tuple); }
+        }
+    }
+
     @Test void mainContextLifecycleAndIterationWork() {
         try (var api = new Ffm()) {
             var context = api.mainContextNew();

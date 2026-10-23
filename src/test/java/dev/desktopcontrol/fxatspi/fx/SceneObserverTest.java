@@ -175,6 +175,42 @@ class SceneObserverTest {
         assertEquals(Role.FRAME, nodes.get(root.children().get(0)).role());
     }
 
+    @Test void nameOnlyChangesReuseGeometryButLayoutAndParentOriginInvalidateIt() throws Exception {
+        onFx(() -> {
+            var child = new Button("first");
+            child.setManaged(false);
+            child.resizeRelocate(10, 10, 80, 50);
+            var parent = new Pane(child);
+            parent.setManaged(false);
+            parent.resizeRelocate(20, 30, 200, 150);
+            var stage = new Stage();
+            stage.setScene(new Scene(new Pane(parent), 400, 300));
+            stage.show();
+            var harness = new Harness().start();
+            try {
+                var id = harness.id(child);
+                var initial = harness.last.get(id).geometry();
+                child.setAccessibleText("renamed");
+                harness.endBatch();
+                assertTrue(initial == harness.last.get(id).geometry(), "reuse sanitized geometry on a name-only change");
+                assertEquals("renamed", harness.last.get(id).name());
+                child.resize(100, 50);
+                harness.endBatch();
+                assertEquals(100, harness.last.get(id).geometry().window().width());
+                parent.setTranslateX(15);
+                harness.endBatch();
+                assertEquals(initial.window().x() + 15, harness.last.get(id).geometry().window().x());
+                child.setVisible(false);
+                harness.endBatch();
+                assertEquals(Geometry.UNAVAILABLE, harness.last.get(id).geometry());
+                child.setVisible(true);
+                harness.endBatch();
+                assertEquals(100, harness.last.get(id).geometry().window().width());
+            } finally { harness.observer.close(); stage.close(); }
+            return null;
+        });
+    }
+
     @Test void geometryTracksTransformsClipsVisibilityAndMinimizationWithoutChangingIdentity() throws Exception {
         onFx(() -> {
             var child = new Rectangle(80, 50);
@@ -303,6 +339,40 @@ class SceneObserverTest {
                 box.resize(220, 150);
                 harness.endBatch();
                 assertEquals(220, harness.last.get(harness.id(label)).geometry().window().width(), "the substitute follows its container");
+            } finally { harness.observer.close(); }
+            return null;
+        });
+    }
+
+    @Test void sensitiveDescendantFollowsAnAncestorSensitivityChange() throws Exception {
+        onFx(() -> {
+            var label = new Label("1234");
+            label.setId("private");
+            var middle = new Pane(label);
+            middle.setId("plain");
+            middle.setManaged(false);
+            middle.resizeRelocate(10, 10, 120, 80);
+            var outer = new Pane(middle);
+            outer.setManaged(false);
+            outer.resizeRelocate(20, 30, 300, 200);
+            var stage = new Stage();
+            stage.setScene(new Scene(new Pane(outer), 400, 300));
+            stage.show();
+            var harness = new Harness(BridgeOptions.builder()
+                    .sensitiveNodes(node -> "private".equals(node.getId()) || "middle".equals(node.getId())).build()).start();
+            try {
+                var outerWindow = harness.last.get(harness.id(outer)).geometry().window();
+                var middleWindow = harness.last.get(harness.id(middle)).geometry().window();
+                assertNotEquals(outerWindow, middleWindow);
+                assertEquals(middleWindow, harness.last.get(harness.id(label)).geometry().window());
+                middle.setId("middle");
+                harness.endBatch();
+                assertEquals(outerWindow, harness.last.get(harness.id(label)).geometry().window(),
+                        "a newly sensitive ancestor is skipped by the descendant's substitute box");
+                middle.setId("plain");
+                harness.endBatch();
+                assertEquals(middleWindow, harness.last.get(harness.id(label)).geometry().window(),
+                        "a released ancestor becomes the substitute box again");
             } finally { harness.observer.close(); }
             return null;
         });
@@ -449,16 +519,49 @@ class SceneObserverTest {
     }
 
     @Test void anIdleSceneSchedulesAndPublishesNothing() throws Exception {
-        var root = new VBox(new Button("OK"), new TextField("text"));
-        onFx(() -> show(root));
-        Thread.sleep(1000); // let window focus settle: a focus change is a real change, not a rescan
-        var harness = onFx(() -> new Harness().start());
-        Thread.sleep(300); // several pulses
-        var result = onFx(() -> {
-            root.setOpacity(0.5); // neither modeled nor geometric: no listener may schedule a flush
-            return List.of(harness.scheduled.size(), (int) harness.observer.publications());
+        var root = onFx(() -> {
+            var content = new VBox(new Button("OK"), new TextField("text"));
+            var stage = show(content);
+            stage.requestFocus();
+            content.getChildren().getFirst().requestFocus();
+            return content;
         });
-        assertEquals(List.of(0, 1), result, "start publishes the initial traversal once; nothing is scheduled while idle");
+        var focusDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (!onFx(() -> root.getScene().getWindow().isFocused() && root.getChildren().getFirst().isFocused())
+                && System.nanoTime() < focusDeadline) Thread.sleep(10);
+        assertTrue(onFx(() -> root.getScene().getWindow().isFocused() && root.getChildren().getFirst().isFocused()),
+                "native focus did not arrive");
+        var harness = onFx(() -> {
+            var observer = new Harness().start();
+            assertEquals(1, observer.observer.publications(), "start publishes the initial traversal once");
+            return observer;
+        });
+        try {
+            // Native placement can still follow focus. Drain setup events before the unchanged idle observation.
+            var quietSince = System.nanoTime();
+            var settleDeadline = quietSince + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() - quietSince < TimeUnit.MILLISECONDS.toNanos(600)
+                    && System.nanoTime() < settleDeadline) {
+                Thread.sleep(50);
+                if (onFx(() -> {
+                    if (harness.scheduled.isEmpty()) return false;
+                    var before = harness.last;
+                    harness.endBatch();
+                    System.out.println("SC10_IDLE_SETUP " + SnapshotDiff.diff(before, harness.last, before.nodes().keySet()).stream()
+                            .map(change -> change instanceof SnapshotDiff.State state ? "State(" + state.state() + ")"
+                                    : change.getClass().getSimpleName()).toList());
+                    return true;
+                })) quietSince = System.nanoTime();
+            }
+            assertTrue(System.nanoTime() - quietSince >= TimeUnit.MILLISECONDS.toNanos(600), "native geometry did not settle");
+            var idlePublications = onFx(() -> (int) harness.observer.publications());
+            Thread.sleep(300); // several pulses; no scheduled work or publication is allowed in this window
+            var result = onFx(() -> {
+                root.setOpacity(0.5); // neither modeled nor geometric: no listener may schedule a flush
+                return List.of(harness.scheduled.size(), (int) harness.observer.publications());
+            });
+            assertEquals(List.of(0, idlePublications), result, "nothing is scheduled or published while idle");
+        } finally { onFx(() -> { harness.observer.close(); return null; }); }
     }
 
     @Test void changesInOneBatchArePublishedOnceAndCoherently() throws Exception {

@@ -141,7 +141,7 @@ final class AtSpiProvider {
      */
     private final MemorySegment[] introspection = new MemorySegment[SCHEMA_COUNT];
     private final AtomicLong definitionsAcquired = new AtomicLong(), definitionsReleased = new AtomicLong();
-    private final Map<String,Export> exports = new LinkedHashMap<>();
+    private Map<String,Export> exports = new LinkedHashMap<>();
     private MemorySegment vtable;
     /** Pull source of whole trees (tests); {@code null} when the scene pushes its changes through {@link #publish}. */
     private final Supplier<Snapshot> scene;
@@ -444,6 +444,7 @@ final class AtSpiProvider {
         }
         pending.clear();
         for (String id : List.copyOf(exports.keySet())) guarded(() -> unexport(id));
+        exports = new LinkedHashMap<>(); // release the disposed tree's registration table capacity
         if (connection.address() != 0) {
             var closing = connection;
             if (closedHandler != 0) { var handler = closedHandler; closedHandler = 0; guarded(() -> ffi.disconnectSignal(closing, handler)); }
@@ -894,11 +895,8 @@ final class AtSpiProvider {
     private void event(String id, String member, String value) { signal(id,PREFIX+"Event.Object",member,value); }
     private void signal(String id, String iface, String member, String value) {
         if (!registered || !running) return;
-        try {
-            var parameters = ffi.variant(value);
-            try { ffi.emitSignal(connection, path(id), iface, member, parameters); }
-            finally { ffi.release(parameters); }
-        } catch (Throwable error) { System.err.println("AT-SPI event failed: " + code(error)); }
+        try { ffi.emitSignal(connection, path(id), iface, member, value); }
+        catch (Throwable error) { System.err.println("AT-SPI event failed: " + code(error)); }
     }
     private String xml(String id) { return id.equals(CACHE_ID) ? cacheXml() : AtSpiObjects.xml(snapshot.get().get(id)); }
 }

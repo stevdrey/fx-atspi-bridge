@@ -26,8 +26,8 @@ import java.util.Map;
  * so each change costs O(1) and nothing is swept periodically.
  */
 public final class TargetRegistry {
-    private final IdentityHashMap<Object, String> byTarget = new IdentityHashMap<>();
-    private final Map<String, Object> byId = new HashMap<>();
+    private IdentityHashMap<Object, String> byTarget = new IdentityHashMap<>();
+    private Map<String, Object> byId = new HashMap<>();
     private long sequence;
 
     /** Returns the id for {@code target}, creating one if needed. */
@@ -49,8 +49,8 @@ public final class TargetRegistry {
 
     /** Drops every mapping so a closed bridge does not retain the last scene graph. FX thread only. */
     public void clear() {
-        byTarget.clear();
-        byId.clear();
+        byTarget = new IdentityHashMap<>();
+        byId = new HashMap<>();
     }
 
     /** Live target for {@code id}, or {@code null} when unknown or already released. FX thread only. */

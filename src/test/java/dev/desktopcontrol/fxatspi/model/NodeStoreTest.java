@@ -86,6 +86,30 @@ class NodeStoreTest {
         assertTrue(store.freeze().isEmpty());
     }
 
+    @Test void smallAndShrinkingTreesKeepSparsePublicationsSmallWithoutMutatingOldViews() {
+        var store = new NodeStore();
+        for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "initial"));
+        var initial = store.freeze();
+        assertEquals(0, store.pendingChanges(), "the initial tree belongs in the shared base");
+        store.put("n0", node("n0", "changed"));
+        var sparse = store.freeze();
+        assertEquals(1, store.pendingChanges(), "one changed node must not copy a 100-node overlay");
+        for (var i = 0; i < 60; i++) store.put("n" + i, node("n" + i, "dense"));
+        var dense = store.freeze();
+        assertEquals(0, store.pendingChanges());
+        assertEquals("initial", initial.get("n0").name());
+        assertEquals("changed", sparse.get("n0").name());
+        assertEquals("dense", dense.get("n0").name());
+        for (var i = 10; i < 100; i++) store.remove("n" + i);
+        var shrunk = store.freeze();
+        assertEquals(10, shrunk.size());
+        assertEquals(0, store.pendingChanges(), "shrinking the live tree must release masked base entries");
+        assertEquals(100, initial.size());
+        assertEquals(100, dense.size());
+        assertEquals("initial", dense.get("n99").name());
+        assertNull(shrunk.get("n99"));
+    }
+
     @Test void nullNodesAreRejected() {
         assertThrows(NullPointerException.class, () -> new NodeStore().put("a", null));
     }
