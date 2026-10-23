@@ -149,3 +149,24 @@ build was not rerun.
 Pending admin step: after #46 merges and `Trusted PR file count` is observed on #45,
 require it in ruleset 25669164 and remove `PR file count`, which #45 no longer reports.
 No ruleset, push or merge was performed as part of this fix.
+
+
+## Synchronization with main after bootstrap #46
+
+Merged main `538398c` into topic head `14fe662`. Resolved five conflicts by combining
+CI policy, fixtures/tests and generated workflow behavior; retained the publication
+rule in AGENTS.md. Main's Node setup and early policy test step replace the duplicate
+step from the automatic merge. The deleted PR-head workflow stays deleted. The
+bootstrap's policy manifest and authored documentation are inherited unchanged.
+
+`node --test .agents/scripts/pr-*.test.mjs` passed all 77 tests, zero failures/skips.
+Zulu JDK 27 was confirmed before the wrapper check/POM command, which passed with
+six tasks up to date. Canonical workflow parity, abort signals, over-limit failure
+reporting, Gradle report paths, legitimate fixtures and existing parser regressions
+are covered. No unresolved paths or conflict markers remain; whitespace checks pass.
+
+Rules read-back still requires only `PR file count` from app 15368. The topic's
+preceding commit removed that head-controlled workflow, so the old required context
+must be reconciled separately with the trusted guard before merging #45. This sync
+changes no rules, bypasses or administrator configuration. Live CI is recorded in
+the PR after publication; local tests do not establish trusted-base deployment.

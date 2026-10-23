@@ -192,7 +192,7 @@ blocked. If the check is absent, run a PR targeting main and refresh the selecto
 Rulesets are not installed by a workflow. Current state: ruleset 25669164 already
 requires PR file count (app 15368), has no bypass actors and applies only to main;
 its read-back is recorded in issue-43.md. The separate [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46)
-must be reviewed and merged first. Then observe its base-revision run on #45, add
+was merged into main at `538398c`. Observe its base-revision run on #45, add
 **Trusted PR file count** from the same GitHub Actions app, and only then remove the
 old **PR file count** context: #45 deletes the head-controlled workflow that reported
 it, so #45 cannot merge while that context is still required. Until this activation

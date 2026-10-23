@@ -17,6 +17,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Test publication preflight and embedded CI policy
+        run: node --test .agents/scripts/pr-*.test.mjs
       - name: Set up JDK 27
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -30,8 +36,6 @@ jobs:
         env:
           REQUIRE_FX_TOOLKIT: '1'  # fail instead of skipping the JavaFX toolkit tests when no display/toolkit is available
         run: xvfb-run -a ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
-      - name: Test publication preflight and embedded CI policy
-        run: node --test .agents/scripts/pr-*.test.mjs
       - name: Test baseline tooling
         env:
           REQUIRE_ATSPI_TESTS: '1'  # fail instead of skipping the probe suite when the bindings are missing

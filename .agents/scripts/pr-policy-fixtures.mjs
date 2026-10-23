@@ -15,12 +15,12 @@ export async function runCI(count, files = Array.from({ length: count ?? 0 }, (_
   const ci = new AsyncFunction('github', 'context', 'core', script);
   const history = options.history ?? [{ sha: HEAD, parents: [{ sha: BASE }], files }];
   const head = options.head ?? history.at(-1)?.sha ?? HEAD;
-  const events = { failures: [], warnings: [], info: [], tables: [], pages: [], commitPages: [] };
+  const events = { failures: [], warnings: [], info: [], tables: [], pages: [], commitPages: [], signals: [] };
   let calls = 0;
   const github = { rest: {
     pulls: {
-      async get() {
-        calls++;
+      async get({ request }) {
+        calls++; events.signals.push(request?.signal);
         if (options.apiFailure) throw Object.assign(new Error('private server detail'), { status: 502 });
         return { data: { changed_files: count, commits: options.commitCount ?? history.length,
           head: { sha: calls > 1 && options.stale ? 'other' : head }, base: { sha: BASE } } };

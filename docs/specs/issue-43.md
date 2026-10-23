@@ -144,3 +144,15 @@ A high-effort review of `d885130` found ten issues. Acceptance criteria:
 - **Workflows:** a single `pull_request_target` guard for every base branch, so stacked
   PRs are checked; the head-controlled `pull_request` copy is removed. The ruleset must
   require `Trusted PR file count` and drop `PR file count` before #45 merges (admin step).
+
+
+## Synchronization with merged bootstrap
+
+Integrate main `538398c` (bootstrap #46) into topic head `14fe662` without rewriting
+feature history. Preserve the topic's single trusted workflow, parser/scope fixes,
+head-order validation, sanitized diagnostics and unique evidence-path reporting.
+Retain main's Gradle output classifier, abort-signal request deadlines, decisive
+file-count failures, per-PR concurrency and pinned Node setup before tests. Combine
+both regression suites and retain the publication rule in AGENTS.md. Regenerate
+only the trusted workflow from the merged canonical source; do not restore the
+removed PR-head workflow or change repository rules as part of conflict resolution.

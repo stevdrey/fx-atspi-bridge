@@ -12,6 +12,8 @@ test('the single trusted workflow exactly matches canonical code and uses read-o
   assert.match(workflow, /types: \[opened, reopened, synchronize, ready_for_review, edited\]/);
   assert.match(workflow, /permissions:\n  pull-requests: read\n  contents: read\n/);
   assert.match(workflow, /name: Trusted PR file count/);
+  assert.match(workflow, /concurrency:\n  group: trusted-pr-size-guard-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true\n/);
+  assert.doesNotMatch(workflow, /^\s+if:/m);
   assert.doesNotMatch(workflow, /checkout|contents: write|secrets\.|github\.event\.pull_request\.head|download-artifact|restore.*cache/);
   assert.match(workflow, /actions\/github-script@[0-9a-f]{40}/);
   assert.throws(() => readFileSync(new URL('../../.github/workflows/pr-size-guard.yml', import.meta.url)), /ENOENT/);
@@ -87,3 +89,77 @@ test('CI lists each generated path once, with its introducing commit', async () 
   assert.match(e.failures[0], new RegExp(`at ${HEAD.slice(0, 12)}`));
   assert.deepEqual(e.tables[0].at(-1), ['Recognizable generated outputs (including history)', '1']);
 });
+
+
+test('CI bounds metadata requests with abort signals', async () => {
+  const e = await runCI(1);
+  assert.equal(e.signals.length, 2);
+  for (const signal of e.signals) assert.ok(signal instanceof AbortSignal);
+});
+test('CI reports an over-limit count even when history inspection fails', async () => {
+  const e = await runCI(45, undefined, { historyFailure: true });
+  assert.equal(e.failures.length, 2);
+  assert.match(e.failures[0], /^45\/40 changed files\. Split/);
+  assert.match(e.failures[1], /Could not verify complete PR metadata/);
+  assert.doesNotMatch(e.failures.join(''), /private/);
+});
+
+const gradleOutputs = [
+  'build/reports/tests/test/index.html',
+  'build/reports/tests/test/com.example.SomeTest/index.html',
+  'examples/fx-lab/build/reports/tests/test/index.html',
+  'modules/library/build/reports/tests/integrationTest/index.html',
+  'build/reports/tests/test/css/style.css',
+  'examples/fx-lab/build/reports/tests/test/js/report.js',
+  'build/reports/problems/problems-report.html',
+  'modules/library/build/reports/jacoco/test/html/index.html',
+  'build/reports/checkstyle/main.xml',
+  'build/tmp/test/output.txt',
+];
+const authoredFixtures = [
+  'src/test/resources/fixtures/report.html',
+  'src/test/resources/fixtures/reports/tests/index.html',
+  'examples/fx-lab/src/test/resources/fixtures/index.html',
+  'docs/examples/test-report.html',
+  'src/main/java/example/build/reports/Report.java',
+];
+{
+  const label = 'trusted';
+  test(`${label} CI rejects root/subproject Gradle build outputs and report assets`, async () => {
+    for (const filename of gradleOutputs) for (const status of ['added', 'modified', 'renamed']) {
+      const e = await runCI(1, [{ filename, status }]);
+      assert.equal(e.failures.length, 1, filename + status);
+      assert.match(e.failures[0], /Generated evidence is prohibited/);
+      assert.doesNotMatch(e.info.join(''), /PASS/);
+    }
+  });
+  test(`${label} CI rejects Gradle outputs introduced then deleted from a zero-file net diff`, async () => {
+    for (const filename of gradleOutputs) {
+      const e = await runCI(0, [], { history: [
+        { sha: 'c'.repeat(40), files: [{ filename, status: 'added' }] },
+        { sha: HEAD, files: [{ filename, status: 'removed' }] },
+      ] });
+      assert.equal(e.failures.length, 1, filename);
+      assert.match(e.failures[0], /intermediate commits/);
+      assert.doesNotMatch(e.info.join(''), /PASS/);
+    }
+  });
+  test(`${label} CI allows removal of baseline Gradle outputs while counting those paths`, async () => {
+    const e = await runCI(gradleOutputs.length,
+      gradleOutputs.map(filename => ({ filename, status: 'removed' })));
+    assert.deepEqual(e.failures, []);
+    assert.match(e.info.join(''), /PASS: 10\/40/);
+    assert.equal(e.tables[0][1][1], '10');
+  });
+  test(`${label} CI preserves authored HTML fixtures and build-named sources in the net diff and intermediate history`, async () => {
+    for (const filename of authoredFixtures) {
+      const net = await runCI(1, [{ filename, status: 'added' }]);
+      assert.deepEqual(net.failures, [], filename); assert.match(net.info.join(''), /PASS: 1\/40/);
+      const transient = await runCI(0, [], { history: [
+        { sha: 'c'.repeat(40), files: [{ filename, status: 'added' }] },
+        { sha: HEAD, files: [{ filename, status: 'removed' }] },
+      ] });
+      assert.deepEqual(transient.failures, [], filename); assert.match(transient.info.join(''), /PASS: 0\/40/);
+    }
+  });
+}
