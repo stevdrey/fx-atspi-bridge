@@ -1,8 +1,11 @@
 # Issue 10 / PR 42 — code-review fixes
 
-Latest completed campaign: **b5ab365, 49/49 desktop cases, 44/44 valid quick runs,
-91/92 fixed-budget comparisons; P2 remains open for latency**. See
-[the resumed verification](#resumed-desktop-and-complete-matrix-2026-10-23).
+Latest completed runtime campaign (2026-10-23, `c1a9bb1`): **49/49 desktop cases,
+44/44 valid quick runs, zero retries, 92/92 fixed-budget comparisons Passed**.
+All three dense-latency, sparse-allocation and structural-heap repetitions pass.
+See [final controlled qualification](issue-10-review-fixes.md#final-controlled-qualification-2026-10-23).
+The full profile #15, Orca #32 and additional backend/platform coverage remain
+separate stable-release gates.
 
 A high-effort code review of PR 42 (`cfee61a`) reported ten findings. Each is corrected below with a
 regression or unit check. That 8264fe4 follow-up ran smoke/unit verification only;
@@ -64,7 +67,7 @@ change, through libatspi, including restored geometry and redacted names.
 
 Measured clean source: `58d2aa19e3449201d1f64f4b04ad4dfb4e127f5d`. The subsequent documentation-only commit does
 not change any of its 132 source/build/test/tool fingerprints or five installed JAR
-bytes. This campaign measures the final production/benchmark revision; it does not
+bytes. This campaign measured the production/benchmark revision at that point; it does not
 reuse c784278's results or cross-combine source revisions.
 
 | Gate | Actual outcome |
@@ -382,7 +385,7 @@ Reproduction uses the canonical commands above with fresh private directories.
 The full #15 profile, Orca #32 and native-Wayland/other-system qualification remain
 separate stable-release gates even if quick performance later passes.
 
-## Controlled desktop follow-up: acceptance pending
+## Controlled desktop investigation before qualification
 
 The next investigation identifies an external rendering load rather than another
 bridge allocation. With no QA JVM running, 60 half-second GPU readings have
@@ -395,12 +398,13 @@ After explicit user minimization, all global readings over the matched 20-second
 interval are 0%; the animated client's engine utilization is 0.043%, with Xwayland
 and compositor counters at 0%. No unrelated process is stopped, no configuration
 is changed, and private application identities remain outside the report.
-This establishes the source of idle graphics activity; its effect on canonical
-latency still requires matched controls and a fresh complete campaign.
+This established the source of idle graphics activity; matched controls and the
+following complete campaign were required to assess canonical latency.
 JavaFX 27.0.1 was resolved into private storage for investigation, but no related
 latency correction is established in its release notes and it is not adopted.
-The production library, JavaFX 27 runtime and all workload/budget code stay intact.
-The user agrees to keep the animated client minimized during the new campaign.
+At that investigation stage the production library, JavaFX 27 runtime and all
+workload/budget code stayed intact.
+The user agreed to keep the animated client minimized during the new campaign.
 The existing b5ab365 91/92 campaign above remains Failed.
 
 
@@ -426,7 +430,7 @@ the observer field before the sink call, avoid a redundant ID-list copy in the
 stable indexing pass, and create the affected-automation-ID set only when needed.
 Identity, atomic ID swaps/collisions, privacy, publication order and teardown
 contracts remain intact. Temporary work is released per flush; retained changed
-IDs are owned by immutable snapshots/provider handoffs with existing bounds.
+IDs travel in immutable provider handoffs under existing publication bounds.
 There is no public API, dependency, timer, queue or native-boundary change.
 
 A private, bounded FX-thread allocation probe constructs its synthetic inputs
@@ -447,7 +451,84 @@ paired-control attempt timed out under a newly locked GNOME session, produced no
 accepted JSON and remains retained. After user unlock, a continuous bounded idle/
 suspend inhibitor covers controls and qualification without configuration changes.
 
-The corrected production JAR requires its own clean forced functional collection
-and complete 44-run/92-comparison matrix. Results below must retain that measured
-commit and must not reuse the 6c503d2 collection as qualification of changed bytes.
+The corrected production JAR was frozen for its own clean forced functional
+collection and complete 44-run/92-comparison matrix. Results below retain that
+measured commit and do not reuse 6c503d2 as qualification of changed bytes.
 Budgets, fixture, JavaFX 27, JDK 27, validity guards and retry policy are unchanged.
+
+
+## Final controlled qualification (2026-10-23)
+
+Clean measured source: **`c1a9bb1a4f3975688d8c706e42bb08162a22a6d6`**. New production bridge JAR,
+new forced functional collection and new complete canonical matrix: **Passed**.
+The later publication changes authored documentation only; the measurements
+remain attributed to this clean candidate. This is not reuse of c784278 or 6c503d2.
+
+| Gate | Actual result |
+| --- | --- |
+| Forced wrapper check/installDist, mandatory native/FX, rerun tasks, no build cache | Passed; 15 tasks executed; 287 Java tests, zero failures/errors/skips |
+| Published modular/classpath consumers | Both rebuilt with cache disabled and Passed |
+| Independent desktop cases | 49/49 Passed: acceptance 9, semantics 22, geometry 16, modular 1, classpath 1 |
+| Disposal and resource accounting | Passed; 10 cycles including one bus loss; zero targets/pending/outstanding after close; balanced invocations 10, exports 70, definitions 40, deadline sources 10 |
+| Canonical SC-01 quick | 44/44 valid runs, zero retries; **92/92 comparisons Passed**, no exceedances |
+| Combined report | **Passed, exit 0**; functional/artifact/resource/performance gates Passed |
+| Copy revalidation and preservation | Same Passed report, exit 0; all 112 original capture files retain their hashes |
+| Python / Node regressions | 267 / 77 Passed before collection; no tooling changes afterward |
+| Stable release | Still Blocked: full #15, Orca #32 and additional backend/platform coverage |
+
+The three previously affected 100-node metrics pass every repetition:
+
+| Repetition | Dirty 100 p99 (ms), limit 29 | Dirty 1 allocation (KiB/sample), limit 34 | Dirty 10 structural heap (MiB), limit 2 |
+| ---: | ---: | ---: | ---: |
+| 1 | 19.885857 | 23.872070 | 0.552422 |
+| 2 | 18.861544 | 23.877930 | 0.374680 |
+| 3 | 21.782629 | 23.406250 | 0.364380 |
+
+The original seven failing comparisons all pass for this newly measured runtime.
+Earlier valid failures remain Failed at their own source revisions, including
+b5ab365's 31.973222 ms p99 and 6c503d2's 34.170898 KiB/sample allocation. No valid
+excess is retried, reclassified, averaged away or replaced inside a campaign.
+The exact origin of the earlier common first-pair allocation variance remains
+unconfirmed; the observer correction removes independently measured avoidable
+allocation and this new complete campaign establishes acceptance.
+
+The latency investigation establishes unrelated graphics interference on this
+host by per-client engine counters and the user's matched minimization control.
+These counters do not recover the exact stack of the earlier canonical failure.
+The user's application stays minimized and GNOME unlocked through this campaign;
+a bounded continuous idle/suspend inhibitor bridges all QA stages. No desktop,
+GPU, vsync, JavaFX, fixture, workload, budget, validity or retry setting changes.
+During this campaign, 390 bounded 5-second telemetry samples track the
+external client's mean graphics utilization at **0.653%**; all consecutive
+intervals retain the same client counter. GPU work from QA itself is expected.
+This is qualification under the documented foreground/minimized-client condition,
+not a universal latency guarantee under unrelated desktop load. JavaFX 27.0.1
+was not adopted and is not credited with the result.
+
+Environment remains Fedora 44, GNOME/Wayland with positively attributed JavaFX
+**XWayland**, Zulu27.28+101-CA build 27+35, specification version 27, JavaFX 27,
+Gradle wrapper 9.8.1. Functional/performance JVM distribution/version and all five
+installed JAR hashes match. Exactly two of 132 source/test/tool hashes
+changed from 6c503d2: SceneObserver and its test; only the bridge JAR changed.
+The benchmark, baseline.conf, budgets.py, qualification.py and run-baseline.sh are
+byte-identical to b5ab365. All 132 source/test/tool, five JAR and
+40 output fingerprints remain stable after collection.
+
+| Installed artifact | SHA-256 |
+| --- | --- |
+| `fx-atspi-bridge-0.1.0-SNAPSHOT.jar` | `fbab3f2203088482f9878512e45a080202a27edb8c0fa4fd6bc9e748ed072787` |
+| `fx-lab.jar` | `3ed4d2a7c9f29834c8feab49c4a677c0736adfaa22725b48cdaea13e470fc8a4` |
+| `javafx-base-27-linux.jar` | `47442adf4d186e5459d8f5468e941e226826d87b1ff4198c2bca3fe0547a281d` |
+| `javafx-controls-27-linux.jar` | `6669666e3ecd2700f2fcba7f1dce5ed83f240dd8781da7bfcafe487204d672a8` |
+| `javafx-graphics-27-linux.jar` | `93a8a1159b0acf3ec9a6823baf62381805e54ebec0e5a528785246865ea2d6b0` |
+
+Sorted source fingerprint manifest SHA-256: `a8876168d325d8448cbe07d8fc9b107bd7155e9b7f1f7fdb043aa2e347757fba`.
+Combined qualification report SHA-256: `b73237a10dd110a539f636415a58e67af42ab0bb0ae39dfba3a74895046a3402`.
+Original capture manifest SHA-256: `5c392c0767a1dc324d5d9837814ad31be75486940420960038f23b31b4722d13`.
+
+Reproduction uses `qualification.py collect`, canonical `run-baseline.sh QUICK quick`
+and `qualification.py report` as documented above, with fresh private directories.
+Generated captures/logs and all failed/interrupted diagnostics remain in owner-only
+persistent QA storage outside Git, for manual review/cleanup by 2026-10-30.
+Only authored summaries and reproducible source/tests are published. The temporary
+inhibitor is released after measurement; no desktop configuration is changed.

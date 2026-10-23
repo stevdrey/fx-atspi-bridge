@@ -1,9 +1,11 @@
 # Issue 10 / PR 42 — performance follow-up
 
-Latest completed runtime campaign (2026-10-23, `b5ab365`): **49/49 desktop cases,
-44/44 valid quick runs, zero retries, 91/92 budget comparisons Passed**. Structural
-heap passes; dense 100-node r3 p99 remains **31.973222 ms > 29 ms**. P2 stays open.
-See [resumed verification and renderer-wait diagnostics](issue-10-review-fixes.md#resumed-desktop-and-complete-matrix-2026-10-23).
+Latest completed runtime campaign (2026-10-23, `c1a9bb1`): **49/49 desktop cases,
+44/44 valid quick runs, zero retries, 92/92 fixed-budget comparisons Passed**.
+All three dense-latency, sparse-allocation and structural-heap repetitions pass.
+See [final controlled qualification](issue-10-review-fixes.md#final-controlled-qualification-2026-10-23).
+The full profile #15, Orca #32 and additional backend/platform coverage remain
+separate stable-release gates.
 
 Historical report: the original 44-run campaign and its seven failures are
 summarized in [issue-10](issue-10.md); raw captures are kept outside Git.

@@ -283,3 +283,17 @@ later sparse/dense batches and disposal, including mutation rejection. Compare t
 same bounded allocation probe and directed runs before/after, then require a new
 clean forced build, external clients and complete fixed-budget matrix for the new
 production JAR. No benchmark, JVM, JavaFX, budget, validity or retry changes.
+
+
+## Final controlled acceptance (2026-10-23)
+
+Clean `c1a9bb1a4f3975688d8c706e42bb08162a22a6d6` passes a new forced build (287 Java tests), all
+49 external cases, and all 44 canonical quick runs / 92 fixed-budget comparisons,
+with zero retries. Dense p99, sparse allocation and structural heap pass every
+repetition. Source/artifact stability and a copy revalidation pass; all original
+capture hashes remain unchanged. See the authored final controlled verification.
+The benchmark, budgets, JVM/JavaFX, guards and retry policy remain unchanged.
+Prior Failed campaigns retain their attribution and outcomes. The graphics-load
+condition is documented; exact historical allocation variance is not claimed
+solved from a later trace. Full #15, Orca #32 and extra backend coverage remain
+separate stable-release requirements.
