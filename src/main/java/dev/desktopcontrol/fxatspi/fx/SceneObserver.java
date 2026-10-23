@@ -108,18 +108,18 @@ public final class SceneObserver {
     private final Set<Observed> comboPopups = Collections.newSetFromMap(new IdentityHashMap<>());
     private final TargetRegistry registry;
     private final Executor scheduler;
-    private final IdentityHashMap<Object, Observed> observed = new IdentityHashMap<>();
+    private IdentityHashMap<Object, Observed> observed = new IdentityHashMap<>();
     /** The current FX-side model; each publication shares it and copies only recent changes. */
     private final NodeStore model = new NodeStore();
     /** Targets whose own projection must be read again (identity-based: Observed does not override equals). */
-    private final Set<Observed> dirty = new LinkedHashSet<>();
+    private Set<Observed> dirty = new LinkedHashSet<>();
     /** Targets whose child list must be read again. */
-    private final Set<Observed> restructured = new LinkedHashSet<>();
+    private Set<Observed> restructured = new LinkedHashSet<>();
     /** Inherited geometry changes are expanded once per flush, never once per invalidation. */
     private final Set<Observed> geometryRoots = Collections.newSetFromMap(new IdentityHashMap<>());
     private final GeometryProjector geometry = new GeometryProjector();
     /** Ids added, changed or removed since the last publication, in the order they changed. */
-    private final Set<String> touched = new LinkedHashSet<>();
+    private Set<String> touched = new LinkedHashSet<>();
     /**
      * Targets whose projection threw (for example a property bound to a failing application value). They publish an
      * inert, empty replacement and are projected again with the next batch; they never schedule a flush by themselves,
@@ -127,9 +127,9 @@ public final class SceneObserver {
      */
     private final Set<Observed> retry = new LinkedHashSet<>();
     /** Showing state per target, valid during one flush: each ancestor chain is read at most once per batch. */
-    private final IdentityHashMap<Observed, Boolean> showing = new IdentityHashMap<>();
+    private IdentityHashMap<Observed, Boolean> showing = new IdentityHashMap<>();
     /** Sensitivity per target, valid during one flush: a sensitive node makes its whole observed subtree sensitive. */
-    private final IdentityHashMap<Observed, Boolean> sensitivity = new IdentityHashMap<>();
+    private IdentityHashMap<Observed, Boolean> sensitivity = new IdentityHashMap<>();
     /** Targets whose own inclusion must be tested again before the next batch; their parent restructures only on exclusion. */
     private final Set<Observed> inclusion = new LinkedHashSet<>();
     /** The window list changed since the last batch: modal blocking is recomputed per window, not for the whole tree. */
@@ -216,6 +216,7 @@ public final class SceneObserver {
         }
         policyRevision = revision;
         for (var entry : observed.values()) {
+            entry.geometryDirty = true;
             entry.renew |= renew && entry.target != APPLICATION;
             restructured.add(entry);
             dirty.add(entry);
@@ -514,10 +515,15 @@ public final class SceneObserver {
         List<Object> children = List.of();
         /** Properties whose change affects only this target. */
         Observable[] own;
+        Observable geometryBounds;
         Observable[] geometryInherited = NO_PROPERTIES;
         Node clip;
         Point2D origin;
         boolean originInitialized;
+        /** One sanitized value per target; geometry/property, ancestry and policy changes invalidate it on FX. */
+        boolean geometryDirty = true, originDirty = true;
+        Geometry projectedGeometry;
+        boolean geometryShowing, geometrySensitive;
         /** Visibility of a node or showing state of a window: affects every descendant. */
         Observable inherited;
         /** The child list of a parent, the window list, or the scene property of a window. */
@@ -604,7 +610,10 @@ public final class SceneObserver {
             if (source == structure || scene != null && source == scene.rootProperty()) restructured.add(this);
             else if (source == inherited) markSubtree(this);
             else if (source == (clip == null ? null : clip.boundsInParentProperty()) || isInheritedGeometry(source)) geometryRoots.add(this);
-            else dirty.add(this);
+            else {
+                if (source == geometryBounds) geometryDirty = true;
+                dirty.add(this);
+            }
             schedule();
         }
 
@@ -634,6 +643,7 @@ public final class SceneObserver {
                     if (window instanceof Stage stage) geometryInherited = new Observable[] {stage.iconifiedProperty()};
                 }
                 case Node node -> {
+                    geometryBounds = node instanceof Region ? node.layoutBoundsProperty() : node.boundsInLocalProperty();
                     inherited = node.visibleProperty();
                     // Password contents and caret are never observed, let alone published.
                     own = switch (node) {
@@ -777,17 +787,17 @@ public final class SceneObserver {
         active = false;
         if (observeIds) AutomationIdEvents.remove(idListener); logicalKeys.clear();
         for (var entry : observed.values()) entry.unsubscribe();
-        observed.clear(); semanticPopups.clear(); excludedPopups.clear(); comboPopups.clear(); semanticOwners.clear();
+        observed = new IdentityHashMap<>(); semanticPopups.clear(); excludedPopups.clear(); comboPopups.clear(); semanticOwners.clear();
         unidentifiedClaims.clear();
         model.clear();
-        dirty.clear();
-        restructured.clear();
+        dirty = new LinkedHashSet<>();
+        restructured = new LinkedHashSet<>();
         geometryRoots.clear();
-        geometry.clear();
-        touched.clear();
+        geometry.dispose();
+        touched = new LinkedHashSet<>();
         retry.clear();
-        showing.clear();
-        sensitivity.clear();
+        showing = new IdentityHashMap<>();
+        sensitivity = new IdentityHashMap<>();
         inclusion.clear();
         modal.clear();
         rotated.clear();
@@ -869,6 +879,7 @@ public final class SceneObserver {
         geometryRoots.clear();
         for (var entry : List.copyOf(retry)) if (entry.attached) {
             if (entry.realNode && entry.physicalFailed) entry.bindPhysical();
+            entry.geometryDirty = true;
             entry.resubscribe(); dirty.add(entry);
             if (entry.session == null && entry.expansionFailed) { entry.expansionFailed = false; entry.openSession(); }
             if (entry.session != null) restructured.add(entry);
@@ -884,7 +895,8 @@ public final class SceneObserver {
             }
         }
         try {
-            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>());
+            // Sparse batches need only a few targets/ancestors; grow normally for deeper trees.
+            var prepared = Collections.newSetFromMap(new IdentityHashMap<Observed,Boolean>(Math.max(4, dirty.size())));
             var pending = new ArrayDeque<Observed>();
             while (!dirty.isEmpty() || !pending.isEmpty()) {
                 if (pending.isEmpty()) {
@@ -919,16 +931,18 @@ public final class SceneObserver {
                         }
                     }
                     // Descendants of a sensitive node publish a substitute box and never use this node's origin.
-                    if (entry.target instanceof Node target && !sensitive) {
+                    if (entry.target instanceof Node target && !sensitive
+                            && (entry.originDirty || !entry.originInitialized || entry.sensitive)) {
                         var origin = geometry.origin(target);
                         var originChanged = entry.originInitialized && !Objects.equals(origin, entry.origin);
                         entry.origin = origin;
                         entry.originInitialized = true;
+                        entry.originDirty = false;
                         if (originChanged) {
                             // Only immediate children's PARENT frame depends on this bounding origin.
                             for (var child : entry.children) {
                                 var descendant = observed.get(child);
-                                if (descendant != null && descendant.parent == entry) dirty.add(descendant);
+                                if (descendant != null && descendant.parent == entry) { descendant.geometryDirty = true; dirty.add(descendant); }
                             }
                         }
                     }
@@ -941,6 +955,7 @@ public final class SceneObserver {
                     sensitive = false; // the inert replacement carries no application classification
                     node = placeholder(entry);
                 }
+                if (failed) entry.geometryDirty = true;
                 if (!entry.unsubscribed.isEmpty()) retry.add(entry); // projected, but a listener is still missing
                 var old = model.get(entry.id);
                 if (entry.target != APPLICATION && old != null && (entry.renew && (!old.name().equals(node.name()) || !old.text().equals(node.text())
@@ -977,8 +992,9 @@ public final class SceneObserver {
         } finally { showing.clear(); sensitivity.clear(); physicalState.clear(); modal.clear(); rotated.clear(); geometry.clear(); }
         if (touched.isEmpty()) return;
         indexAutomationIds();
-        var changed = Collections.unmodifiableSet(new LinkedHashSet<>(touched));
-        touched.clear();
+        // Relinquish this exclusive set before calling the sink; published IDs are never mutated again.
+        var changed = Collections.unmodifiableSet(touched);
+        touched = new LinkedHashSet<>();
         publications++;
         if (!sink.publish(new Snapshot(model.freeze(), options.actionLimits(), options.actionSenders(), policyRevision), changed)) close();
     }
@@ -990,14 +1006,19 @@ public final class SceneObserver {
      * Old entries are removed before new ones are inserted, so atomic swaps in one batch are valid.
      */
     private void indexAutomationIds() {
-        var affected = new HashSet<String>();
+        HashSet<String> affected = null;
         for (var id : touched) {
             var raw = rawAutomation.remove(id);
             if (raw != null) rawAutomationIndex.remove(raw,id);
             var candidate = automationCandidates.remove(id);
-            if (candidate != null) { removeHolder(candidate.value(),id); affected.add(candidate.value()); }
+            if (candidate != null) {
+                removeHolder(candidate.value(),id);
+                if (affected == null) affected = new HashSet<>();
+                affected.add(candidate.value());
+            }
         }
-        for (var id : List.copyOf(touched)) {
+        // This pass indexes holders without modifying touched; affected holders are appended afterward.
+        for (var id : touched) {
             var item = model.get(id);
             var entry = item == null ? null : observed.get(registry.target(id));
             if (entry == null || entry.rawAutomationId.isEmpty() || item.semantics().automationId().isEmpty()) continue;
@@ -1011,8 +1032,10 @@ public final class SceneObserver {
             var value = item.semantics().automationId();
             automationCandidates.put(id,new AutomationCandidate(value,entry.automationTransformed));
             automationHolders.computeIfAbsent(value,_ -> new HashSet<>()).add(id);
+            if (affected == null) affected = new HashSet<>();
             affected.add(value);
         }
+        if (affected == null) return;
         for (var value : affected) {
             var holders = automationHolders.get(value);
             if (holders == null) continue;
@@ -1059,6 +1082,8 @@ public final class SceneObserver {
         if (model.remove(entry.id) != null) touched.add(entry.id);
         registry.release(entry.target);
         entry.id = registry.register(entry.target);
+        // A sensitivity change moves the substitute box of already-sensitive descendants to another ancestor.
+        entry.geometryDirty = true;
         if (entry.parent != null) dirty.add(entry.parent);
         for (var child : entry.children) {
             var descendant = observed.get(child);
@@ -1251,6 +1276,7 @@ public final class SceneObserver {
 
     private void markSubtree(Observed entry) {
         showing.remove(entry); sensitivity.remove(entry);
+        entry.geometryDirty = true;
         dirty.add(entry);
         for (var child : entry.children) {
             var descendant = observed.get(child);
@@ -1394,6 +1420,7 @@ public final class SceneObserver {
     }
 
     private List<String> childIds(Observed entry) {
+        if (entry.children.isEmpty()) return List.of();
         var ids = new ArrayList<String>(entry.children.size());
         List<Object> retained = null;
         for (var index = 0; index < entry.children.size(); index++) {
@@ -1542,6 +1569,18 @@ public final class SceneObserver {
      * own layout box, which depends on their column count, not on their contents.
      */
     private Geometry nodeGeometry(Observed entry, Node node, boolean showing, boolean sensitive) {
+        if (!entry.geometryDirty && entry.projectedGeometry != null
+                && entry.geometryShowing == showing && entry.geometrySensitive == sensitive) return entry.projectedGeometry;
+        var result = readNodeGeometry(entry, node, showing, sensitive);
+        entry.geometryDirty = false;
+        entry.originDirty = true;
+        entry.projectedGeometry = result;
+        entry.geometryShowing = showing;
+        entry.geometrySensitive = sensitive;
+        return result;
+    }
+
+    private Geometry readNodeGeometry(Observed entry, Node node, boolean showing, boolean sensitive) {
         if (entry.realNode) {
             var frame = entry.parent;
             while (frame != null && !(frame.target instanceof Window)) frame = frame.parent;

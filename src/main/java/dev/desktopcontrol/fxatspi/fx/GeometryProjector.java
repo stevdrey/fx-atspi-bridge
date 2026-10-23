@@ -30,9 +30,9 @@ import javafx.stage.Window;
 
 /** Public-API geometry reads, confined to FX. Caches exist only during one observer flush. */
 final class GeometryProjector {
-    private final IdentityHashMap<Node, Area> raw = new IdentityHashMap<>();
-    private final IdentityHashMap<Node, Area> clips = new IdentityHashMap<>();
-    private final IdentityHashMap<Node, Boolean> twoDimensional = new IdentityHashMap<>();
+    private IdentityHashMap<Node, Area> raw = new IdentityHashMap<>();
+    private IdentityHashMap<Node, Area> clips = new IdentityHashMap<>();
+    private IdentityHashMap<Node, Boolean> twoDimensional = new IdentityHashMap<>();
 
     /** Doubles are retained until after intersection and coordinate translation. Null areas mean unavailable. */
     private record Area(double x, double y, double right, double bottom) {
@@ -54,6 +54,13 @@ final class GeometryProjector {
     }
 
     void clear() { raw.clear(); clips.clear(); twoDimensional.clear(); }
+
+    /** A caller may retain a closed bridge; do not retain the peak tree's empty backing arrays. */
+    void dispose() {
+        raw = new IdentityHashMap<>();
+        clips = new IdentityHashMap<>();
+        twoDimensional = new IdentityHashMap<>();
+    }
 
     private boolean isTwoDimensional(Node node) {
         var known = twoDimensional.get(node);

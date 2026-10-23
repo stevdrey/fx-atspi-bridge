@@ -28,15 +28,19 @@ import java.util.stream.Stream;
  * The current model by id, owned by one thread, which publishes immutable views without copying every node. A view
  * shares a base map that is never modified once shared and copies only the changes made since the last compaction,
  * so publishing after a few changes costs O(changes) rather than O(nodes). Changes are merged into a new base once they
- * exceed an eighth of it (at least {@link #COMPACTION_MIN}), which amortizes the full copy over many publications.
+ * exceed an eighth of it (a preferred floor of {@link #COMPACTION_MIN}, capped at half the live tree for small or
+ * shrinking trees). Compaction uses a base sized for the live tree, reusing a correctly presized exclusive delta
+ * when possible and rebuilding after a high-water excess or tombstones so removed entries release their capacity.
  */
 public final class NodeStore {
-    /** Fewest pending changes that trigger a compaction, so small trees are not recopied on every publication. */
+    /** Preferred compaction floor for larger trees; small/shrinking trees cap it at half their live cardinality. */
     static final int COMPACTION_MIN = 256;
     /** Shared with published views; replaced, never modified. */
     private Map<String, AccessibleNode> base = Map.of();
     /** Changes over {@link #base}; a {@code null} value removes a base entry. */
-    private final HashMap<String, AccessibleNode> delta = new HashMap<>();
+    private HashMap<String, AccessibleNode> delta = HashMap.newHashMap(0);
+    /** Largest entry count or explicit presizing hint since the current delta was created. */
+    private int deltaPeak;
     private int size;
 
     public AccessibleNode get(String id) { return delta.containsKey(id) ? delta.get(id) : base.get(id); }
@@ -47,6 +51,7 @@ public final class NodeStore {
         var previous = get(id);
         if (previous == null) size++;
         delta.put(id, node);
+        deltaPeak = Math.max(deltaPeak, delta.size());
         return previous;
     }
 
@@ -57,12 +62,14 @@ public final class NodeStore {
         size--;
         if (base.containsKey(id)) delta.put(id, null);
         else delta.remove(id);
+        deltaPeak = Math.max(deltaPeak, delta.size());
         return previous;
     }
 
     public void clear() {
         base = Map.of();
-        delta.clear();
+        delta = HashMap.newHashMap(0);
+        deltaPeak = 0;
         size = 0;
     }
 
@@ -70,7 +77,8 @@ public final class NodeStore {
 
     /** An immutable view of the current contents; later changes to this store do not affect it. */
     public Map<String, AccessibleNode> freeze() {
-        if (delta.size() > Math.max(COMPACTION_MIN, base.size() / 8)) compact();
+        var threshold = Math.min(Math.max(COMPACTION_MIN, base.size() / 8), Math.max(1, size / 2));
+        if (delta.size() > threshold) compact();
         return new View(base, delta.isEmpty() ? Map.of() : new HashMap<>(delta), size);
     }
 
@@ -78,11 +86,15 @@ public final class NodeStore {
     int pendingChanges() { return delta.size(); }
 
     private void compact() {
-        var merged = HashMap.<String, AccessibleNode>newHashMap(size);
+        // An unpublished delta already presized exactly for the live tree can become the base without copying.
+        // Any high-water excess or tombstone requires a fresh live-sized table, so shrinkage releases capacity.
+        var reuse = deltaPeak == size && !delta.containsValue(null);
+        var merged = reuse ? delta : HashMap.<String, AccessibleNode>newHashMap(size);
         for (var entry : base.entrySet()) if (!delta.containsKey(entry.getKey())) merged.put(entry.getKey(), entry.getValue());
-        for (var entry : delta.entrySet()) if (entry.getValue() != null) merged.put(entry.getKey(), entry.getValue());
+        if (!reuse) for (var entry : delta.entrySet()) if (entry.getValue() != null) merged.put(entry.getKey(), entry.getValue());
         base = merged;
-        delta.clear();
+        deltaPeak = Math.min(size, COMPACTION_MIN);
+        delta = HashMap.newHashMap(deltaPeak);
     }
 
     /** Neither map is modified after construction; entries are copied out so callers cannot write through them. */

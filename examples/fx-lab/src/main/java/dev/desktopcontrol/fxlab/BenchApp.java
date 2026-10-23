@@ -119,7 +119,14 @@ public final class BenchApp extends Application {
         stage.setTitle("SC-01 benchmark");
         originalScene = new Scene(pane, 1200, 800);
         stage.setScene(originalScene);
+        // Opt-in, recorded by the collector: an unoccluded window avoids Wayland pulse throttling, so results under
+        // --window=foreground are best-case and never comparable with the default window state.
+        var window = options.getOrDefault("window", "default");
+        if (!window.equals("default") && !window.equals("foreground")) throw new IllegalArgumentException("window must be default or foreground");
+        var foreground = window.equals("foreground");
+        if (foreground) stage.setAlwaysOnTop(true);
         stage.show();
+        if (foreground) { stage.toFront(); stage.requestFocus(); }
         // Run the measurement off the FX thread so FX pulses are never blocked by orchestration.
         CompletableFuture.runAsync(() -> {
             try {

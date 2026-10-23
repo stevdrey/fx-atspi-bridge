@@ -29,14 +29,21 @@ jobs:
           distribution: zulu
           java-version: '27'
       - name: Install GLib for native unit tests, AT-SPI Python bindings for the probe tests, and Xvfb/GTK for the JavaFX toolkit tests
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-0t64 python3-gi gir1.2-atspi-2.0 xvfb libgtk-3-0t64
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-0t64 python3-gi gir1.2-atspi-2.0 xvfb libgtk-3-0t64 dbus-daemon libglib2.0-bin
       - name: Check JDK
         run: java -version
-      - name: Build library and example; test native variants, Unicode offsets and the JavaFX scene model
+      - name: Build library and example; test native variants, Unicode offsets, scene model and published consumers
         env:
+          REQUIRE_NATIVE_BUS: '1'
           REQUIRE_FX_TOOLKIT: '1'  # fail instead of skipping the JavaFX toolkit tests when no display/toolkit is available
         run: xvfb-run -a ./gradlew check generatePomFileForMavenJavaPublication --no-daemon
       - name: Test baseline tooling
         env:
           REQUIRE_ATSPI_TESTS: '1'  # fail instead of skipping the probe suite when the bindings are missing
+          # Temporary Git fixtures must finish maintenance before their directories are removed.
+          GIT_CONFIG_COUNT: '2'
+          GIT_CONFIG_KEY_0: gc.autoDetach
+          GIT_CONFIG_VALUE_0: 'false'
+          GIT_CONFIG_KEY_1: maintenance.autoDetach
+          GIT_CONFIG_VALUE_1: 'false'
         run: python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'

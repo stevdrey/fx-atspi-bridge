@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff;
 import java.lang.ref.WeakReference;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -184,9 +185,15 @@ class BridgeLifecycleTest {
             var stage = new Stage();
             stage.setScene(new Scene(new VBox(control), 200, 100));
             stage.show();
+            stage.requestFocus();
+            control.requestFocus();
             return control;
         });
-        Thread.sleep(1000); // let window focus settle: a focus change is a real change, not a rescan
+        // A fixed sleep can finish before native focus arrives, invalidating the subsequent idle observation.
+        var focusDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (!onFx(() -> button.isFocused() && button.getScene().getWindow().isFocused())
+                && System.nanoTime() < focusDeadline) Thread.sleep(10);
+        assertTrue(onFx(() -> button.isFocused() && button.getScene().getWindow().isFocused()), "native focus did not arrive");
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
         // Native placement and decorations can settle after install, even when focus already settled.
         long idlePublications = onFx(last::publications);
@@ -199,8 +206,12 @@ class BridgeLifecycleTest {
         }
         assertTrue(System.nanoTime() - quietSince >= TimeUnit.MILLISECONDS.toNanos(600), "native geometry did not settle");
         var idleProjections = onFx(last::projections);
+        var idleSnapshot = last.provider.publishedSnapshot();
         Thread.sleep(500); // dozens of pulses; the removed timer rescanned every 100 ms
-        assertEquals(idlePublications, onFx(last::publications), "settled idle geometry publishes nothing");
+        assertEquals(idlePublications, onFx(last::publications), () -> "settled idle geometry publishes nothing; changes="
+                + SnapshotDiff.diff(idleSnapshot, last.provider.publishedSnapshot(), idleSnapshot.nodes().keySet()).stream()
+                        .map(change -> change instanceof SnapshotDiff.State state ? "State(" + state.state() + ")"
+                                : change.getClass().getSimpleName()).toList());
         assertEquals(idleProjections, onFx(last::projections), "idle must not even re-project unchanged nodes");
         onFx(() -> { button.setText("after"); return null; });
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
@@ -250,5 +261,65 @@ class BridgeLifecycleTest {
         failing.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
         awaitSlotReleased(); // no close() was called: the provider failed by itself
         last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+    }
+
+    /** Numeric evidence for the SC-10 disposal gate; no diagnostics API is added to the library. */
+    @Test void qualificationChurnBalancesNativeOwnershipAndDisposesFxTargets() throws Exception {
+        NativeTestTools.requireCommand("1".equals(System.getenv("REQUIRE_NATIVE_BUS"))
+                || "1".equals(System.getenv("REQUIRE_FX_TOOLKIT")), "gdbus", "help");
+        long invocations = 0, exports = 0, definitions = 0, deadlines = 0;
+        for (var cycle = 0; cycle < 10; cycle++) {
+            var stage = onFx(() -> {
+                var window = new Stage(); window.setTitle("qualification");
+                window.setScene(new Scene(new VBox(new Button("qualification-before")), 240, 100));
+                window.show(); return window;
+            });
+            last = onFx(() -> FxAtSpiBridge.install(message -> {}, ffi -> address, false));
+            var provider = last.provider;
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while ((provider.state() != AtSpiProvider.State.RUNNING
+                    || provider.publishedSnapshot().nodes().values().stream().noneMatch(node -> node.name().equals("qualification-before")))
+                    && System.nanoTime() < deadline) Thread.sleep(10);
+            assertEquals(AtSpiProvider.State.RUNNING, provider.state());
+            var target = provider.publishedSnapshot().nodes().values().stream()
+                    .filter(node -> node.name().equals("qualification-before")).findFirst().orElseThrow();
+            var request = new ProcessBuilder("gdbus", "call", "--address", address, "--dest", provider.busName(),
+                    "--object-path", "/org/a11y/atspi/accessible/" + target.id(),
+                    "--method", "org.a11y.atspi.Action.DoAction", "0")
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            try {
+                assertTrue(request.waitFor(15, TimeUnit.SECONDS)); assertEquals(0, request.exitValue());
+            } finally { PrivateBus.terminate(request); }
+            var departed = onFx(() -> (Button) ((VBox) stage.getScene().getRoot()).getChildren().getFirst());
+            onFx(() -> { stage.setScene(new Scene(new VBox(new Button("qualification-after")),240,100)); return null; });
+            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (provider.publishedSnapshot().nodes().values().stream().noneMatch(node -> node.name().equals("qualification-after"))
+                    && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(provider.publishedSnapshot().nodes().values().stream().anyMatch(node -> node.name().equals("qualification-after")));
+            assertFalse(provider.publishedSnapshot().nodes().containsKey(target.id()));
+            if (cycle == 9) bus.stop(); // one unexpected bus loss among ordinary close/install churn
+            else onFx(() -> { last.close(); return null; });
+            last.closed().toCompletableFuture().get(15, TimeUnit.SECONDS);
+            awaitSlotReleased();
+            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (onFx(last::observerActive) && System.nanoTime() < deadline) Thread.sleep(10);
+            assertFalse(onFx(last::observerActive)); assertEquals(0, onFx(last::trackedTargets));
+            var projections = onFx(last::projections);
+            onFx(() -> { departed.setText("detached"); stage.hide(); stage.setScene(null); return null; });
+            assertEquals(projections, onFx(last::projections));
+            assertEquals(0, provider.pendingCount()); assertEquals(0, provider.outstandingCount());
+            assertFalse(provider.deadlineArmed()); assertTrue(provider.snapshotIsEmpty());
+            assertTrue(provider.pendingAcquired() > 0); assertTrue(provider.exportsAcquired() > 0);
+            assertEquals(provider.pendingAcquired(), provider.pendingReleased());
+            assertEquals(provider.exportsAcquired(), provider.exportsReleased());
+            assertEquals(provider.definitionsAcquired(), provider.definitionsReleased());
+            assertEquals(provider.deadlineSourcesAcquired(), provider.deadlineSourcesReleased());
+            invocations += provider.pendingAcquired(); exports += provider.exportsAcquired();
+            definitions += provider.definitionsAcquired(); deadlines += provider.deadlineSourcesAcquired();
+        }
+        System.out.println("SC10_RESOURCES {\"cycles\":10,\"busLossCycles\":1,\"targetsAfterClose\":0,"
+                + "\"pendingAfterClose\":0,\"outstandingAfterClose\":0,\"invocationsBalanced\":" + invocations
+                + ",\"exportsBalanced\":" + exports + ",\"definitionsBalanced\":" + definitions
+                + ",\"deadlineSourcesBalanced\":" + deadlines + "}");
     }
 }

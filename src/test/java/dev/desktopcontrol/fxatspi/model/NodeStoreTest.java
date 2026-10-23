@@ -20,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.management.ThreadMXBean;
+import java.lang.management.ManagementFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +86,56 @@ class NodeStoreTest {
         assertEquals(reference.size(), store.size());
         store.clear();
         assertTrue(store.freeze().isEmpty());
+    }
+
+    @Test void smallAndShrinkingTreesKeepSparsePublicationsSmallWithoutMutatingOldViews() {
+        var store = new NodeStore();
+        for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "initial"));
+        var initial = store.freeze();
+        assertEquals(0, store.pendingChanges(), "the initial tree belongs in the shared base");
+        store.put("n0", node("n0", "changed"));
+        var sparse = store.freeze();
+        assertEquals(1, store.pendingChanges(), "one changed node must not copy a 100-node overlay");
+        for (var i = 0; i < 60; i++) store.put("n" + i, node("n" + i, "dense"));
+        var dense = store.freeze();
+        assertEquals(0, store.pendingChanges());
+        assertEquals("initial", initial.get("n0").name());
+        assertEquals("changed", sparse.get("n0").name());
+        assertEquals("dense", dense.get("n0").name());
+        for (var i = 10; i < 100; i++) store.remove("n" + i);
+        var shrunk = store.freeze();
+        assertEquals(10, shrunk.size());
+        assertEquals(0, store.pendingChanges(), "shrinking the live tree must release masked base entries");
+        assertEquals(100, initial.size());
+        assertEquals(100, dense.size());
+        assertEquals("initial", dense.get("n99").name());
+        assertNull(shrunk.get("n99"));
+    }
+
+    @Test void denseSmallTreeCompactionDoesNotAllocateAnotherFullHashTable() {
+        var store = new NodeStore();
+        for (var i = 0; i < 103; i++) store.put("n" + i, node("n" + i, "initial"));
+        var initial = store.freeze();
+        for (var round = 0; round < 3; round++) {
+            for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "warmup"));
+            store.freeze();
+        }
+        for (var i = 0; i < 100; i++) store.put("n" + i, node("n" + i, "latest"));
+        var allocations = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+        assertTrue(allocations.isThreadAllocatedMemorySupported());
+        allocations.setThreadAllocatedMemoryEnabled(true);
+        var thread = Thread.currentThread().threadId();
+        var before = allocations.getThreadAllocatedBytes(thread);
+        var dense = store.freeze();
+        var bytes = allocations.getThreadAllocatedBytes(thread) - before;
+        assertTrue(bytes < 2048, "a correctly sized exclusive delta must not allocate a duplicate full table: " + bytes);
+        assertEquals(103, dense.size());
+        assertEquals("latest", dense.get("n0").name());
+        assertEquals("initial", initial.get("n0").name(), "published bases remain immutable");
+        for (var i = 1; i < 103; i++) store.remove("n" + i);
+        var shrunk = store.freeze();
+        assertEquals(Map.of("n0", node("n0", "latest")), shrunk);
+        assertEquals(103, dense.size(), "shrinking cannot mutate a previous view");
     }
 
     @Test void nullNodesAreRejected() {

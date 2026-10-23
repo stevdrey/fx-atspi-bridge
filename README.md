@@ -316,7 +316,78 @@ The project's own code and example are distributed under the [Apache License 2.0
 
 ## Product development
 
-See [docs](docs/README.md), the [roadmap](docs/wiki/Roadmap.md), and [agent guidance](AGENTS.md). The product is an accessibility bridge only: no MCP server, tools or client are planned in this repository. Geometry and richer control support remain roadmap items.
+See [docs](docs/README.md), the [roadmap](docs/wiki/Roadmap.md), and [agent guidance](AGENTS.md). The product is an accessibility bridge only: no MCP server, tools or client are planned in this repository. Geometry and semantic adapters are implemented as described above; further control coverage and platform qualification remain on the roadmap.
+
+
+## Reusable-library qualification (SC-10)
+
+`./gradlew check` also publishes to `build/qa-repository` and builds independent modular and
+classpath consumers from those Maven coordinates. It verifies their native-access flags,
+exact JavaFX runtime dependencies, POM/module metadata and notices in the main, sources and
+Javadoc JARs. It does not change your local Maven repository or publish to a remote service.
+The consumer sources under `qa/consumers` are executable integration examples; the modular
+consumer declares `requires dev.desktopcontrol.fxatspi`, while the classpath consumer uses
+`--enable-native-access=ALL-UNNAMED` and a plain launcher that starts JavaFX.
+
+For desktop acceptance, use JDK 27, the Gradle-declared JavaFX 27, Linux x86_64,
+GLib/GIO/GObject, Python with PyGObject/Atspi 2.0, libatspi, `dbus-run-session`, `dbus-daemon`,
+`gdbus`, the system AT-SPI launcher/registry and `xprop` for X11/XWayland attribution.
+Run from an unlocked Fedora/GNOME/Wayland graphical session. The private-bus case uses the
+Fedora `/usr/libexec` AT-SPI executables; it never stops the desktop accessibility bus.
+
+```bash
+java -version
+REQUIRE_FX_TOOLKIT=1 REQUIRE_NATIVE_BUS=1 ./gradlew check :examples:fx-lab:installDist --no-daemon
+REQUIRE_ATSPI_TESTS=1 python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_*.py'
+# Collect only after committing sources; collect forces check/installDist and consumer rebuilds.
+# Use fresh output directories; JDK 27 is checked before any build or client.
+python3 examples/fx-lab/scripts/qualification.py collect . build/sc10-acceptance
+bash examples/fx-lab/scripts/run-baseline.sh build/sc10-quick quick
+python3 examples/fx-lab/scripts/qualification.py report . build/sc10-acceptance --performance build/sc10-quick
+```
+
+The collector selects `JAVA_HOME/bin/java` before `PATH`, requires specification version 27,
+and pins that JDK for its children. Before capturing hashes it forces wrapper `check` and
+`installDist`, including independent consumer builds, with task reuse/build cache disabled
+and native/FX tests required. `build.json` records success or failure; existing diagnostics
+under `build/` are preserved. Source, JAR, launcher, consumer and JUnit hashes must remain
+stable throughout collection. Raw build/client logs stay local. On timeout or KeyboardInterrupt, cleanup captures the
+owned descendant tree with Linux `/proc` and Python pidfd APIs before stopping parents,
+so nested consumer/Gradle sessions cannot evade the wrapper's group teardown. Up to 256
+process handles are retained per cancellation, validated by parent identity and closed
+after termination; capture/termination failures fail the gate.
+
+Reports require matching full JVM version/distribution lines, the canonical quick plan and
+workload, all 44 run identities and all 92 unique comparisons against unchanged budgets.
+Historical metadata is accepted only when its original version lines establish JDK 27;
+missing or ambiguous JVM evidence is rejected. A partial matrix cannot become quick evidence
+by changing its own plan. Optional native unit tests skip only the gdbus-dependent test if
+that CLI is absent; required native/FX testing fails instead.
+
+The benchmark keeps its owned window above other windows and requests foreground before
+cadence checks so occlusion does not throttle Wayland pulses. Sampling, workload and
+validity limits are unchanged. Keep the graphical session unlocked and the benchmark's
+workspace visible during collection; build/ outputs survive temporary-directory cleanup.
+
+The client starts and closes its own fixtures and consumers. Cases cover windows/scenes,
+Unicode, controls/custom adapters, geometry, events, redaction/passwords, stale references,
+modal responsiveness, overload/expiry and bus loss. Requests that expired before starting
+must have no late effect. Removed paths can be rejected by GDBus as `UnknownMethod` after
+unregistration; queued requests that reach the provider with a stale incarnation use
+`UnknownObject`. Neither is retried against a replacement object.
+
+Internal lifecycle tests record value-free disposal counters in JUnit output, including
+normal close and bus loss. There is no new public diagnostics API. A status callback and
+`closed()` remain the consumer-facing lifecycle diagnostics; do not wait on FX. A failed
+provider requires application-directed reinstall after termination, without automatic retries.
+
+The collector records source/JAR hashes, backend and component versions. A missing, failed,
+partial or mismatched suite cannot pass the aggregate report. Performance uses unchanged
+SC-01 provisional thresholds; candidate-derived budgets are never adopted automatically.
+`qualification.json` distinguishes campaign status from stable release readiness. The full
+matrix (#15), Orca interoperability (#32), native-Wayland/other-platform evidence and any
+reported failures remain explicit. A passing quick campaign alone does not authorize a
+stable release. See [issue-10 evidence](docs/verification/issue-10.md).
 
 ## Contributing
 

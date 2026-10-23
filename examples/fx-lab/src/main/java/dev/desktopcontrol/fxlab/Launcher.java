@@ -19,6 +19,6 @@ import java.util.Arrays;
 public final class Launcher {
     public static void main(String[] args) {
         var flags = Arrays.asList(args);
-        Application.launch(flags.contains("--semantics") ? SemanticsApp.class : flags.contains("--geometry") ? GeometryApp.class : flags.contains("--bench") ? BenchApp.class : FxLab.class, args);
+        Application.launch(flags.contains("--acceptance") ? AcceptanceApp.class : flags.contains("--semantics") ? SemanticsApp.class : flags.contains("--geometry") ? GeometryApp.class : flags.contains("--bench") ? BenchApp.class : FxLab.class, args);
     }
 }

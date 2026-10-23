@@ -4,6 +4,7 @@ plugins {
 }
 group = 'io.github.stevdrey'
 version = '0.1.0-SNAPSHOT'
+def javafxVersion = '27'
 repositories { mavenCentral() }
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(27) }
@@ -12,7 +13,7 @@ java {
 }
 dependencies {
     for (component in ['base', 'graphics', 'controls']) {
-        api("org.openjfx:javafx-${component}:27:linux") { transitive = false }
+        api("org.openjfx:javafx-${component}:${javafxVersion}:linux") { transitive = false }
     }
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -28,6 +29,7 @@ tasks.withType(Jar).configureEach {
     }
 }
 publishing {
+    repositories { maven { name = 'Qa'; url = layout.buildDirectory.dir('qa-repository') } }
     publications {
         mavenJava(MavenPublication) {
             from components.java
@@ -52,3 +54,24 @@ publishing {
         }
     }
 }
+
+def qaRepository = layout.buildDirectory.dir('qa-repository')
+// Keep exactly one publication: snapshot timestamps would otherwise accumulate on every check.
+tasks.named('publishMavenJavaPublicationToQaRepository') { doFirst { qaRepository.get().asFile.deleteDir() } }
+
+// Resolve the publication from two independent consumer builds, never project(':').
+tasks.register('verifyConsumerIntegration', Exec) {
+    dependsOn 'publishMavenJavaPublicationToQaRepository'
+    // Up to date while the published content is unchanged; qualification.py still forces it with --rerun-tasks.
+    inputs.files(tasks.named('jar'), tasks.named('sourcesJar'), tasks.named('javadocJar'),
+            tasks.named('generatePomFileForMavenJavaPublication'), tasks.named('generateMetadataFileForMavenJavaPublication'))
+            .withPropertyName('publication')
+    // The nested build keeps its own .gradle state there; only consumer sources are inputs.
+    inputs.files(fileTree('qa/consumers') { exclude '.gradle/**', 'build/**' }).withPropertyName('consumers')
+    inputs.files('examples/fx-lab/scripts/consumer_check.py', 'examples/fx-lab/scripts/qa_common.py',
+            'examples/fx-lab/scripts/scaling_audit.py').withPropertyName('scripts')
+    inputs.property('versions', "${version}:${javafxVersion}")
+    outputs.file(layout.buildDirectory.file('consumer-qa/artifacts.json'))
+    commandLine 'python3', 'examples/fx-lab/scripts/consumer_check.py', projectDir, version, javafxVersion
+}
+tasks.named('check') { dependsOn 'verifyConsumerIntegration' }
