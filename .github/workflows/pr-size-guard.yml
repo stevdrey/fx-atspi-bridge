@@ -9,6 +9,11 @@ permissions:
   pull-requests: read
   contents: read
 
+# Supersede runs for the same PR. Edits are never skipped: a skipped job would report success to the required check.
+concurrency:
+  group: pr-size-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   file-count:
     name: PR file count
@@ -43,7 +48,8 @@ jobs:
               const qaCapture = /(^|\/)(qa|benchmarks?|verification)\/(screenshots|snapshots|runs|logs|dumps)\//;
               const generatedExtension = /\.(jsonl?|ndjson|csv|tsv|txt|log|xml|html?|png|jpe?g|webp|gif|snap|dump|hprof|jfr|bin|zip|gz|sha256)$/;
               if (outputDirectory.test(p)) return 'generated test/QA/benchmark output directory';
-              if (/(^|\/)build\/reports\/tests(\/|$)/.test(p)) return 'generated Gradle test report directory';
+              // Gradle output trees at the root or below subprojects, but never inside source sets (e.g. a `build` package).
+              if (/^(?:(?!src\/)[^/]+\/)*build\/(reports|test-results|tmp|jacoco)(\/|$)/.test(p)) return 'generated Gradle build output directory';
               if ((verificationData.test(p) || qaCapture.test(p) || rootCapture.test(p)) &&
                   (generatedExtension.test(p) || /(^|\/)(manifest|receipt)([.-]|$)/.test(p))) {
                 return 'raw verification capture or evidence index';
@@ -59,19 +65,21 @@ jobs:
             }
 
             async function ciCheck({ github, context, core }) {
+              let count, level;
+              const blocked = () => core.setFailed(`${count}/${MAX_FILES} changed files. Split into independently reviewable PRs; preserve tests, security checks and documentation.`);
               try {
                 const started = Date.now();
                 let requests = 0, records = 0;
                 const call = async (method, params) => {
                   const remaining = 120000 - (Date.now() - started);
                   if (++requests > 350 || remaining <= 0) throw new Error('Metadata inspection capacity exceeded');
-                  const response = await method({ ...params, request: { timeout: Math.min(5000, remaining) } });
+                  const response = await method({ ...params, request: { signal: AbortSignal.timeout(Math.min(5000, remaining)) } });
                   if (Date.now() - started >= 120000) throw new Error('Metadata inspection deadline exceeded');
                   return response;
                 };
                 const params = { ...context.repo, pull_number: context.issue.number };
                 const { data: before } = await call(github.rest.pulls.get, params);
-                const count = before.changed_files, level = countLevel(count);
+                count = before.changed_files; level = countLevel(count);
                 if (!Number.isSafeInteger(before.commits) || before.commits < 0 || before.commits > MAX_HISTORY_COMMITS) {
                   throw new Error('Unverifiable PR commit count');
                 }
@@ -155,11 +163,13 @@ jobs:
                   ['Maximum allowed (inclusive)', String(MAX_FILES)], ['Feature commits inspected', String(commits.length)],
                   ['Recognizable generated outputs (including history)', String(prohibited.size)],
                 ]).write();
-                if (level === 'BLOCKED') core.setFailed(`${count}/${MAX_FILES} changed files. Split into independently reviewable PRs; preserve tests, security checks and documentation.`);
+                if (level === 'BLOCKED') blocked();
                 else if (level === 'WARNING') core.warning(`${count}/${MAX_FILES} changed files. Review scope before adding changes.`);
                 else if (!prohibited.size) core.info(`PASS: ${count}/${MAX_FILES} changed files.`);
                 if (prohibited.size) core.setFailed(`Generated evidence is prohibited at any file count, including intermediate commits: ${[...prohibited].slice(0, 10).join(', ')}. Remove captures from feature history; deleting them later is insufficient. Keep an authored summary outside raw outputs.`);
               } catch {
+                // An over-limit count is already decisive; report it even when history inspection cannot complete.
+                if (level === 'BLOCKED') blocked();
                 core.setFailed('Could not verify complete PR metadata/history within inspection limits. Check API availability, history size and revisions, then retry; unknown scope never passes.');
               }
             }

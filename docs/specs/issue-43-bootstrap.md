@@ -85,3 +85,20 @@ Verify root/module reports, added/modified/renamed report paths, transient captu
 baseline removals and legitimate HTML fixtures through both actual embedded workflow
 programs. Regenerate both workflows from the canonical module. No runtime, permission,
 event-policy or required-check configuration changes are needed for this correction.
+
+
+## Follow-up review — bounded requests, concurrency and Gradle outputs
+
+- Bound each API request with an `AbortSignal` (5 s or the remaining 120 s budget);
+  `request.timeout` is not honored by the fetch-based Octokit transport.
+- Reject Gradle `build/{reports,test-results,tmp,jacoco}/` outputs at the root and below
+  subprojects, but not below a `src/` segment.
+- When the net count is over the limit, report it even if history inspection fails closed.
+- Supersede in-progress runs per PR with a `concurrency` group. Do not filter `edited` with
+  a job `if:`: a skipped job reports success to the required check after a failing run.
+- Pin `actions/setup-node` and run the policy tests before the Gradle build.
+- Align `AGENTS.md` with #45: `docs/verification/` keeps authored summaries, never raw outputs.
+
+Acceptance: both regenerated workflows match the canonical source; every request carries an
+abort signal; a 45-file PR with a history failure reports both the count and the fail-closed
+message; the new Gradle output paths fail; authored fixtures and `build`-named sources pass.
