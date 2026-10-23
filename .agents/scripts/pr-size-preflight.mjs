@@ -6,25 +6,131 @@ import { basename, resolve } from 'node:path';
 import policy from './pr-policy.cjs';
 
 // A small shell lexer, never a shell evaluator. Wrappers/scripts/aliases are documented limitations.
+const malformed = () => new Error('Malformed shell command');
+function singleQuoteEnd(command, i) {
+  const end = command.indexOf("'", i);
+  if (end === -1) throw malformed();
+  return end;
+}
+function backtickEnd(command, i) {
+  for (; i < command.length; i++) {
+    if (command[i] === '\\') i++;
+    else if (command[i] === '`') return i;
+  }
+  throw malformed();
+}
+function doubleQuoteEnd(command, i) {
+  for (; i < command.length; i++) {
+    const c = command[i];
+    if (c === '\\') i++;
+    else if (c === '"') return i;
+    else if (c === '$' && command[i + 1] === '(') i = substitutionEnd(command, i + 2);
+    else if (c === '`') i = backtickEnd(command, i + 1);
+  }
+  throw malformed();
+}
+// Parses the delimiter after `<<`; quoting only affects expansion, not the delimiter text.
+function heredocOperator(command, i) {
+  const strip = command[i] === '-';
+  if (strip) i++;
+  while (command[i] === ' ' || command[i] === '\t') i++;
+  let delimiter = '';
+  while (i < command.length && !/[\s;&|()<>]/.test(command[i])) {
+    const c = command[i];
+    if (c === "'" || c === '"') {
+      const close = c === "'" ? singleQuoteEnd(command, i + 1) : command.indexOf('"', i + 1);
+      if (close === -1) throw malformed();
+      delimiter += command.slice(i + 1, close); i = close + 1;
+    } else if (c === '\\') { delimiter += command[i + 1] ?? ''; i += 2; }
+    else { delimiter += c; i++; }
+  }
+  if (!delimiter) throw malformed();
+  return { heredoc: { delimiter, strip }, end: i };
+}
+// Skips a heredoc body that starts at `i`; returns the index after its terminator line.
+function heredocEnd(command, i, { delimiter, strip }) {
+  while (i < command.length) {
+    let end = command.indexOf('\n', i);
+    if (end === -1) end = command.length;
+    const line = command.slice(i, end);
+    i = end + 1;
+    if ((strip ? line.replace(/^\t+/, '') : line) === delimiter) return Math.min(i, command.length);
+  }
+  throw malformed();
+}
+// Returns the index of the `)` closing a substitution whose body starts at `i`.
+function substitutionEnd(command, i) {
+  let depth = 1;
+  const heredocs = [];
+  while (i < command.length) {
+    const c = command[i];
+    if (c === '\\') i += 2;
+    else if (c === "'") i = singleQuoteEnd(command, i + 1) + 1;
+    else if (c === '"') i = doubleQuoteEnd(command, i + 1) + 1;
+    else if (c === '`') i = backtickEnd(command, i + 1) + 1;
+    else if (c === '(') { depth++; i++; }
+    else if (c === ')') { if (--depth === 0) return i; i++; }
+    else if (command.startsWith('<<<', i)) i += 3;
+    else if (command.startsWith('<<', i)) { const r = heredocOperator(command, i + 2); heredocs.push(r.heredoc); i = r.end; }
+    else if (c === '\n') { i++; for (const heredoc of heredocs.splice(0)) i = heredocEnd(command, i, heredoc); }
+    else if (c === '#' && (i === 0 || /[\s;&|(]/.test(command[i - 1]))) { while (i < command.length && command[i] !== '\n') i++; }
+    else i++;
+  }
+  throw malformed();
+}
+// Segments are word arrays; each carries the substitution bodies it runs, for recursive inspection.
 function shellWords(command) {
-  const segments = [[]];
-  let word = '', active = false, quote = '';
-  const flush = () => { if (active) segments.at(-1).push(word); word = ''; active = false; };
+  const segment = () => Object.assign([], { substitutions: [] });
+  const segments = [segment()], heredocs = [];
+  let word = '', active = false, quote = '', dropNext = false;
+  const flush = () => {
+    if (active) { if (dropNext) dropNext = false; else segments.at(-1).push(word); }
+    word = ''; active = false;
+  };
+  const separate = () => { flush(); dropNext = false; segments.push(segment()); };
+  const substitute = (i, bodyStart, end) => {
+    segments.at(-1).substitutions.push(command.slice(bodyStart, end));
+    word += command.slice(i, end + 1); active = true;
+    return end;
+  };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (c === '\\' && quote !== "'") {
-      if (++i >= command.length) throw new Error('Malformed shell command');
+      if (++i >= command.length) throw malformed();
       if (command[i] !== '\n') { word += command[i]; active = true; }
-    } else if (quote) {
+    } else if (quote === "'") {
+      if (c === quote) quote = ''; else word += c;
+    } else if (c === '$' && command[i + 1] === '(') i = substitute(i, i + 2, substitutionEnd(command, i + 2));
+    else if (c === '`') i = substitute(i, i + 1, backtickEnd(command, i + 1));
+    else if (quote) {
       if (c === quote) quote = ''; else word += c;
     } else if (c === "'" || c === '"') { quote = c; active = true; }
-    else if (';&|()\n'.includes(c)) { flush(); segments.push([]); }
+    else if ((c === '<' || c === '>') && command[i + 1] === '(') i = substitute(i, i + 2, substitutionEnd(command, i + 2));
+    else if (c === '<' || c === '>' || (c === '&' && command[i + 1] === '>')) {
+      // Redirections are not arguments: drop the fd prefix and the target word.
+      if (active && /^\d+$/.test(word)) { word = ''; active = false; } else flush();
+      if (command.startsWith('<<<', i)) { i += 2; dropNext = true; continue; }
+      if (command.startsWith('<<', i)) {
+        const r = heredocOperator(command, i + 2); heredocs.push(r.heredoc); i = r.end - 1; continue;
+      }
+      if (c === '&') i++;
+      if (command[i + 1] === '>' || command[i + 1] === '|' || (command[i] === '<' && command[i + 1] === '>')) i++;
+      if (command[i + 1] === '&' && /[0-9-]/.test(command[i + 2] ?? '')) {
+        i += 2; while (/[0-9]/.test(command[i + 1] ?? '')) i++;
+      } else {
+        if (command[i + 1] === '&') i++;
+        dropNext = true;
+      }
+    } else if (c === '\n') {
+      separate();
+      for (const heredoc of heredocs.splice(0)) i = heredocEnd(command, i + 1, heredoc) - 1;
+    } else if (';&|()'.includes(c)) separate();
     else if (/\s/.test(c)) flush();
     else if (c === '#' && !active) { while (i + 1 < command.length && command[i + 1] !== '\n') i++; }
     else { word += c; active = true; }
   }
-  if (quote) throw new Error('Malformed shell command');
-  flush(); return segments.filter(s => s.length);
+  if (quote || heredocs.length) throw malformed();
+  flush(); return segments.filter(s => s.length || s.substitutions.length);
 }
 function publicationTargets(command, cwd, depth = 0, state = { headChanged: false }, inheritedGitEnvironment = false) {
   // Avoid parsing arbitrary test scripts/heredocs unless publication is even plausible.
@@ -43,11 +149,16 @@ function publicationTargets(command, cwd, depth = 0, state = { headChanged: fals
     if (environment) throw new Error('Git environment override requires manual preflight; use the target working directory or git -C instead');
     appendTarget(target);
   };
+  const directoryStack = [];
   const staticPath = value => {
     if (!value || /[$`~*?{}<>]/.test(value)) throw new Error('Dynamic publication directory requires manual preflight');
     return value;
   };
   for (let words of shellWords(command)) {
+    // Substitutions run before their command, in the same directory and environment.
+    for (const body of words.substitutions) {
+      for (const target of publicationTargets(body, cwd, depth + 1, state, gitEnvironment)) appendTarget(target);
+    }
     let commandEnvironment = gitEnvironment, environmentWrapper = false;
     while (words.length) {
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
@@ -69,8 +180,13 @@ function publicationTargets(command, cwd, depth = 0, state = { headChanged: fals
       if (words.slice(1).some(word => repositoryVariable.test(word))) gitEnvironment = true;
       continue;
     }
-    if (executable === 'cd') {
+    if (executable === 'cd' || executable === 'pushd') {
+      if (executable === 'pushd') directoryStack.push(cwd);
       try { cwd = resolve(cwd, staticPath(words[1])); } catch { uncertainCwd = true; }
+      continue;
+    }
+    if (executable === 'popd') {
+      if (directoryStack.length) cwd = directoryStack.pop(); else uncertainCwd = true;
       continue;
     }
     if (['sh', 'bash', 'zsh'].includes(executable) && /^-[a-z]*c[a-z]*$/.test(words[1] || '') && words[2]) {
@@ -220,57 +336,78 @@ function nullFields(value) {
   if (!value.endsWith('\0')) throw new Error('Incomplete Git output');
   return value.slice(0, -1).split('\0');
 }
+// Reads one NUL-delimited name-status record starting at fields[i].
+function diffEntry(fields, i) {
+  const status = fields[i++];
+  if (!/^(?:[ACDMRTUXB]|[RC]\d{1,3})$/.test(status)) throw new Error('Invalid Git status');
+  const first = fields[i++];
+  const filename = /^[RC]/.test(status) ? fields[i++] : first;
+  if (!filename || !first) throw new Error('Incomplete Git filename');
+  return [{ filename, removed: status === 'D' }, i];
+}
 function diffEntries(value) {
   const fields = nullFields(value);
   const entries = [];
   for (let i = 0; i < fields.length;) {
-    const status = fields[i++];
-    if (!/^(?:[ACDMRTUXB]|[RC]\d{1,3})$/.test(status)) throw new Error('Invalid Git status');
-    const first = fields[i++];
-    const filename = /^[RC]/.test(status) ? fields[i++] : first;
-    if (!filename || !first) throw new Error('Incomplete Git filename');
-    entries.push({ filename, removed: status === 'D' });
+    const [entry, next] = diffEntry(fields, i);
+    entries.push(entry); i = next;
   }
   return entries;
 }
-function changedFiles(cwd, baseRef) {
+// Hook publications send commits only; the manual CLI also counts index, worktree and untracked paths.
+function changedFiles(cwd, baseRef, committedOnly = false) {
   const root = git(cwd, 'rev-parse', '--show-toplevel').replace(/\n$/, '');
   const base = git(root, 'merge-base', '--', baseRef, 'HEAD').trim();
   if (!/^[0-9a-f]{40,64}$/.test(base)) throw new Error('No verified merge base');
   const options = ['--name-status', '-z', '--find-renames'];
-  const groups = [
-    diffEntries(git(root, 'diff', ...options, base, 'HEAD', '--')),
+  const committed = diffEntries(git(root, 'diff', ...options, base, 'HEAD', '--'));
+  const groups = committedOnly ? [committed] : [
+    committed,
     diffEntries(git(root, 'diff', ...options, '--cached', 'HEAD', '--')),
     diffEntries(git(root, 'diff', ...options, '--')),
     nullFields(git(root, 'ls-files', '--others', '--exclude-standard', '-z')).map(filename => ({ filename, removed: false })),
   ];
   const paths = new Set();
-  const prohibited = new Set();
   for (const entries of groups) for (const entry of entries) paths.add(entry.filename);
   // Check the final proposed diff for artifacts, allowing removal of old generated files.
-  const final = diffEntries(git(root, 'diff', ...options, base, '--'));
+  const final = committedOnly ? committed : diffEntries(git(root, 'diff', ...options, base, '--'));
   const deleted = new Set(final.filter(entry => entry.removed).map(entry => entry.filename));
+  // One entry per path: the first introducing commit replaces the bare net-diff label.
+  const prohibited = new Map();
   for (const entry of groups.flat()) {
-    if (!entry.removed && !deleted.has(entry.filename) && policy.evidenceReason(entry.filename)) prohibited.add(JSON.stringify(entry.filename));
+    const key = JSON.stringify(entry.filename);
+    if (!entry.removed && !deleted.has(entry.filename) && policy.evidenceReason(entry.filename)) prohibited.set(key, key);
   }
-  for (const entry of historyEvidence(root, base)) prohibited.add(entry);
+  for (const [key, label] of historyEvidence(root, base)) prohibited.set(key, label);
   return { count: paths.size, prohibited };
 }
 function historyEvidence(root, base) {
   const commits = git(root, 'rev-list', '--reverse', `--max-count=${policy.MAX_HISTORY_COMMITS + 1}`, `${base}..HEAD`).trim().split('\n').filter(Boolean);
   if (commits.length > policy.MAX_HISTORY_COMMITS) throw new Error('Feature history exceeds inspection capacity');
-  const result = new Set();
+  const result = new Map();
+  if (!commits.length) return result;
   let records = 0;
   const blob = (sha, file) => {
     const value = git(root, 'ls-tree', '-z', sha, '--', file);
     return value ? value.slice(0, value.indexOf('\t')).split(' ')[2] : null;
   };
+  // One process for all commits: "\x01<sha>\0<parents>\0" then "\n"-prefixed name-status records.
+  const fields = nullFields(git(root, '-c', 'log.showRoot=true', 'log', '-z', '--reverse', '--no-color', '--no-show-signature',
+    '--format=%x01%H%x00%P', '--name-status', '--find-renames', '--diff-merges=first-parent', `${base}..HEAD`, '--'));
+  let index = 0;
   for (const commit of commits) {
-    if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error('Invalid commit metadata');
-    const parents = git(root, 'show', '-s', '--format=%P', commit, '--').trim().split(' ').filter(Boolean);
-    const options = ['--name-status', '-z', '--find-renames'];
-    const entries = parents.length ? diffEntries(git(root, 'diff', ...options, parents[0], commit, '--')) :
-      diffEntries(git(root, 'diff-tree', '--root', '--no-commit-id', '-r', ...options, commit, '--'));
+    if (!/^[0-9a-f]{40,64}$/.test(commit) || fields[index] !== `\x01${commit}`) throw new Error('Invalid commit metadata');
+    const parents = (fields[index + 1] ?? '').split(' ').filter(Boolean);
+    index += 2;
+    const entries = [];
+    if (fields[index]?.startsWith('\n')) {
+      fields[index] = fields[index].slice(1);
+      // Status fields never start with \x01, so a path containing it cannot end the commit early.
+      while (index < fields.length && !fields[index].startsWith('\x01')) {
+        const [entry, next] = diffEntry(fields, index);
+        entries.push(entry); index = next;
+      }
+    }
     records += entries.length;
     if (records > policy.MAX_HISTORY_FILES || entries.length >= 3000) throw new Error('Feature history exceeds inspection capacity');
     for (const entry of entries) {
@@ -280,9 +417,11 @@ function historyEvidence(root, base) {
         if (!value) throw new Error('Missing result blob');
         if (parents.slice(1).some(parent => blob(parent, entry.filename) === value)) continue;
       }
-      result.add(`${JSON.stringify(entry.filename)} at ${commit.slice(0, 12)}`);
+      const key = JSON.stringify(entry.filename);
+      if (!result.has(key)) result.set(key, `${key} at ${commit.slice(0, 12)}`);
     }
   }
+  if (index !== fields.length) throw new Error('Invalid commit metadata');
   return result;
 }
 async function hookInput() {
@@ -332,7 +471,7 @@ async function main() {
       if (target.kind === 'push' && !validatePush(target)) continue;
       if (target.kind === 'pr' && !validatePrCreate(target)) continue;
       if (!inspected.has(target.cwd)) {
-        results.push(inspect(target.cwd, base)); inspected.add(target.cwd);
+        results.push(inspect(target.cwd, base, true)); inspected.add(target.cwd);
       }
     }
   } else results.push(inspect(realpathSync(cwd), base));
@@ -341,7 +480,7 @@ async function main() {
   for (const result of results) {
     if (result.prohibited.size) {
       console.error('BLOCKED: Generated evidence is prohibited, including intermediate commits: ' +
-        [...result.prohibited].slice(0, 10).join(', ') +
+        [...result.prohibited.values()].slice(0, 10).join(', ') +
         '. Remove captures from feature history; deleting later is insufficient. Keep an authored summary.');
       process.exitCode = 2;
     }
@@ -356,8 +495,8 @@ async function main() {
   if (hook && !process.exitCode && warnings.length) console.log(JSON.stringify({ systemMessage: warnings.join('\n') }));
   if (!hook && !process.exitCode && !warnings.length) console.log(`PASS: ${results[0].message}`);
 }
-function inspect(cwd, base) {
-  const { count, prohibited } = changedFiles(cwd, base);
+function inspect(cwd, base, committedOnly = false) {
+  const { count, prohibited } = changedFiles(cwd, base, committedOnly);
   const level = policy.countLevel(count);
   const message = `PR preflight: ${count}/${policy.MAX_FILES} changed files relative to ${JSON.stringify(base)}.`;
   return { level, message, prohibited };

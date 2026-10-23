@@ -37,6 +37,10 @@ function repository(t) {
 function createFiles(cwd, amount) {
   for (let i = 0; i < amount; i++) put(cwd, `samples/file-${i}.txt`);
 }
+// Hook publications inspect committed scope only, so publication tests commit their files.
+function commitFiles(cwd, amount) {
+  createFiles(cwd, amount); git(cwd, 'add', '.'); git(cwd, 'commit', '-q', '--allow-empty', '-m', `${amount} files`);
+}
 function check(cwd, args = [], env = {}) { return command(process.execPath, [script, ...args], cwd, undefined, env); }
 function payload(cwd, shellCommand, extra = {}) {
   return { session_id: 'test-session', hook_event_name: 'PreToolUse', tool_name: 'Bash',
@@ -108,13 +112,13 @@ test('ordinary commands skip Git validation', t => {
 test('publication hooks block every update above limit and permit smaller changes', t => {
   const cwd = repository(t);
   assert.equal(hook(cwd, 'git push origin HEAD').status, 0);
-  createFiles(cwd, 41);
+  commitFiles(cwd, 41);
   for (const cmd of ['git push origin HEAD', 'gh pr create --fill', 'git -c push.default=current push', 'git -C . push', 'npm test && git push']) {
     const r = hook(cwd, cmd); assert.equal(r.status, 2, cmd); assert.match(r.stderr, /BLOCKED/);
   }
 });
 test('hook warnings are visible as JSON without granting permission', t => {
-  const cwd = repository(t); createFiles(cwd, 31);
+  const cwd = repository(t); commitFiles(cwd, 31);
   const r = hook(cwd, 'git push'); assert.equal(r.status, 0);
   assert.match(JSON.parse(r.stdout).systemMessage, /31\/40/);
   assert.doesNotMatch(r.stdout, /permissionDecision/);
@@ -189,16 +193,16 @@ test('both provider configs execute the canonical hook with documented Bash inpu
     const r = command('sh', ['-c', handler.command], join(root, 'docs'),
       JSON.stringify(payload(cwd, 'git push')), { CLAUDE_PROJECT_DIR: root });
     assert.equal(r.status, 0, r.stderr);
-    createFiles(cwd, 41);
+    commitFiles(cwd, 41);
     const blocked = command('sh', ['-c', handler.command], join(root, 'docs'),
       JSON.stringify(payload(cwd, 'gh pr create --fill')), { CLAUDE_PROJECT_DIR: root });
     assert.equal(blocked.status, 2); assert.match(blocked.stderr, /41\/40/);
-    rmSync(join(cwd, 'samples'), { recursive: true });
+    git(cwd, 'reset', '-q', '--hard', 'origin/main');
   }
 });
 
 test('publication inspects command directories and shell wrappers, not the launch repository', t => {
-  const launch = repository(t), target = repository(t); createFiles(target, 41);
+  const launch = repository(t), target = repository(t); commitFiles(target, 41);
   for (const cmd of [`git -C "${target}" push`, `cd "${target}" && git push`, `bash -lc 'git -C "${target}" push'`, `env FLAG=1 command git -C "${target}" push`]) {
     const r = hook(launch, cmd); assert.equal(r.status, 2, cmd); assert.match(r.stderr, /41\/40/);
   }
@@ -261,7 +265,7 @@ test('a push of another branch, matching refs, wildcards or tags fails closed', 
 });
 test('all warning targets produce one valid JSON response', t => {
   const launch = repository(t), a = repository(t), b = repository(t);
-  createFiles(a, 31); createFiles(b, 40);
+  commitFiles(a, 31); commitFiles(b, 40);
   const r = hook(launch, `git -C "${a}" push origin HEAD; git -C "${b}" push origin HEAD`);
   assert.equal(r.status, 0, r.stderr);
   const response = JSON.parse(r.stdout); assert.match(response.systemMessage, /31\/40/); assert.match(response.systemMessage, /40\/40/);
@@ -290,7 +294,7 @@ test('slow successful operations share a deadline across repositories', t => {
   const shellCommand = `git -C "${a}" push origin HEAD; git -C "${b}" push origin HEAD`;
   // Advance only the child process's monotonic clock at each budget check. Real Git
   // commands still execute, but two individually small inspections exhaust one budget.
-  const runner = `let elapsed=0; Object.defineProperty(globalThis,'performance',{value:{now:()=>elapsed+=500}}); process.argv=[process.execPath,${JSON.stringify(script)},'--hook']; import(${JSON.stringify(new URL('./pr-size-preflight.mjs', import.meta.url).href)});`;
+  const runner = `let elapsed=0; Object.defineProperty(globalThis,'performance',{value:{now:()=>elapsed+=1000}}); process.argv=[process.execPath,${JSON.stringify(script)},'--hook']; import(${JSON.stringify(new URL('./pr-size-preflight.mjs', import.meta.url).href)});`;
   const result = command(process.execPath, ['-e', runner], cwd, JSON.stringify(payload(cwd, shellCommand)));
   assert.equal(result.status, 2, result.stderr); assert.match(result.stderr, /Aggregate inspection deadline exceeded/);
   assert.doesNotMatch(result.stdout, /PASS/);
@@ -350,7 +354,7 @@ test('head-like title, body and other option values are not parsed as head optio
   }
 });
 test('implicit gh heads preserve count checks on create and new', t => {
-  const cwd = repository(t); createFiles(cwd, 41);
+  const cwd = repository(t); commitFiles(cwd, 41);
   for (const cmd of ['gh pr create --fill', 'gh pr new --draft --fill-first', 'gh --repo=owner/repo pr create -df']) {
     const result = hook(cwd, cmd); assert.equal(result.status, 2); assert.match(result.stderr, /41\/40/);
   }
@@ -380,7 +384,7 @@ test('help=false cannot bypass source or file-count checks', t => {
   const cwd = repository(t);
   const selected = hook(cwd, 'gh pr create --help=false --head huge --fill');
   assert.equal(selected.status, 2); assert.match(selected.stderr, /Explicit gh head selection/);
-  createFiles(cwd, 41);
+  commitFiles(cwd, 41);
   const implicit = hook(cwd, 'gh pr create --help=false --fill');
   assert.equal(implicit.status, 2); assert.match(implicit.stderr, /41\/40/);
   assert.equal(hook(cwd, 'gh pr create --help=true').status, 0);
@@ -493,4 +497,55 @@ test('ordinary environment commands skip inspection while unparsed env publicati
     const result = hook(cwd, cmd); assert.equal(result.status, 0, cmd + result.stderr);
     assert.equal(result.stdout + result.stderr, '');
   }
+});
+
+test('command substitutions and directory stacks cannot hide a publication directory', t => {
+  const launch = repository(t), target = repository(t); commitFiles(target, 41);
+  put(target, 'sub/keep.txt'); git(target, 'add', '.'); git(target, 'commit', '-qm', 'sub');
+  for (const cmd of ['git -C $(pwd) push origin HEAD', 'git -C `pwd` push origin HEAD', 'git -C "$(pwd)" push']) {
+    const r = hook(launch, cmd); assert.equal(r.status, 2, cmd); assert.match(r.stderr, /Dynamic publication directory/);
+  }
+  for (const cmd of [`pushd "${target}" && git push origin HEAD`, `pushd "${target}/sub"; git push`, `cd "${target}" && echo $(git push)`]) {
+    const r = hook(launch, cmd); assert.equal(r.status, 2, cmd); assert.match(r.stderr, /42\/40/);
+  }
+  assert.equal(hook(launch, `pushd "${target}" && popd && git push origin HEAD`).status, 0);
+  assert.equal(hook(launch, 'popd && git push origin HEAD').status, 2);
+});
+test('redirections are not push arguments', t => {
+  const cwd = repository(t);
+  for (const cmd of ['git push -u origin HEAD 2>&1 | tail -5', 'git push origin HEAD > /dev/null', 'git push origin HEAD &>push.log',
+    'git push origin HEAD 2>/dev/null >>out.log', 'git push origin HEAD 1>&- <input.txt', 'git push origin HEAD >|out.log']) {
+    const r = hook(cwd, cmd); assert.equal(r.status, 0, `${cmd}\n${r.stderr}`);
+  }
+  assert.equal(hook(cwd, 'git push origin HEAD 2>&1 huge').status, 2);
+});
+test('heredoc PR bodies with quotes, parentheses and apostrophes are single option values', t => {
+  const cwd = repository(t);
+  const body = `gh pr create --title "Fix (part 1)" --body "$(cat <<'EOF'\n## Summary\nFixes the "foo bar" bug; don't (re)run it.\n1) first | second\nEOF\n)"`;
+  assert.equal(hook(cwd, body).status, 0, hook(cwd, body).stderr);
+  const top = `git push origin HEAD <<'EOF'\n"unbalanced ( text\nEOF\necho done`;
+  assert.equal(hook(cwd, top).status, 0, hook(cwd, top).stderr);
+  assert.equal(hook(cwd, 'gh pr create --fill --body "$(cat <<EOF\nunterminated\n)"').status, 2);
+  commitFiles(cwd, 41);
+  assert.equal(hook(cwd, body).status, 2);
+});
+test('hook publications ignore unpublished local files; the manual check still reports them', t => {
+  const cwd = repository(t);
+  put(cwd, 'qa-results/local.json'); put(cwd, 'staged.txt'); git(cwd, 'add', 'staged.txt'); createFiles(cwd, 41);
+  const r = hook(cwd, 'git push origin HEAD'); assert.equal(r.status, 0, r.stderr);
+  const manual = check(cwd); assert.equal(manual.status, 2); assert.match(manual.stderr, /qa-results\/local\.json/);
+  git(cwd, 'add', 'qa-results/local.json'); git(cwd, 'commit', '-qm', 'capture');
+  const committed = hook(cwd, 'git push origin HEAD'); assert.equal(committed.status, 2);
+  assert.equal(committed.stderr.match(/qa-results\/local\.json/g).length, 1);
+});
+test('one history walk keeps empty and renamed commits aligned', t => {
+  const cwd = repository(t);
+  git(cwd, 'commit', '-q', '--allow-empty', '-m', 'empty');
+  put(cwd, 'notes/a b.txt'); git(cwd, 'add', '.'); git(cwd, 'commit', '-qm', 'spaces');
+  mkdirSync(join(cwd, 'qa-results')); git(cwd, 'mv', 'notes/a b.txt', 'qa-results/a b.json'); git(cwd, 'commit', '-qm', 'rename into output');
+  git(cwd, 'rm', '-q', 'qa-results/a b.json'); git(cwd, 'commit', '-qm', 'remove');
+  git(cwd, 'commit', '-q', '--allow-empty', '-m', 'empty again');
+  const r = check(cwd); assert.equal(r.status, 2);
+  assert.match(r.stderr, /"qa-results\/a b\.json" at [0-9a-f]{12}/);
+  assert.equal(r.stderr.match(/qa-results/g).length, 1);
 });

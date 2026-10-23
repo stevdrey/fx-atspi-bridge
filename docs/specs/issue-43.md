@@ -123,3 +123,24 @@ Preserve ordinary commands, innocuous variables and publication before a later
 transition. Regression acceptance includes both 41-file reproductions, Git `-C`,
 wrappers, multiple targets, conservative checkout and diagnostic confidentiality.
 No CI policy, bootstrap, administrator-rule or runtime changes are required.
+
+
+## Follow-up review — parser, scope and CI diagnostics
+
+A high-effort review of `d885130` found ten issues. Acceptance criteria:
+
+- **Parser:** `git -C $(…) push` and `pushd`/`popd` must not hide a publication
+  directory; redirections (`2>&1`, `> file`, `&>log`) must not become push arguments;
+  heredoc PR bodies inside `"$(cat <<'EOF' … EOF)"` remain one option value even
+  with quotes, parentheses or apostrophes. Substitution bodies are inspected
+  recursively; unterminated quoting or heredocs fail closed.
+- **Scope:** hook-triggered push/PR creation inspects committed `base..HEAD` scope and
+  history only. The manual run keeps the conservative staged/unstaged/untracked union.
+- **History:** one `git log` walk replaces two Git processes per commit, keeping the
+  same capacity limits and merge-parent inheritance checks.
+- **CI:** accept the head anywhere in the date-ordered commit list; report the policy
+  reason or a generic API error with HTTP status, never raw API text; list each
+  prohibited path once with its introducing commit.
+- **Workflows:** a single `pull_request_target` guard for every base branch, so stacked
+  PRs are checked; the head-controlled `pull_request` copy is removed. The ruleset must
+  require `Trusted PR file count` and drop `PR file count` before #45 merges (admin step).

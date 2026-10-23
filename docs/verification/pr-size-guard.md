@@ -56,8 +56,11 @@ node .agents/scripts/pr-size-preflight.mjs
 node --test .agents/scripts/pr-size-preflight.test.mjs
 ```
 
-The script verifies a merge base against `origin/main`, then unions committed,
-staged, unstaged and untracked nonignored paths. NUL-delimited status records preserve
+The manual script verifies a merge base against `origin/main`, then unions committed,
+staged, unstaged and untracked nonignored paths. Hook-triggered `git push` and
+`gh pr create` checks inspect only the committed `base..HEAD` diff and its history,
+because those commands publish commits; local scratch or capture files cannot block
+them, and the manual run still reports them before staging. NUL-delimited status records preserve
 spaces, tabs, newlines, Unicode and leading dashes; a rename counts its destination
 once per diff. The union can conservatively exceed GitHub's final net count when a
 path changes between index/worktree states or is renamed across layers. Inspect
@@ -111,9 +114,14 @@ that a Claude configuration automatically works on every Codex version.
 Only recognizable publication commands (`git push`, `gh pr create`) trigger Git
 inspection. Quoted arguments, ordinary test commands, Git `-c`/`-C`, tool-provided
 working directories, simple `cd` chains and `sh`/`bash`/`zsh -c` wrappers are supported.
-Dynamic publication directories and Git directory overrides fail closed. This is a
-small static parser, not a shell interpreter: aliases, custom scripts, shell functions,
-heredocs, complex control flow, remote pushes and API tools may evade recognition or
+`pushd`/`popd` stacks, redirections (`2>&1`, `> file`, `&>log`, here-strings) and
+heredocs are recognized, so their operators and targets are not mistaken for push
+arguments. Command substitutions (`$(…)`, backticks, `<(…)`) stay one word: inside a
+`--body "$(cat <<'EOF' … EOF)"` value quotes and parentheses are preserved, a
+substitution used as a directory fails closed, and publication commands inside a
+substitution are inspected. Dynamic publication directories and Git directory
+overrides fail closed. This is a small static parser, not a shell interpreter:
+aliases, custom scripts, shell functions, complex control flow, remote pushes and API tools may evade recognition or
 produce conservative errors. For those, run the manual preflight in the exact target
 worktree, then publish there. Disabled/unavailable/untrusted hooks, changed local
 scripts, direct API publication and differing local counts cannot bypass required CI.
@@ -145,13 +153,13 @@ have no Git scope checks. Hooks remain a usability preflight, **not a security b
 
 ## Authoritative CI and required-check setup
 
-`Pull Request Size Guard / PR file count` provides PR-head feedback and preserves
-its existing required context. The companion `Trusted Pull Request Publication
-Guard / Trusted PR file count` uses **pull_request_target**, executing the protected
-base workflow's inline policy. Require the companion as well after bootstrap: a
-head-controlled workflow by itself is not an authoritative security boundary.
-Both run for main-targeting opened, reopened, synchronize, ready-for-review and
-edited events, including drafts and docs-only changes.
+The only guard is `Trusted Pull Request Publication Guard / Trusted PR file count`.
+It uses **pull_request_target**, executing the protected base branch's inline policy,
+so a PR cannot weaken the check that evaluates it. The former head-controlled
+`pull_request` copy was removed because it gave no assurance and doubled API use.
+It runs for opened, reopened, synchronize, ready-for-review and edited events on
+every base branch, including drafts, docs-only changes and stacked PRs (which use
+their parent branch's copy of the workflow).
 
 The guard reads authoritative PR counts, paginated net file lists, all feature
 commits and per-commit file metadata. Count is still the net aggregate PR diff;
@@ -167,24 +175,26 @@ secret interpolation or write permissions are used. Token permissions are only
 
 Edit `.agents/scripts/pr-policy.cjs`, run
 `node .agents/scripts/pr-policy.cjs --write-workflow`, then run
-`node --test .agents/scripts/pr-*.test.mjs`. Both standalone workflows are generated
-executable source, not test results, and tests enforce exact parity. Their runtime
-policy comes from the base revision for the trusted companion; changing PR-head
-code cannot change that run's policy.
+`node --test .agents/scripts/pr-*.test.mjs`. The standalone workflow is generated
+executable source, not a test result, and tests enforce exact parity. Its runtime
+policy comes from the base revision; changing PR-head code cannot change that run's
+policy. Failures name the policy reason (for example an exceeded capacity) or report
+only `API or unexpected error` with an HTTP status, never raw API text.
 
 **Separate repository-admin action:** a failed job alone does not prevent merging.
 After merging the workflow, let it run on a PR, then open **Settings → Rules →
 Rulesets** (or the existing branch protection) for `main`. Require pull requests and
-require the uniquely named **PR file count** check from GitHub Actions, alongside
-existing checks. Require branches up to date if checking the latest base is needed.
+require the uniquely named **Trusted PR file count** check from GitHub Actions,
+alongside existing checks. Require branches up to date if checking the latest base is needed.
 Keep existing protections; avoid routine bypass actors. Save and verify a 41-file
 PR is blocked, a 40-file PR warns/passes, and a small PR with generated results is
 blocked. If the check is absent, run a PR targeting main and refresh the selector.
 Rulesets are not installed by a workflow. Current state: ruleset 25669164 already
 requires PR file count (app 15368), has no bypass actors and applies only to main;
 its read-back is recorded in issue-43.md. The separate [bootstrap PR #46](https://github.com/stevdrey/fx-atspi-bridge/pull/46)
-must be reviewed and merged first. Then observe its base-revision run on #45 and add
-**Trusted PR file count** from the same GitHub Actions app without removing the
-existing required check. Until this activation the trusted companion is not an
-enforced boundary. Do not disable the existing rule, add a bypass or auto-merge to
-bootstrap the workflow. Preserve both required contexts afterwards.
+must be reviewed and merged first. Then observe its base-revision run on #45, add
+**Trusted PR file count** from the same GitHub Actions app, and only then remove the
+old **PR file count** context: #45 deletes the head-controlled workflow that reported
+it, so #45 cannot merge while that context is still required. Until this activation
+the trusted guard is not an enforced boundary. Do not disable the rule, add a bypass
+or auto-merge to bootstrap the workflow.

@@ -120,3 +120,32 @@ command passed with six tasks up to date. Manual preflight passed at 19/40 files
 and `git diff --check` passed. No generated run outputs were retained in Git.
 Work remains in PR #45; workflows, rules and bootstrap #46 are unchanged by this
 follow-up.
+
+
+## Follow-up review — parser, scope and CI diagnostics
+
+A high-effort review of `d885130` reported ten findings. Parser defects were
+reproduced against the lexer before the fix: `git -C $(…) push` produced no target,
+`2>&1`/`> /dev/null` became push refspecs, and a heredoc PR body containing a quoted
+multi-word phrase was split into extra arguments.
+
+Fixes: the lexer keeps command/process substitutions as one word and inspects their
+bodies recursively, tracks `pushd`/`popd`, skips heredoc bodies and drops redirection
+operators and targets. Hook publications inspect committed scope only. Local history
+uses one `git log` walk. CI accepts the head anywhere in the commit list, reports the
+policy reason or a generic API error with HTTP status, and lists each prohibited path
+once. The workflow generator emits only the trusted `pull_request_target` guard,
+without a base-branch filter; `pr-size-guard.yml` is deleted.
+
+Verification: `node --test .agents/scripts/pr-*.test.mjs` — **Passed:** 71 tests,
+zero failures/skips, including new substitution, `pushd`/`popd`, redirection,
+heredoc, committed-scope, history-walk, head-order, diagnostic and single-entry cases.
+Workflow regeneration matched the committed YAML. Manual preflight — **Passed:**
+19/40 paths. Hook smoke on this worktree: `git push -u origin HEAD 2>&1 | tail -5`
+allowed; `git -C $(git rev-parse --show-toplevel) push origin HEAD` denied as a
+dynamic directory. `git diff --check` passed. No Java sources changed, so the Gradle
+build was not rerun.
+
+Pending admin step: after #46 merges and `Trusted PR file count` is observed on #45,
+require it in ruleset 25669164 and remove `PR file count`, which #45 no longer reports.
+No ruleset, push or merge was performed as part of this fix.
