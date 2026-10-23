@@ -48,5 +48,12 @@ Pre-cleanup integration checks: 77 Node tests and 267 Python tests passed; wrapp
 check/installDist passed on JDK 27 with native/FX requirements mandatory (13 tasks
 up to date, 2 executed). These do not substitute for the fresh qualification below.
 
+The first clean d7e7fc0 collection passed acceptance, geometry and both consumers,
+but the semantic suite failed at menu-check activation with Action denied after
+five completed cases. That attempt remains Failed in private local storage; it is
+not reclassified as a pass. The external acceptance fixture now additionally
+checks a sensitive child's WINDOW box before/during/after an ancestor sensitivity
+change, through libatspi, including restored geometry and redacted names.
+
 Fresh final-revision qualification is pending. Historical c784278's 44/92 and the
 previous 49 desktop cases remain historical and are not attributed to this revision.

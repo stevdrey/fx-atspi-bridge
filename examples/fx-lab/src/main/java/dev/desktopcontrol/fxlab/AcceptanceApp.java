@@ -32,6 +32,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -61,8 +62,19 @@ public final class AcceptanceApp extends Application {
         password.setAccessibleText("SC10_SECRET_PASSWORD_NAME");
         var sensitive = id(new TextField("SC10_SECRET_TEXT"), "sensitive"); sensitive.setId("sensitive");
         var excluded = id(new Label("SC10_SECRET_EXCLUDED"), "excluded"); excluded.setId("excluded");
+        // A sensitive child must follow the nearest nonsensitive ancestor's geometry.
+        var privacyChild = new Label("SC10_SECRET_GEOMETRY");
+        privacyChild.setId("sensitive");
+        var privacyMiddle = new Pane(privacyChild);
+        privacyMiddle.setId("plain");
+        privacyMiddle.setManaged(false);
+        privacyMiddle.resizeRelocate(15, 10, 120, 40);
+        var privacyOuter = id(new Pane(privacyMiddle), "privacy-outer");
+        privacyOuter.setPrefSize(300, 70);
         var dynamic = new VBox();
-        var root = new VBox(8, input, password, sensitive, excluded, result,
+        var root = new VBox(8, privacyOuter, input, password, sensitive, excluded, result,
+                button("privacy-ancestor", () -> privacyMiddle.setId(
+                        "sensitive".equals(privacyMiddle.getId()) ? "plain" : "sensitive")),
                 button("private-change", () -> {
                     password.setText("SC10_SECRET_CHANGED_PASSWORD");
                     sensitive.setText("SC10_SECRET_CHANGED_TEXT");

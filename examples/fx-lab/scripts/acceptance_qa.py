@@ -118,6 +118,32 @@ def run(launcher, out):
         tree(app)
         private_cache = call(provider, '/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'GetItems')[0]
         check(len(private_cache) <= 256 and 'SC10_SECRET' not in str(private_cache), 'privacy-cache')
+        def privacy_boxes():
+            try:
+                outer = tree(app)['privacy-outer']
+                outer.clear_cache()
+                check(outer.get_child_count() == 1, 'privacy-outer-child-count')
+                middle = outer.get_child_at_index(0)
+                middle.clear_cache()
+                check(middle.get_child_count() == 1, 'privacy-middle-child-count')
+                child = middle.get_child_at_index(0)
+                boxes = []
+                for node in (outer, middle, child):
+                    node.clear_cache()
+                    check('SC10_SECRET' not in node.get_name(), 'privacy-geometry-name')
+                    bounds = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
+                    boxes.append((bounds.x, bounds.y, bounds.width, bounds.height))
+                return boxes
+            except GLib.Error:
+                return None  # A retired incarnation can disappear while the snapshot rotates.
+        initial = until(lambda: value if (value := privacy_boxes()) and
+                        value[0] != value[1] and value[1] == value[2] else None)
+        check(Atspi.Action.do_action(tree(app)['privacy-ancestor'], 0), 'privacy-ancestor-enable')
+        until(lambda: value if (value := privacy_boxes()) and
+              value[0] == value[1] == value[2] else None)
+        check(Atspi.Action.do_action(tree(app)['privacy-ancestor'], 0), 'privacy-ancestor-disable')
+        until(lambda: privacy_boxes() == initial)
+        report['privacyGeometryTransitions'] = ['private-child', 'private-ancestor', 'restored-ancestor']
         passed('discovery-password-redaction-exclusion')
         def action(target):
             check(Atspi.Action.do_action(tree(app)[target], 0), 'action-result')
