@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue Executive Summary"
+  short_description: "Draft stakeholder Issue outcomes from verified evidence."
+  default_prompt: "Use $github-issue-executive-summary to complete the relevant fx-atspi-bridge task."

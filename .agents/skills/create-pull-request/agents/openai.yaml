@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Pull Request"
+  short_description: "Write evidence-based [Issue-N] PR titles and descriptions."
+  default_prompt: "Use $create-pull-request to complete the relevant fx-atspi-bridge task."
