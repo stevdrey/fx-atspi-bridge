@@ -389,6 +389,12 @@ matrix (#15), Orca interoperability (#32), native-Wayland/other-platform evidenc
 reported failures remain explicit. A passing quick campaign alone does not authorize a
 stable release. See [issue-10 evidence](docs/verification/issue-10.md).
 
+The dedicated [issue-15 full-baseline report](docs/verification/issue-15.md) records
+90/90 valid full-profile runs of its pinned current-implementation revision,
+with nine exceedances in 170 historical-budget comparisons. It includes the new
+reference budgets and limitations separately from the historical SC-01 collection;
+raw captures remain local and existing qualification thresholds are unchanged.
+
 ## Contributing
 
 Keep each entire PR at **40 changed files or fewer** (31–40 warns), including all

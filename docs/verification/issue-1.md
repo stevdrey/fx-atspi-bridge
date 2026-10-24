@@ -4,7 +4,14 @@ Spec: [`docs/specs/issue-1.md`](../specs/issue-1.md). Raw data: `docs/verificati
 
 ## Status and follow-ups
 
-**This evidence is a provisional initial baseline.** The 44 retained run files predate several validity markers (`latencyMaxMs`, `idleEdgePulseMaxMs`, `providerAliveAtEnd`) and the corrected monotonic allocation method; they are accepted only through the byte-for-byte manifest `data/issue-1/legacy-waiver.sha256`, which does not retrospectively prove every current validity condition. Budgets and tables below are provisional until [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) replaces them. Do not mix this collection with new data.
+Historical archive: the original collection and byte-for-byte waiver below remain
+in place, with their original provisional status. The new current-implementation
+campaign is documented separately in [issue-15](issue-15.md): 90/90 full-profile
+runs passed validity checks, with historical-budget exceedances reported separately.
+No old run is mixed into it. New raw captures remain local under the
+current [publication policy](README.md#result-summaries-and-publication).
+
+**This evidence is a historical provisional initial baseline.** The 44 retained run files predate several validity markers (`latencyMaxMs`, `idleEdgePulseMaxMs`, `providerAliveAtEnd`) and the corrected monotonic allocation method; they are accepted only through the byte-for-byte manifest `data/issue-1/legacy-waiver.sha256`, which does not retrospectively prove every current validity condition. Budgets and tables below retain that historical provisional status; the fresh current-implementation reference is recorded in [issue-15](issue-15.md). Do not mix this collection with new data.
 
 | Acceptance criterion of Issue 1 | Status |
 | --- | --- |
@@ -19,7 +26,9 @@ Follow-up issues: [#15](https://github.com/stevdrey/fx-atspi-bridge/issues/15) f
 
 **Superseded by [#17](https://github.com/stevdrey/fx-atspi-bridge/issues/17):** the install-churn results below measured the library before #3, which now rejects a reinstall until the previous provider has terminated; the harness waits for `closed()` since #17, and the structural RSS growth is characterized with NMT, `smaps_rollup`, `malloc_info` and class histograms in [`issue-17.md`](issue-17.md).
 
-Evidence policy: future collections are delivered in a separate evidence PR or artifact so tooling reviews stay manageable (this PR carries 44 benchmark JSON files).
+Historical evidence policy: SC-01 originally proposed separate evidence PRs or artifacts
+(its PR carried 44 benchmark JSON files). The current [publication policy](README.md#result-summaries-and-publication)
+supersedes that wording: new deliveries retain authored summaries in Git and raw captures locally.
 
 ## Environment
 
