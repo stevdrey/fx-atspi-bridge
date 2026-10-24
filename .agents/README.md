@@ -15,9 +15,39 @@ Follow the [GitHub workflow](skills/README.md#github-workflow) for Issues, PRs a
 The [canonical publication policy](../docs/verification/pr-size-guard.md) adapts
 Dokene's 30/40 thresholds: 0–30 pass, 31–40 warn, 41+ block across the **entire PR**,
 including subsequent updates. Never omit necessary tests/security/docs to reduce
-scope; split into independently buildable, linked PRs. Before staging, inspect
-`git status --short` and `git diff --cached --name-status` for unrelated changes,
-generated outputs and sensitive data. Before every publication run:
+scope; split into independently buildable, linked PRs.
+
+Authors and agents follow this checklist:
+
+1. Before staging, inspect `git status --short`, `git diff --name-status` and
+   untracked paths. Review the proposed content for unrelated work, generated
+   outputs and sensitive values; stage only intended files, never force-add captures.
+2. Before committing, inspect `git diff --cached --name-status` and
+   `git diff --cached` for the exact content to be retained in history. Keep tests,
+   scripts and small intentional fixtures; replace raw evidence with a concise
+   `docs/verification/issue-N.md` (or a linked `issue-N-<topic>.md` companion)
+   following the [summary format](../docs/verification/README.md#minimum-summary-metadata).
+   Record failures and unavailable checks as well as successes.
+3. Run the manual preflight before committing and before every push or PR
+   creation/update. Inspect the entire PR and feature history; later deletion does
+   not undo a capture introduced by an earlier feature commit. Resolve findings
+   without deleting unrelated local work or weakening the guard. If only unrelated
+   untracked or local files block the run, commit the intended files and rerun the
+   preflight from a clean worktree of that exact commit:
+   `git worktree add <tmp-dir> HEAD`, run the preflight inside it, then
+   `git worktree remove <tmp-dir>`. Never delete, stash or ignore someone else's work
+   to pass, never use this route to hide the PR's own files, and record the blocked
+   local result truthfully alongside the clean-worktree result.
+4. Before publishing, confirm summaries, filenames and optional retrieval links
+   contain no credentials, personal paths, field content or other sensitive data.
+   Raw uploads are never required for ordinary review.
+
+Reviewers check the entire PR for generated output, confirm fixtures have an
+intentional test role, and verify that summaries identify measured revisions,
+commands, outcomes, uncertainty and limitations. Separate historical measurements
+from checks of later code; do not infer desktop qualification from unit tests.
+
+Run from the repository root:
 
 ```sh
 node .agents/scripts/pr-size-preflight.mjs
@@ -31,11 +61,11 @@ manual preflight. For a legitimate stacked PR, use `--base origin/<parent>` or
 `PR_PREFLIGHT_BASE`, matching its actual GitHub base, never to hide scope.
 
 Commit authored source/tests, small intentional reproducibility fixtures, and
-safe human-readable verification summaries. Generated captures are prohibited throughout feature history, including additions
-deleted by a later commit. Only checked-out HEAD/branch pushes are supported; switch
-to the intended source branch before publishing. Generated snapshots, screenshots,
-raw benchmark/QA results, logs, dumps, reports and evidence-only bundles are
-**prohibited**, including in separate evidence PRs, regardless of count. No raw
-capture exception is provided by #43. If necessary for an investigation, retain
-raw evidence outside Git in private, access-controlled, time-limited storage per
-#39; publish only a safe summary/retrieval reference. Preserve reproducible tests.
+safe human-readable verification summaries. Generated captures are prohibited
+throughout feature history, including additions deleted by a later commit. Only
+checked-out HEAD/branch pushes are supported; switch to the intended source branch
+before publishing. Generated snapshots, screenshots, raw benchmark/QA results,
+logs, dumps, reports and evidence-only bundles are **prohibited**, including in
+separate evidence PRs, regardless of count. There is no raw-capture exception; see
+[retention and exceptions](../docs/verification/README.md#retention-and-exceptions)
+before proposing a future policy change or sharing investigation material.
