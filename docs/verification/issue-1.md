@@ -161,12 +161,20 @@ Not verified in this issue (**missing evidence**): action invocation, text editi
 
 ## Compatibility matrix (evidenced only)
 
+The original rows retain their historical scope. The current-implementation
+QA-02 rows below are separately attributed to [Issue 16](issue-16.md), collected
+on 2026-10-24; they do not retroactively extend the original SC-01 measurements.
+
 | Component | Version | Result |
 | --- | --- | --- |
 | Fedora 44 / GNOME Shell 50.5 / Wayland session, PyGObject 3.56.3 + at-spi2-core 2.60.7 client | as above | Tree discovery through libatspi: **works** (this issue). Mutating interactions: not re-verified here. Other client versions: **not tested**. |
 | JDK 27 (Zulu 27.28+101) + JavaFX 27 | as above | Build, `check`, benchmark: **works**. |
 | Ubuntu runner (`ubuntu-latest`), Zulu 27, GLib only | CI | Native unit tests only; first run recorded on the PR (see below). Not desktop QA. |
 | Other distros, GNOME versions, KDE, Orca, X11 sessions, Xvfb | — | **Not tested.** |
+| Current QA-02: Fedora 44 / GNOME Shell 50.6 / Wayland session, actual JavaFX XWayland backend | JDK/JavaFX 27; PyGObject 3.56.3; libatspi 2.60.7 | **Passed: 10/10 scenarios**, including button actions, Unicode/code-point ranges, field add/remove, second window, scene replacement/restoration and text/state/children events. See [attributed results](issue-16.md). |
+| Current QA-02: native Wayland with the same installed JavaFX artifact | JavaFX 27 Linux GTK Glass | **Unavailable:** startup without DISPLAY exited 1 (`Unable to open DISPLAY`); no two-backend comparison or native-Wayland qualification. |
+| Current QA-02: Orca | 50.3 | **Failed:** user-assisted listening reports key echo only, without control announcements; symptom repeated from [#32](https://github.com/stevdrey/fx-atspi-bridge/issues/32). Edited-text and spoken action outcomes remain unestablished. |
+| Current QA-02: other distributions / GNOME versions | — | **Not tested:** no additional environment available. |
 
 ## Initial budgets (provisional until #15, derived from the tables above)
 
