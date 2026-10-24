@@ -306,6 +306,17 @@ Linux x86_64 with a D-Bus session and the `org.a11y.Bus` accessibility bus provi
 
 The original prototype was verified on Fedora/GNOME through an external MCP/libatspi client: Unicode editing, buttons, control creation/removal, a second window, scene replacement/restoration, and text/state/children events. These desktop tests are not part of this repository's CI.
 
+The [Issue 16 desktop campaign](docs/verification/issue-16.md) verifies the current
+laboratory through an independent libatspi client on Fedora 44 / GNOME 50.6:
+10/10 action, Unicode, window, scene and event scenarios passed on XWayland.
+The same JavaFX artifact could not start on native Wayland. The assisted Orca
+smoke failed with key echo only, repeating the symptom tracked in
+[#32](https://github.com/stevdrey/fx-atspi-bridge/issues/32). To repeat the mutating checks against
+your own fresh, disposable lab instance, run
+`python3 examples/fx-lab/scripts/desktop_qa.py --pid JAVA_PID --out NEW_LOCAL_DIRECTORY`.
+Keep generated results outside Git. The read-only `atspi_probe.py` remains available
+for discovery checks.
+
 ## License
 
 The project's own code and example are distributed under the [Apache License 2.0](LICENSE), copyright Steven Rey Sequeira. Commercial use, modification, and redistribution are permitted under its terms, including an express patent grant from contributors. When redistributing, preserve the notices and license and identify modified files. Dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
