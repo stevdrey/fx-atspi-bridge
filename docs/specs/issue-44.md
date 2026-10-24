@@ -17,7 +17,7 @@ Make Issue proposals, PR communication and Issue completion summaries discoverab
 - Add `create-issue` for verified, non-duplicate, cohesive proposals with observable acceptance and verification.
 - Adapt Dokene's executive summary to short accessibility-library outcomes: problem, user value, delivery, verification/review, limitations and a real implementing PR link. Reuse existing evidence rather than mandate new runs or invented totals. Permit drafts when a PR link is unavailable, clearly incomplete for publication.
 - Preserve the existing PR skill's structure and closing semantics; add explicit authorization, English comments, concise review/blocker guidance and project-specific examples.
-- Link all three from the index and entry-point workflow. `.agents/skills/<name>/SKILL.md` remains canonical; no provider-specific instruction copies or metadata are necessary.
+- Link all three from the index and entry-point workflow. `.agents/skills/<name>/SKILL.md` remains canonical; provider entries carry only display metadata (`agents/openai.yaml`, as for the existing skills), never instruction copies. Same-named personal or plugin skills do not apply to this repository.
 - Drafting, Issue creation, PR publication and Issue comments are separate operations. Existing explicit authorization is reusable for its stated scope. Inspect prior comments before authorized posting; correct a summary by its comment ID rather than append duplicates. Stop after ambiguous writes and read back before retrying.
 - Java 27 / Gradle-declared JavaFX 27 / AT-SPI remain project context. No API, FX/provider thread, FFM ownership, queue or resource lifecycle changes.
 
@@ -27,7 +27,7 @@ Unknown repository facts, labels, test results, reviews or PR URLs remain unknow
 
 ## Dependencies and affected files
 
-No runtime prerequisites. Reuse the implemented #43 preflight unchanged. Affected files: two new canonical skills, the existing PR skill, skill index, `.agents/README.md`, the authored writing fixtures under `.agents/skills/references/`, this spec and `docs/verification/issue-44.md`. Keep AGENTS.md unchanged because it already routes to canonical guidance.
+No runtime prerequisites. Reuse the implemented #43 preflight unchanged. Affected files: two new canonical skills, the existing PR skill, skill index, `.agents/README.md`, their Codex display metadata, the authored writing fixtures in `.agents/references/` (outside the skill directories), this spec and `docs/verification/issue-44.md`. Keep AGENTS.md unchanged because it already routes to canonical guidance.
 
 ## Acceptance and verification
 

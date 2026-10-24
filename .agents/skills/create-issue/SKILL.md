@@ -53,10 +53,10 @@ Use a specific title describing the problem or outcome. Keep the title, body, ac
 
 Avoid acceptance criteria such as “works correctly” without observable conditions. For runtime changes, identify FX/provider ownership, password/redaction, bounded resources and cleanup where affected. For documentation changes, use content and workflow acceptance instead of inventing runtime tests. Use `implement-spec-context` when the accepted Issue moves into implementation; an Issue proposal need not contain a full implementation spec.
 
-Do not put secrets, user field values, raw captures or exploit details in public content. Follow the repository's private security-reporting guidance for suspected vulnerabilities.
+Do not put secrets, user field values, raw captures or exploit details in public content. Report suspected vulnerabilities privately as described in the [threat model](../../../docs/security/threat-model.md), not in a public Issue.
 
 ## Publish only when requested
 
 Creating a draft does not authorize opening an Issue or posting a comment. Reuse explicit authorization already given for the specific operation; otherwise finish the reviewable draft and leave publication pending. Verify the repository, final content and requested scope before writing. Fetch available labels before applying any; omit unknown labels rather than inventing them. Do not assign people or milestones unless requested.
 
-Use an available GitHub connector, or write Markdown to a scratch file and use `gh issue create --repo stevdrey/fx-atspi-bridge --title '<title>' --body-file <file>`. Preserve actual newlines; never interpolate the body into shell code. After success, report the real Issue URL. If a write times out or has an ambiguous result, inspect remote state before retrying to avoid duplicates. Continue with the [canonical workflow](../../README.md).
+Use an available GitHub connector, or write a scratch JSON file with `title`, `body` and any verified `labels`, and run `gh api --method POST repos/stevdrey/fx-atspi-bridge/issues --input <json-file>`. Preserve actual newlines; never interpolate the title or body into shell code. After success, report the real Issue URL. If a write times out or has an ambiguous result, inspect remote state before retrying to avoid duplicates. Continue with the [canonical workflow](../../README.md).

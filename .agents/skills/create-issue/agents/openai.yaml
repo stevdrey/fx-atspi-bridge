@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Issue"
+  short_description: "Draft verified, non-duplicate Issues with observable acceptance."
+  default_prompt: "Use $create-issue to complete the relevant fx-atspi-bridge task."

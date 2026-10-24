@@ -6,7 +6,7 @@ These are small authored fixtures for checking the three writing skills, not gen
 
 Request: “Draft an Issue for a short integration guide explaining how clients should interpret action timeouts. Do not open it.”
 
-Evidence: the [current README](../../../README.md#actions-requested-through-at-spi) distinguishes an action that expired before starting from an action still running with unknown outcome. It also says running handlers are never interrupted. These are existing contracts, not a newly reproduced defect. For this fixture only, supply an empty set of duplicate-search results; this is a test input, not a claim that the live repository has no related Issues. For actual publication, search open/closed Issues and PRs again.
+Evidence: the [current README](../../README.md#actions-requested-through-at-spi) distinguishes an action that expired before starting from an action still running with unknown outcome. It also says running handlers are never interrupted. These are existing contracts, not a newly reproduced defect. For this fixture only, supply an empty set of duplicate-search results; this is a test input, not a claim that the live repository has no related Issues. For actual publication, search open/closed Issues and PRs again.
 
 Expected draft:
 
@@ -29,7 +29,8 @@ Help clients interpret timeout replies without accidentally repeating an action 
 ## References and constraints
 
 - https://github.com/stevdrey/fx-atspi-bridge#actions-requested-through-at-spi
-- https://github.com/stevdrey/fx-atspi-bridge/blob/main/docs/security/security-invariants.md — expiry cannot undo completed actions; running handlers are not interrupted.
+- https://github.com/stevdrey/fx-atspi-bridge/blob/main/docs/security/security-invariants.md — expiry prevents unstarted work and cannot undo completed actions.
+- https://github.com/stevdrey/fx-atspi-bridge#actions-requested-through-at-spi — running handlers are never interrupted.
 
 ## Acceptance criteria
 
@@ -92,7 +93,7 @@ For an actual PR, replace fixture summaries with exact commands and current outc
 
 ## C. Completed Issue summary
 
-Request: “Draft a stakeholder summary for completed Issue #43. Do not post.” Read [Issue #43](https://github.com/stevdrey/fx-atspi-bridge/issues/43), the merged [PR #45](https://github.com/stevdrey/fx-atspi-bridge/pull/45), its final changes and the [verification record](../../../docs/verification/issue-43.md). Use the PR's structured merged status instead of its older body saying it remains open. Attribute historical checks to their recorded revision; do not rerun them merely to obtain numbers for this draft.
+Request: “Draft a stakeholder summary for completed Issue #43. Do not post.” Read [Issue #43](https://github.com/stevdrey/fx-atspi-bridge/issues/43), the merged [PR #45](https://github.com/stevdrey/fx-atspi-bridge/pull/45), its final changes and the [verification record](../../docs/verification/issue-43.md). Use the PR's structured merged status instead of its older body saying it remains open. Attribute historical checks to their recorded revision; do not rerun them merely to obtain numbers for this draft.
 
 Expected draft:
 

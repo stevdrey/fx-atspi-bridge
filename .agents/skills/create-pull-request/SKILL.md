@@ -15,7 +15,7 @@ Use [PR #161](https://github.com/stevdrey/dokene/pull/161) as the writing-style 
 
 1. Identify the actual GitHub Issue(s), their acceptance criteria, and the primary Issue number.
 2. Compare the PR head against its intended base; inspect changed files and important commits. Never infer implementation solely from the Issue or branch name.
-3. Reuse task context and verification results already established. Check docs, ADRs, specs, security invariants, and migration details relevant to the diff.
+3. Reuse task context and verification results already established. Check docs, ADRs, specs, security invariants, and compatibility details relevant to the diff.
 4. Record which checks actually ran, their outcomes, and meaningful outstanding checks or risks.
 5. If no primary GitHub Issue is identifiable, do not invent a number. Ask for the Issue reference when feasible; otherwise explicitly flag the missing reference in the PR draft and do not fabricate a compliant title.
 
@@ -24,7 +24,7 @@ Use [PR #161](https://github.com/stevdrey/dokene/pull/161) as the writing-style 
 **Required:** `[Issue-<number>] <concise imperative summary>`
 
 - `<number>` is the numeric ID of the primary linked GitHub Issue, without `#`, braces, or placeholders in the final title.
-- Preserve useful existing context such as `[Messaging][Phase 3]` after the required prefix, when relevant.
+- Preserve useful existing context tags after the required prefix, when relevant.
 - Summarize the actual change, not only the Issue name. Avoid vague titles and duplicating the prefix.
 - Format example for a proposed change (not a delivery claim): `[Issue-44] Standardize GitHub communication skills`.
 - If multiple Issues are addressed, select one primary Issue for the prefix; link the others in the body. Do not combine numbers inside the prefix.
@@ -69,7 +69,7 @@ Closes #<primary-issue-number>
 ### Writing guidance
 
 - Keep `What` and `Why` distinct: outcome versus motivation.
-- Group `Changes` by subsystem (schema, domain, application, API, UI, tests, docs) as appropriate; describe observable behavior and important contracts, not a raw file dump.
+- Group `Changes` by subsystem (public API, provider/D-Bus, FX projection, native/FFM, tooling, tests, docs) as appropriate; describe observable behavior and important contracts, not a raw file dump.
 - In `How to test / verify`, provide runnable commands relative to a stated working directory and list honest results. Do not label tests as passed unless they actually passed; distinguish CI status from local checks.
 - In `Risk & rollout`, discuss compatibility, rollback, password/redaction, FX/provider thread ownership, native cleanup, bounded resources and platform qualification **when relevant**. Do not claim rollback is validated without evidence.
 - In `Notes for reviewers`, call attention to important architectural or security decisions, unusual edge cases, limitations, and dependencies.
@@ -92,7 +92,7 @@ Use an available GitHub connector or a scratch Markdown file with `gh ... --body
 4. Confirm implementation claims match the diff and related documentation.
 5. Confirm verification claims match executed commands / observed CI, explicitly noting limitations.
 6. Confirm the Issue link and closing keywords have the intended effect.
-7. Confirm risks, migrations, and unresolved blockers are visible instead of buried.
+7. Confirm risks, compatibility impacts, and unresolved blockers are visible instead of buried.
 8. Create or update the PR only after these checks; preserve valid prior discussion when updating a PR.
 9. After publishing, report the PR URL and any important verification limitations.
 
