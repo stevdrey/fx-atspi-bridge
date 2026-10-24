@@ -22,9 +22,9 @@ Unit/native CI complements desktop evidence; it never substitutes visual or phys
 [publication guard](pr-size-guard.md) mandatory: maximum **40 files per entire PR**,
 warning at 31–40, with no exemptions for docs, tests, generated paths or deletions.
 Generated test-run evidence is independently prohibited even for a one-file PR.
-This harmonizes the direction of [#39](https://github.com/stevdrey/fx-atspi-bridge/issues/39)
-with #43's stricter rule: raw captures have **no committed-evidence exception**.
-Do not relocate them into another folder or an evidence-only PR. Existing merged
+Raw captures have no committed-evidence exception; see
+[Retention and exceptions](#retention-and-exceptions) for the single authoritative
+rule. Do not relocate them into another folder or an evidence-only PR. Existing merged
 history is outside this change; do not remove authored tests or intentional small
 fixtures needed to rerun validation. This applies to PRs under review and future
 contributions. The motivating
@@ -39,21 +39,33 @@ Commit source code, test implementations, scripts, small intentional fixtures,
 specifications/ADRs and concise authored verification summaries. A fixture has a
 specific reproducible test role and bounded, sanitized content; renaming a run
 capture as a fixture does not make it one. Preserve handwritten test data and source
-assets. The existing preflight distinguishes output locations from source fixtures;
-its path checks cannot establish arbitrary provenance. Existing ignores cover
-build output and known issue-8/22 captures; do not add blanket JSON/XML/CSV/image
-ignores that hide legitimate sources or fixtures.
+assets. The preflight classifies by path, not by role: it rejects raw-type
+extensions (for example JSON, CSV, TXT, XML, images and `.sha256`) and
+manifest/receipt names anywhere under `docs/verification/`, including small
+fixtures. Place fixtures in test source locations such as
+`src/test/resources/fixtures/`; if a legitimate fixture is still flagged, follow the
+[guard's fixture procedure](pr-size-guard.md#generated-results-are-independently-prohibited)
+instead of waiving it. Path checks cannot establish arbitrary provenance. Existing
+ignores cover build output and the issue-8/22 capture directories only; do not add
+blanket JSON/XML/CSV/image ignores that hide legitimate sources or fixtures.
 
 Do not commit per-run JSON/CSV, NMT/pmap/malloc/smaps/histogram captures, process
 logs, full JUnit XML/HTML reports, temporary screenshots, dumps, individual run
 receipts or manifests whose only role is to index excluded output. A small result
-file is still generated evidence. Keep raw output in ignored `build/` directories
-or outside the checkout; never force-add it. Keep tests and runnable harnesses in
+file is still generated evidence. The per-issue `docs/verification/data/issue-N/`
+directories are historical, and some older harness defaults still point there (for
+example `examples/fx-lab/scripts/budgets.py` reads `docs/verification/data/issue-1`);
+most of those paths are not ignored. For new runs pass an explicit output path under
+an ignored `build/` directory or outside the checkout. Never stage or force-add
+capture output that appears in `git status`. Keep tests and runnable harnesses in
 their source locations. Do not bulk-delete historical merged evidence here.
 
 ### Minimum summary metadata
 
 Use `docs/verification/issue-N.md` for durable results, linked from the Issue/PR.
+A distinct report for the same issue may use a suffixed companion such as
+`issue-N-<topic>.md` (for example [`issue-22-optimization.md`](issue-22-optimization.md)),
+linked from the main summary or Issue.
 Include only relevant aggregate tables and conclusions, with:
 
 - **Provenance:** Issue/spec, exact baseline and measured candidate commit SHAs,

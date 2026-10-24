@@ -2,9 +2,10 @@
 
 [Issue #39](https://github.com/stevdrey/fx-atspi-bridge/issues/39) ·
 [Spec Context](../specs/issue-39.md). Verified 2026-10-23 (America/Costa_Rica).
-Baseline: `bd3a1ae77b3e74b5f64dd5435056d3f2e4106267`; candidate: the six authored
-documentation files in this issue's working diff. No Java, harness, tests, guard,
-workflow or historical measurement changed.
+Baseline: `bd3a1ae77b3e74b5f64dd5435056d3f2e4106267`; candidate:
+`5412e0408d267ac770b5d85d9ba28c916567ed90` (six authored documentation files). A later
+documentation-only review fix-up commit on the same branch is checked separately
+below. No Java, harness, tests, guard, workflow or historical measurement changed.
 
 ## Result
 
@@ -38,9 +39,11 @@ qualification was performed for this documentation change.
 | `node --test .agents/scripts/pr-*.test.mjs` | Passed: 77 tests, zero failures/skips | Existing local and embedded trusted-CI tests; generated-output rejection, fixture acceptance, history, scope, limits and parser failures. Initial sandbox execution encountered child-process `EPERM`; rerun outside the sandbox passed. No live CI execution claimed. |
 | `git diff --check` | Passed | Whitespace in the tracked working diff |
 | Local Markdown target/heading check over the six issue files | Passed | Resolve relative links from each file and verify referenced heading anchors; remote Issue/PR metadata read separately |
-| `git check-ignore --no-index -q -- <path>` on representative paths | Passed: 4 output paths ignored; 6 source/fixture/summary paths visible | Output under root/subproject `build/` and issue-8/22 data; JSON/XML/CSV/image fixtures, benchmark source and the issue summary stay visible |
+| `git check-ignore --no-index -q -- <path>` on representative paths | Passed: 4 output paths ignored; 6 source/fixture/summary paths not ignored by Git | Output under root/subproject `build/` and issue-8/22 data; JSON/XML/CSV/image fixtures, benchmark source and the issue summary remain visible to Git. This does not test guard acceptance: the guard rejects raw-type fixtures under `docs/verification/` |
 | Existing `evidenceReason` classifier on this issue's explicit file list | Passed: 6 authored paths accepted | A focused classification check, not a replacement for the full-worktree preflight |
-| `node .agents/scripts/pr-size-preflight.mjs` | Blocked: 8 pre-existing untracked issue-16 capture paths | Correctly detects manifest/JSON/text output under `docs/verification/data/issue-16/`; unrelated files left untouched. Initial sandbox attempt hit `EPERM`; unrestricted rerun reached this policy result. |
+| `node .agents/scripts/pr-size-preflight.mjs` (original working directory) | Blocked: 8 pre-existing untracked issue-16 capture paths | Correctly detects manifest/JSON/text output under `docs/verification/data/issue-16/`; unrelated files left untouched. Initial sandbox attempt hit `EPERM`; unrestricted rerun reached this policy result. |
+| `node .agents/scripts/pr-size-preflight.mjs` in a clean worktree of `5412e04` | Passed: 6/40 files, no generated captures | Publication check for the candidate commit, run before push and PR creation |
+| Review fix-up recheck: Node suite, `git diff --check`, link/heading check (22 local links), `evidenceReason` on the six paths | Passed: 77 tests with zero failures/skips; no whitespace errors; 0 broken links/anchors; 6 paths accepted | Run on the fix-up working diff before commit; its clean-worktree preflight is reported in the PR because a commit cannot record its own SHA |
 | Contributor walkthrough | Passed | Entry point → canonical checklist → summary metadata/example → retention/exception rule → existing publication guard; fixtures, privacy and ADR/security requirements remain consistent |
 | Gradle, benchmarks and desktop QA | Not run | Prose-only scope; no runtime/performance/qualification claim |
 
@@ -48,13 +51,17 @@ Reviewed the six authored files for generated content and sensitive values. Exis
 changes to `docs/verification/issue-1.md`, `docs/verification/issue-16.md` and the
 issue-16 data directory are outside scope and were neither staged nor modified.
 During this initial verification the staging area remained empty and no remote
-changes were published. Publication checks are reported in the implementing PR.
+changes were published. The candidate's clean-worktree publication check is recorded
+above.
 
 ## Reproduction and limitations
 
 Run the Node suite and manual preflight above from the repository root with Node
 22+ and Git. The manual preflight includes unrelated nonignored untracked files;
-its current blocked result must not be represented as a passing publication check.
+its blocked result in the original working directory is not a passing publication
+check. Use the clean-worktree procedure in the
+[contributor checklist](../../.agents/README.md#publication-preflight) to check the
+exact commit without touching unrelated work.
 The six-file policy change itself is below the warning threshold and contains no
 recognized generated captures. No additional ignore patterns or guard changes are
 needed; path detection still relies on author/reviewer content inspection.

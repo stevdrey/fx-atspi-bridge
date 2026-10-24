@@ -27,7 +27,8 @@ No mandatory storage service or new raw-data collection.
 Commit authored source/tests/scripts, small intentional fixtures, specs/ADRs and
 concise sanitized summaries. Keep generated captures and their index-only
 manifests outside Git, including evidence-only PRs and intermediate feature commits.
-`docs/verification/issue-N.md` holds results and reproduction instructions.
+`docs/verification/issue-N.md` holds results and reproduction instructions; a
+distinct report may use a linked `issue-N-<topic>.md` companion.
 
 Resolve #39's proposed maintainer-approved raw-evidence exception explicitly:
 #43's implemented publication contract is stricter and remains in force. There is

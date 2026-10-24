@@ -25,12 +25,19 @@ Authors and agents follow this checklist:
 2. Before committing, inspect `git diff --cached --name-status` and
    `git diff --cached` for the exact content to be retained in history. Keep tests,
    scripts and small intentional fixtures; replace raw evidence with a concise
-   `docs/verification/issue-N.md` following the [summary format](../docs/verification/README.md#minimum-summary-metadata).
+   `docs/verification/issue-N.md` (or a linked `issue-N-<topic>.md` companion)
+   following the [summary format](../docs/verification/README.md#minimum-summary-metadata).
    Record failures and unavailable checks as well as successes.
 3. Run the manual preflight before committing and before every push or PR
    creation/update. Inspect the entire PR and feature history; later deletion does
    not undo a capture introduced by an earlier feature commit. Resolve findings
-   without deleting unrelated local work or weakening the guard.
+   without deleting unrelated local work or weakening the guard. If only unrelated
+   untracked or local files block the run, commit the intended files and rerun the
+   preflight from a clean worktree of that exact commit:
+   `git worktree add <tmp-dir> HEAD`, run the preflight inside it, then
+   `git worktree remove <tmp-dir>`. Never delete, stash or ignore someone else's work
+   to pass, never use this route to hide the PR's own files, and record the blocked
+   local result truthfully alongside the clean-worktree result.
 4. Before publishing, confirm summaries, filenames and optional retrieval links
    contain no credentials, personal paths, field content or other sensitive data.
    Raw uploads are never required for ordinary review.
@@ -59,7 +66,6 @@ throughout feature history, including additions deleted by a later commit. Only
 checked-out HEAD/branch pushes are supported; switch to the intended source branch
 before publishing. Generated snapshots, screenshots, raw benchmark/QA results,
 logs, dumps, reports and evidence-only bundles are **prohibited**, including in
-separate evidence PRs, regardless of count. #43's stricter rule supersedes #39's
-proposed raw-capture exception: the current policy provides none. See the
-[exception process and optional retention](../docs/verification/README.md#retention-and-exceptions)
+separate evidence PRs, regardless of count. There is no raw-capture exception; see
+[retention and exceptions](../docs/verification/README.md#retention-and-exceptions)
 before proposing a future policy change or sharing investigation material.
