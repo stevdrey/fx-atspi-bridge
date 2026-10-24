@@ -28,6 +28,10 @@ NMT/smaps/pmap captures, logs, dumps, receipts, evidence manifests or bundles. N
 folder move or separate evidence PR makes them acceptable. Raw material needed for
 an investigation belongs outside Git in private, access-controlled storage with
 retention/cleanup per #39. See [summary format](README.md#result-summaries-and-publication).
+There is no per-PR raw-capture waiver, including with maintainer approval alone.
+Any proposed future exception requires a separately reviewed and explicitly
+approved policy change; the current guard continues to apply. See the
+[retention and exception process](README.md#retention-and-exceptions).
 
 Both guards reject output directories named `test-results`, `test-reports`,
 `junit-reports`, `benchmark-results`, `qa-results`, `raw-evidence` or
