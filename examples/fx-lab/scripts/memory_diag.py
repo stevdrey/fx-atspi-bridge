@@ -34,10 +34,13 @@ PHASES = {
 CHECKPOINT_ORDER = ("afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralCheckpoint", "structuralAfterGc",
                     "installChurnBefore", "installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterDrain",
                     "installChurnAfterTrim")
+LONG_STRUCTURAL = tuple(f"structuralCycle{i}" for i in (0, 30, 60, 100, 150))
+LONG_INSTALL = tuple(f"installCycle{i}" for i in range(0, 1001, 100))
+CHECKPOINT_ORDER += LONG_STRUCTURAL + LONG_INSTALL
 SMAPS = ("Rss", "Anonymous", "PssFile")
 # Checkpoints where BenchApp takes a class histogram (MemoryDiagnostics.snapshot(..., histogram=true)).
 HISTOGRAM_CHECKPOINTS = frozenset({"afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralAfterGc",
-                                   "installChurnBefore", "installChurnAfterGc"})
+                                   "installChurnBefore", "installChurnAfterGc"}) | frozenset(LONG_STRUCTURAL + LONG_INSTALL)
 MAX_REPORTED_PROBLEMS = 20
 # Legacy fallback for collections that predate the recorded heap range (javaHeapStart/javaHeapEnd in the run JSON): with
 # compressed oops HotSpot reserves the Java heap and class space below this address, while glibc arenas and thread
@@ -246,6 +249,15 @@ def load_artifacts(data, cells):
         for name, run in runs:
             if checkpoints(run) != points:
                 problems.append(f"{name}.json: checkpoints differ from {runs[0][0]}.json")
+            if run.get("longMemory") is True:
+                cycles = run.get("structuralCycles", 0) if key[0] == "structural" else run.get("installChurnCycles", 0)
+                expected_points = (LONG_STRUCTURAL if key[0] == "structural" else LONG_INSTALL)
+                required = {p for p in expected_points if int(re.search(r"\d+$", p).group()) <= cycles}
+                actual = {p for p in checkpoints(run) if p in set(LONG_STRUCTURAL + LONG_INSTALL)}
+                if actual != required or any(run.get(p + "ProviderThreads") != (1 if key[2] == "on" else 0)
+                                             or not isinstance(run.get(p + "HeapUsedBytes"), int)
+                                             or not isinstance(run.get(p + "HeapCommittedBytes"), int) for p in required):
+                    problems.append(f"{name}.json: invalid long-memory checkpoints")
             for checkpoint, kind in sorted(expected_artifacts(run, key[3])):
                 path = data / name / f"{checkpoint}.{kind}.txt"
                 if not path.is_file():

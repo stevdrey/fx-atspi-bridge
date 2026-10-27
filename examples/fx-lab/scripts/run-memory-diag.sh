@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Issue 17: memory characterization runs (NMT, smaps_rollup, malloc_info, class histograms, pmap). One JVM per cell.
-# Usage: run-memory-diag.sh <output-dir> [smoke|diag|scaling-smoke|scaling] [--resume]   (default profile: diag)
+# Usage: run-memory-diag.sh <output-dir> [smoke|diag|long-smoke|long|scaling-smoke|scaling] [--resume]   (default profile: diag)
 #   smoke (~2 min): 100 nodes, short phases, one cell per kind. Validates the tooling; NEVER use it as evidence.
 #   diag  (~1 h):   structural churn at 10,000 nodes (30 cycles), bridge off/on x 3 reps, without and with NMT;
 #                   install/close churn at 1,000 nodes (100 cycles), bridge on x 3 reps: default malloc, NMT, and
 #                   MALLOC_ARENA_MAX=2; every install cell trims the native heap at the end.
+#   long-smoke: reduced long-checkpoint validation; not evidence.
+#   long: 150 structural cycles off/on and 1,000 install cycles, plain/NMT, three repetitions each.
 # Cells: <kind>-n<nodes>-<bridge>-<variant>-r<rep>.{json,log} plus the snapshot directory <name>/ (raw artifacts; they
 # include the command line and local paths, so they are summarized by memory_diag.py and not committed).
 # NMT runs are separate JVMs because NMT adds overhead. Requires JDK 27, pmap, a real graphical session and a clean tree.
@@ -36,9 +38,11 @@ warmup=50; samples=200; idle_seconds=10; max_attempts=2
 case "$profile" in
   smoke) plan=("structural:100:1:off,on:plain,nmt:5:0" "install:100:1:on:plain,nmt,arena2:0:5"); warmup=10; samples=30; idle_seconds=2 ;;
   diag)  plan=("structural:10000:3:off,on:plain,nmt:30:0" "install:1000:3:on:plain,nmt,arena2:0:100") ;;
+  long-smoke) plan=("structural:100:1:off,on:plain:30:0" "install:100:1:on:plain:0:100"); warmup=10; samples=30; idle_seconds=2; max_attempts=1 ;;
+  long) plan=("structural:10000:3:off,on:plain,nmt:150:0" "install:1000:3:on:plain,nmt:0:1000"); max_attempts=1 ;;
   scaling-smoke) plan=("scaling:100:1:off,on:plain,nmt:0:0"); warmup=10; samples=30; idle_seconds=2 ;;
   scaling) plan=("scaling:100:5:off,on:plain,nmt:0:0" "scaling:1000:5:off,on:plain,nmt:0:0" "scaling:10000:5:off,on:plain,nmt:0:0") ;;
-  *) echo "Unknown profile '$profile' (smoke|diag|scaling-smoke|scaling)" >&2; exit 1 ;;
+  *) echo "Unknown profile '$profile' (smoke|diag|long-smoke|long|scaling-smoke|scaling)" >&2; exit 1 ;;
 esac
 root="$(cd "$script_dir/../../.." && pwd -P)"
 bin="$root/examples/fx-lab/build/install/fx-lab/bin/fx-lab"
@@ -138,6 +142,10 @@ for entry in "${plan[@]}"; do
           arena2) cell_env=(MALLOC_ARENA_MAX=2) ;;
           *) echo "Unknown variant '$variant'" >&2; exit 1 ;;
         esac
+        timeout_seconds=1200
+        [[ "$profile" = long* ]] && timeout_seconds=10800
+        long_options=()
+        [[ "$profile" = long* ]] && long_options=(--long-memory=true)
         trim=()
         [ "$kind" = install ] && trim=(--trim-native-heap=true)
         if [ "$kind" = scaling ]; then python3 "$script_dir/scaling_backend.py" require-display "$out_abs" >/dev/null; fi
@@ -145,9 +153,9 @@ for entry in "${plan[@]}"; do
           cell_start="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import scaling_collection; print(scaling_collection.clock_ns())' "$script_dir")"
         fi
         run_cell "$max_attempts" "$name" "$out_abs" \
-          env "${cell_env[@]}" timeout -k 30 1200 "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty=10 \
+          env "${cell_env[@]}" timeout -k 30 "$timeout_seconds" "$bin" --bench --bridge="$bridge" --nodes="$nodes" --dirty=10 \
           --warmup="$warmup" --samples="$samples" --idle-seconds="$idle_seconds" \
-          --structural="$structural" --install-churn="$install" "${trim[@]}" --limits="$limits" \
+          --structural="$structural" --install-churn="$install" "${trim[@]}" "${long_options[@]}" --limits="$limits" \
           --diagnostics="$out_abs/$name" --out="$out_abs/$name.json" \
           || { echo "FAILED $name (see $out/$name.log)" >&2; exit 1; }
         if [ "$kind" = scaling ]; then

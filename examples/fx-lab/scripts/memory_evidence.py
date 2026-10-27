@@ -136,6 +136,19 @@ def verify(root, manifest, mode):
     planned(text)
     cells = analyzed(md.load, root)  # exact plan, no unexpected JSON; each result parsed once
     runs = {name: run for group in cells.values() for name, run in group}
+    if 'profile=long' in text.split('\n'):
+        expected_plan = {'plan=structural:10000:3:off,on:plain,nmt:150:0',
+                         'plan=install:1000:3:on:plain,nmt:0:1000'}
+        if {line for line in text.split('\n') if line.startswith('plan=')} != expected_plan:
+            raise ValueError('invalid long campaign plan')
+        for name, run in runs.items():
+            key, _ = md.cell_key(name)
+            points = md.LONG_STRUCTURAL if key[0] == 'structural' else md.LONG_INSTALL
+            cycle_key = 'structuralCycles' if key[0] == 'structural' else 'installChurnCycles'
+            if (key[0] not in ('structural', 'install') or run.get('longMemory') is not True
+                    or run.get(cycle_key) != (150 if key[0] == 'structural' else 1000)
+                    or not set(points) <= md.checkpoints(run)):
+                raise ValueError('incomplete long campaign')
     expected, unknown = inventory(root, text, runs)
     if unknown or manifest.get('unknown_artifact_runs') != []:
         raise ValueError('incomplete run inventory')

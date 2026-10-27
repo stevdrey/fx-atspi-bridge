@@ -226,8 +226,12 @@ public final class BenchApp extends Application {
         var idleSeconds = bounded("idle-seconds", 10, 0, 600);
         var installChurn = bounded("install-churn", 100, 0, MAX_CHURN);
         var structural = bounded("structural", 100, 0, MAX_CHURN);
+        var longMemory = options.getOrDefault("long-memory", "false");
+        if (!longMemory.equals("true") && !longMemory.equals("false")) throw new IllegalArgumentException("invalid long-memory");
+        if (longMemory.equals("true") && diagnostics == null) throw new IllegalArgumentException("long-memory requires diagnostics");
         if (bridgeOn) requireReady(current, "initial provider");
         var json = new StringBuilder("{");
+        if (longMemory.equals("true")) field(json, "longMemory", true);
         field(json, "bridge", bridgeOn ? "\"on\"" : "\"off\"");
         if (bridgeOn) field(json, "bridgeReady", true);
         field(json, "pulseCadenceP50Ms", cadenceP50);
@@ -270,7 +274,7 @@ public final class BenchApp extends Application {
         if (bridgeOn) requireProviderAlive("after the idle phase");
         field(json, "threadCount", Thread.getAllStackTraces().size());
 
-        if (structural > 0) structuralChurn(json, structural);
+        if (structural > 0) structuralChurn(json, structural, bridgeOn);
         if (bridgeOn) requireProviderAlive("after the structural churn phase");
         if (bridgeOn && installChurn > 0) installChurn(json, installChurn);
         if (bridgeOn) {
@@ -379,7 +383,7 @@ public final class BenchApp extends Application {
     }
 
     /** Create/remove controls and swap scenes, paired for bridge off/on. Checkpoint values are read before GC. */
-    private void structuralChurn(StringBuilder json, int cycles) throws Exception {
+    private void structuralChurn(StringBuilder json, int cycles, boolean bridgeOn) throws Exception {
         gc();
         // Before the phase's own baseline readings, so the snapshot's allocations are not counted in the deltas.
         snapshot(json, "structuralBefore", true);
@@ -387,6 +391,8 @@ public final class BenchApp extends Application {
         var rssBefore = status("VmRSS");
         var threadsBefore = Thread.getAllStackTraces().size();
         var original = originalScene;
+        var longRun = "true".equals(options.get("long-memory"));
+        if (longRun) longMemoryCheckpoint(json, "structuralCycle0", bridgeOn);
         var added = new ArrayDeque<List<TextField>>();
         var started = System.nanoTime();
         for (var i = 0; i < cycles; i++) {
@@ -408,6 +414,11 @@ public final class BenchApp extends Application {
             Thread.sleep(HOLD_MS);
             awaitPulse(() -> stage.setScene(original));
             Thread.sleep(HOLD_MS);
+            if (longRun && (i + 1 == 30 || i + 1 == 60 || i + 1 == 100 || i + 1 == 150)) {
+                awaitPulse(() -> { while (!added.isEmpty()) pane.getChildren().removeAll(added.removeFirst()); });
+                Thread.sleep(HOLD_MS);
+                longMemoryCheckpoint(json, "structuralCycle" + (i + 1), bridgeOn);
+            }
         }
         awaitPulse(() -> { while (!added.isEmpty()) pane.getChildren().removeAll(added.removeFirst()); });
         Thread.sleep(HOLD_MS);
@@ -437,6 +448,8 @@ public final class BenchApp extends Application {
         var heapBefore = usedHeap();
         var rssBefore = status("VmRSS");
         var threadsBefore = Thread.getAllStackTraces().size();
+        var longRun = "true".equals(options.get("long-memory"));
+        if (longRun) longMemoryCheckpoint(json, "installCycle0", true);
         var closeMs = new double[cycles];
         var readyMs = new double[cycles];
         for (var i = 0; i < cycles; i++) {
@@ -456,6 +469,7 @@ public final class BenchApp extends Application {
             onFx(() -> bridge = installBridge(last));
             requireReady(current, "provider of churn cycle " + (i + 1));
             readyMs[i] = (System.nanoTime() - installing) / 1e6;
+            if (longRun && (i + 1) % 100 == 0) longMemoryCheckpoint(json, "installCycle" + (i + 1), true);
         }
         var loopEnd = System.nanoTime();
         Thread.sleep(2_000);
@@ -513,6 +527,19 @@ public final class BenchApp extends Application {
         } catch (ExecutionException e) {
             throw new IllegalStateException("install-churn task failed on the FX thread", e.getCause());
         }
+    }
+
+    private void longMemoryCheckpoint(StringBuilder json, String checkpoint, boolean bridgeOn) throws Exception {
+        if (diagnostics == null) throw new IllegalArgumentException("long-memory requires diagnostics");
+        if (bridgeOn) requireProviderAlive("at " + checkpoint);
+        var providers = providerThreads();
+        if (providers != (bridgeOn ? 1 : 0) || totalErrors() != 0) invalid("provider state invalid at " + checkpoint);
+        gc();
+        field(json, checkpoint + "HeapUsedBytes", usedHeap());
+        field(json, checkpoint + "HeapCommittedBytes", Runtime.getRuntime().totalMemory());
+        field(json, checkpoint + "ProviderThreads", providers);
+        field(json, checkpoint + "Threads", Thread.getAllStackTraces().size());
+        snapshot(json, checkpoint, true);
     }
 
     private void snapshot(StringBuilder json, String checkpoint, boolean histogram) throws Exception {
