@@ -1,6 +1,10 @@
 """Offline adversarial checks for QA-02; these are not desktop compatibility evidence."""
 import importlib.util
+from itertools import cycle
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -56,8 +60,16 @@ class DesktopQaTest(unittest.TestCase):
 
     def test_missing_or_ambiguous_pid_and_wrong_fixture_are_rejected(self):
         for apps in ([], [self.node(self.qa.APP), self.node(self.qa.APP)], [self.node("another app")]):
-            with self.subTest(count=len(apps)), self.assertRaises(self.qa.CheckFailed):
+            with self.subTest(count=len(apps)), \
+                    self.assertRaisesRegex(self.qa.CheckFailed, "pid_missing_or_ambiguous"):
                 self.qa.select_application(self.node(children=apps), 42, self.call)
+
+    def test_foreign_application_vanishing_during_discovery_is_skipped(self):
+        gone = self.node()
+        gone.get_process_id.side_effect = self.qa.GLib.Error("private remote text")
+        lab = self.node(self.qa.APP)
+        self.assertIs(self.qa.select_application(self.node(children=[gone, lab]), 42, self.call), lab)
+        gone.get_name.assert_not_called()
 
     def test_desktop_limit_rejects_before_child_lookup(self):
         desktop = self.node()
@@ -162,19 +174,67 @@ class DesktopQaTest(unittest.TestCase):
         per_call, startup = timeout.call_args.args
         self.assertGreater(per_call, 0)
         self.assertLessEqual(per_call, 500)
-        self.assertEqual(per_call, startup)
+        self.assertGreater(startup, 0)
+        self.assertLessEqual(startup, 500)
+
+    def test_call_uses_separate_startup_timeout_when_budget_allows(self):
+        client = self.qa.Client(42)
+        with patch.object(self.qa.Atspi, "set_timeout") as timeout:
+            client.call(lambda: None)
+        self.assertEqual(timeout.call_args.args, (self.qa.CALL_MS, self.qa.STARTUP_MS))
 
     def test_continuous_events_cannot_extend_the_settling_deadline(self):
         client = self.qa.Client(42)
-        client.step_deadline = time.monotonic() + .03
+        client.context = Mock()
+        client.context.pending.side_effect = cycle([True, False])  # one event per pump
+        client.context.iteration.side_effect = lambda _: client.events.add("object:state-changed:focused", "/x", 1, 0)
+        # Longer than the 200 ms quiet window: only the continuous events keep settle() from returning.
+        client.step_deadline = time.monotonic() + .3
         with self.assertRaisesRegex(self.qa.CheckFailed, "deadline_exceeded"):
             client.settle()
+        self.assertGreater(len(client.events.items), 1)
+
+    def test_settling_failure_is_attributed_to_its_scenario(self):
+        client = self.qa.Client(42)
+        client.settle = Mock(side_effect=self.qa.CheckFailed("event_limit"))
+        body = Mock()
+        with self.assertRaises(self.qa.CheckFailed):
+            client.scenario("clear", body)
+        body.assert_not_called()
+        self.assertEqual(client.results[-1]["scenario"], "clear")
+        self.assertEqual(client.results[-1]["status"], "Failed")
+        self.assertEqual(client.results[-1]["check"], "event_limit")
 
     def test_disappearing_application_cannot_complete_walk(self):
         root = self.node()
         root.get_child_count.side_effect = RuntimeError("private remote text")
         with self.assertRaises(RuntimeError):
             self.qa.walk(root, self.call)
+
+    def test_application_disappearing_mid_run_fails_with_sanitized_error(self):
+        client = self.qa.Client(42)
+        client.settle = Mock()
+        with patch.object(self.qa.Atspi, "get_desktop", return_value=Mock()), \
+             patch.object(self.qa, "select_application", return_value=Mock()), \
+             patch.object(client, "subscribe"), \
+             patch.object(client, "fresh", side_effect=self.qa.GLib.Error("private remote text")), \
+             patch.object(self.qa.Atspi, "exit"):
+            result = client.run()
+        self.assertEqual(result["status"], "Failed")
+        first, *rest = result["scenarios"]
+        self.assertEqual((first["scenario"], first["status"], first["check"]), ("fresh_fixture", "Failed", "Error"))
+        self.assertEqual([r["status"] for r in rest], ["Not tested"] * (len(self.qa.SCENARIOS) - 1))
+        self.assertNotIn("private", str(result))
+
+    def test_invalid_pid_is_rejected_by_argparse_before_any_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "x"
+            run = subprocess.run([sys.executable, str(Path(__file__).with_name("desktop_qa.py")),
+                                  "--pid=abc", "--out", str(out)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 2)
+            self.assertIn("usage", run.stderr)
+            self.assertNotIn("Traceback", run.stderr)
+            self.assertFalse(out.exists())
 
     def test_wrong_unicode_count_fails_even_when_write_and_event_succeeded(self):
         client = self.qa.Client(42)

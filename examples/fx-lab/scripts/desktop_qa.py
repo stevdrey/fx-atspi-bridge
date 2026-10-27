@@ -17,8 +17,6 @@ import gi
 gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi, GLib
 
-from atspi_probe import libatspi_version
-
 APP = "JavaFX AT-SPI Lab"
 TEXT = "A🧪e\u0301Z"  # 5 code points, 6 UTF-16 units; combining marks are separate offsets
 MAX_APPS = 256
@@ -27,6 +25,7 @@ MAX_EVENTS = 1000
 RUN_SECONDS = 180
 STEP_SECONDS = 10
 CALL_MS = 2000
+STARTUP_MS = 5000
 EVENT_TYPES = ("object:text-changed", "object:state-changed", "object:children-changed")
 SCENARIOS = ("fresh_fixture", "unicode_enable", "append", "clear", "dynamic_add",
              "dynamic_remove", "window_open", "window_close", "scene_replace", "scene_restore")
@@ -47,13 +46,17 @@ def select_application(desktop, pid, call):
     matches = []
     for index in range(count):
         candidate = call(desktop.get_child_at_index, index)
+        if candidate is None:
+            continue
+        try:
+            candidate_pid = call(candidate.get_process_id)
+        except GLib.Error:
+            continue  # a foreign application may exit during discovery; the lab must still match
         # GTK can register a second provider for this JVM. Inspect names only for
         # the requested PID, and require one match for this particular bridge.
-        if candidate is not None and call(candidate.get_process_id) == pid \
-                and call(candidate.get_name) == APP:
+        if candidate_pid == pid and call(candidate.get_name) == APP:
             matches.append(candidate)
     require(len(matches) == 1, "pid_missing_or_ambiguous")
-    require(call(matches[0].get_name) == APP, "unexpected_application")
     return matches[0]
 
 
@@ -120,9 +123,8 @@ class Client:
 
     def call(self, function, *args):
         self.check_time()
-        remaining = min(self.deadline, self.step_deadline) - time.monotonic()
-        timeout = max(1, min(CALL_MS, int(remaining * 1000)))
-        Atspi.set_timeout(timeout, timeout)
+        remaining = int((min(self.deadline, self.step_deadline) - time.monotonic()) * 1000)
+        Atspi.set_timeout(max(1, min(CALL_MS, remaining)), max(1, min(STARTUP_MS, remaining)))
         result = function(*args)
         self.check_time()
         return result
@@ -146,13 +148,16 @@ class Client:
     def tree(self):
         return walk(self.app, self.call)
 
-    def find(self, name, role=None):
-        matches = [n for n, text, r in self.tree() if text == name and (role is None or r == role)]
+    def find(self, name, role=None, nodes=None):
+        nodes = self.tree() if nodes is None else nodes
+        matches = [n for n, text, r in nodes if text == name and (role is None or r == role)]
         require(len(matches) == 1, "node_missing_or_ambiguous")
         return matches[0]
 
-    def present(self, name):
-        return any(text == name for _, text, _ in self.tree())
+    def shows(self, present=(), absent=()):
+        """One traversal for every name a wait condition needs."""
+        names = {text for _, text, _ in self.tree()}
+        return names.issuperset(present) and names.isdisjoint(absent)
 
     def identity(self, node):
         path = node.path
@@ -208,9 +213,10 @@ class Client:
     def scenario(self, name, body):
         started = time.monotonic()
         self.step_deadline = min(self.deadline, started + STEP_SECONDS)
-        self.settle()  # separate delayed events from the previous action
         start = len(self.events.items)
         try:
+            self.settle()  # separate delayed events from the previous action
+            start = len(self.events.items)
             body(start)
             self.check_time()
         except Exception as error:
@@ -236,7 +242,7 @@ class Client:
 
     def run(self):
         try:
-            Atspi.set_timeout(CALL_MS, 5000)
+            Atspi.set_timeout(CALL_MS, STARTUP_MS)
             self.app = select_application(Atspi.get_desktop(0), self.pid, self.call)
             self.subscribe()
             self.scenario("fresh_fixture", self.fresh)
@@ -252,7 +258,7 @@ class Client:
         except Exception as error:
             self.errors.append(str(error) if isinstance(error, CheckFailed) else type(error).__name__)
         finally:
-            Atspi.set_timeout(CALL_MS, CALL_MS)
+            Atspi.set_timeout(CALL_MS, STARTUP_MS)
             for kind in self.registered:
                 try:
                     require(self.listener.deregister(kind), "event_deregistration_failed")
@@ -266,22 +272,23 @@ class Client:
         return {"schema": 1, "pid": self.pid, "client": {"python": platform.python_version(),
                 "pygobject": gi.__version__, "atspi_namespace": "2.0"},
                 "limits": {"runSeconds": RUN_SECONDS, "stepSeconds": STEP_SECONDS,
-                           "callMs": CALL_MS, "nodes": MAX_NODES, "events": MAX_EVENTS},
+                           "callMs": CALL_MS, "startupMs": STARTUP_MS, "nodes": MAX_NODES, "events": MAX_EVENTS},
                 "scenarios": self.results, "fixtures": self.fixtures, "events": self.events.items,
                 "eventCounts": dict(Counter(e["type"] for e in self.events.items)),
                 "errors": self.errors, "status": "Passed" if finish(self.results, self.errors) else "Failed"}
 
     def fresh(self, _start):
-        self.input = self.find("Entrada", Atspi.Role.ENTRY)
-        self.output = self.find("Contenido", Atspi.Role.TEXT)
-        self.add = self.find("Agregar", Atspi.Role.PUSH_BUTTON)
-        self.frame = self.find("Desktop Control — JavaFX AT-SPI Lab", Atspi.Role.FRAME)
+        nodes = self.tree()
+        self.input = self.find("Entrada", Atspi.Role.ENTRY, nodes)
+        self.output = self.find("Contenido", Atspi.Role.TEXT, nodes)
+        self.add = self.find("Agregar", Atspi.Role.PUSH_BUTTON, nodes)
+        self.frame = self.find("Desktop Control — JavaFX AT-SPI Lab", Atspi.Role.FRAME, nodes)
         for name in ("Limpiar", "Añadir campo", "Quitar campo", "Abrir segunda ventana", "Cambiar escena"):
-            self.find(name, Atspi.Role.PUSH_BUTTON)
+            self.find(name, Atspi.Role.PUSH_BUTTON, nodes)
+        require(not {"Campo dinámico", "Entrada secundaria", "Texto alternativo"} & {text for _, text, _ in nodes},
+                "fixture_not_fresh")
         require(self.text(self.input) == self.text(self.output) == "", "fixture_not_empty")
         require(not self.enabled(self.add), "append_initially_enabled")
-        require(not any(self.present(n) for n in ("Campo dinámico", "Entrada secundaria", "Texto alternativo")),
-                "fixture_not_fresh")
         self.fixtures.append({key: self.identity(node) for key, node in
                               (("input", self.input), ("output", self.output),
                                ("append", self.add), ("frame", self.frame))})
@@ -311,30 +318,30 @@ class Client:
 
     def dynamic_add(self, start):
         self.click("Añadir campo")
-        self.wait(lambda: self.present("Campo dinámico"))
+        self.wait(lambda: self.shows(present=("Campo dinámico",)))
         self.dynamic_parent = self.call(self.find("Campo dinámico").get_parent)
         self.wait(lambda: self.children_event(start, "add", self.dynamic_parent))
 
     def dynamic_remove(self, start):
         self.click("Quitar campo")
-        self.wait(lambda: not self.present("Campo dinámico")
+        self.wait(lambda: self.shows(absent=("Campo dinámico",))
                   and self.children_event(start, "remove", self.dynamic_parent))
 
     def window_open(self, start):
         self.click("Abrir segunda ventana")
-        self.wait(lambda: self.present("Ventana secundaria") and self.present("Entrada secundaria")
+        self.wait(lambda: self.shows(present=("Ventana secundaria", "Entrada secundaria"))
                   and self.children_event(start, "add", self.app))
         self.write(self.find("Entrada secundaria", Atspi.Role.ENTRY), TEXT)
         self.wait(lambda: self.text(self.find("Entrada secundaria", Atspi.Role.ENTRY)) == TEXT)
 
     def window_close(self, start):
         self.click("Cerrar segunda ventana")
-        self.wait(lambda: not self.present("Entrada secundaria") and not self.present("Ventana secundaria")
+        self.wait(lambda: self.shows(absent=("Entrada secundaria", "Ventana secundaria"))
                   and self.children_event(start, "remove", self.app))
 
     def scene_replace(self, start):
         self.click("Cambiar escena")
-        self.wait(lambda: self.present("Texto alternativo") and not self.present("Contenido")
+        self.wait(lambda: self.shows(present=("Texto alternativo",), absent=("Contenido",))
                   and self.children_event(start, "remove", self.frame)
                   and self.children_event(start, "add", self.frame))
         self.write(self.find("Texto alternativo", Atspi.Role.TEXT), TEXT)
@@ -342,7 +349,7 @@ class Client:
 
     def scene_restore(self, start):
         self.click("Volver al laboratorio")
-        self.wait(lambda: self.present("Contenido") and not self.present("Texto alternativo")
+        self.wait(lambda: self.shows(present=("Contenido",), absent=("Texto alternativo",))
                   and self.children_event(start, "remove", self.frame)
                   and self.children_event(start, "add", self.frame))
         self.fresh(start)  # obtains new references; verifies usable restored controls
@@ -363,6 +370,8 @@ def main():
         parser.error("--pid must be positive")
     # Refuse overwriting evidence, including a partially failed previous collection.
     args.out.mkdir(parents=True, exist_ok=False)
+    # Imported only after argparse validation: the probe parses sys.argv at import time.
+    from atspi_probe import libatspi_version
     package_version = libatspi_version()
     result = Client(args.pid).run()
     result["client"]["libatspi_package"] = package_version

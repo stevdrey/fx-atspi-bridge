@@ -1,7 +1,8 @@
 # Verification — Issue 16: desktop interoperability
 
 Spec: [QA-02](../specs/issue-16.md). Issue: [#16](https://github.com/stevdrey/fx-atspi-bridge/issues/16).
-Campaign date: **2026-10-24, America/Costa_Rica**.
+Campaign date: **2026-10-24, America/Costa_Rica**; automated client rerun after
+PR review on **2026-10-26** (see [tooling checks](#tooling-checks-and-incomplete-attempts)).
 
 ## Result and provenance
 
@@ -25,8 +26,9 @@ other GNOME versions and X11 desktop sessions were not tested in this campaign.
 Runtime/example baseline: `37fe492331561fecb44d164350bea45c900d68d3`.
 The new QA scripts were measured as working-tree additions on that baseline,
 adapted from `b7d71701248ed09edcc6af50826c1fb8e5cd5924`; the old branch was not merged.
-Measured final client SHA-256: `07aaf17b88b0a6d8b735b5358bdc6cdbdc8a69fcdd18a3670f65a8ec709e1051`.
-Measured final test source SHA-256: `aba38377d65c1479675e1783325d56dae4fc00e29c69f97e07619863f19c4688`.
+Measured final client SHA-256 (post-review rerun): `7c79c3ebcaa1df05181536d0ae133438a30bc53f6423e0542933cbb3d5399284`.
+Measured final test source SHA-256: `057806af0cf3dca365f569b21771b84fe160d6f1d5aa164df6c3fbdbf403444f`.
+The 2026-10-24 campaign used client `07aaf17b…e1051` and tests `aba38377…c4688`.
 
 Installed bridge JAR SHA-256:
 `fbab3f2203088482f9878512e45a080202a27edb8c0fa4fd6bc9e748ed072787`.
@@ -124,10 +126,19 @@ Scenario timings are bounded liveness observations, not performance measurements
 
 ### Tooling checks and incomplete attempts
 
-- Python: **289 tests Passed**, including 22 QA-02 tests, zero failures or skips.
+- Python: **294 tests Passed**, including 27 QA-02 tests, zero failures or skips.
   They cover wrong/ambiguous PID and fixture, second toolkit provider, cache
   invalidation, event attribution and missing events, Unicode counts, deadlines,
   resource limits, application disappearance and failed subscription cleanup.
+- Post-review rerun (2026-10-26): PR review fixes attributed settling failures to
+  their scenario, skipped foreign applications that vanish during discovery,
+  applied the 5-second startup timeout, deferred the probe import until arguments
+  were validated and reduced tree walks per poll. The final client then passed
+  10/10 scenarios on a fresh owned lab (XWayland by X11 window PID; probe 19
+  nodes, seven roles) with the same 78-event breakdown and no errors. The
+  regression tests failed against the previous client. The Orca and
+  native-Wayland observations were not repeated, since the client does not
+  affect them.
 - A preceding complete desktop campaign also passed 10/10 scenarios with 78
   events. Final review then identified a QA-client cleanup edge: a registration
   succeeding after its deadline still needed to be owned before the timeout
