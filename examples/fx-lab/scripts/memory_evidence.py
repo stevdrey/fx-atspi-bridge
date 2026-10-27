@@ -26,18 +26,27 @@ def digest(path):
 
 
 def inventory(root):
-    cells = md.load(root)
+    with (root / 'environment.txt').open(newline='\n') as stream:
+        planned = md.planned_runs(stream.read())
+    if not planned:
+        raise ValueError('missing plan')
     paths = {'environment.txt'}
-    for key, runs in cells.items():
-        for name, run in runs:
-            if not md.CELL.fullmatch(name):
-                raise ValueError('invalid run name')
-            paths.add(name + '.json')
-            for checkpoint, kind in md.expected_artifacts(run, key[3]):
-                if checkpoint not in md.CHECKPOINT_ORDER:
-                    raise ValueError('unknown checkpoint')
-                paths.add(f'{name}/{checkpoint}.{kind}.txt')
-    return paths
+    unknown = []
+    for name in sorted(planned):
+        if not md.CELL.fullmatch(name):
+            raise ValueError('invalid run name')
+        paths.add(name + '.json')
+        run_path = root / (name + '.json')
+        if not run_path.is_file() or run_path.is_symlink():
+            unknown.append(name)
+            continue
+        run = json.loads(run_path.read_text())
+        key, _ = md.cell_key(name)
+        for checkpoint, kind in md.expected_artifacts(run, key[3]):
+            if checkpoint not in md.CHECKPOINT_ORDER:
+                raise ValueError('unknown checkpoint')
+            paths.add(f'{name}/{checkpoint}.{kind}.txt')
+    return paths, unknown
 
 
 def metadata(root):
@@ -55,16 +64,20 @@ def metadata(root):
 
 def create(root):
     entries = {}
-    for name in sorted(inventory(root)):
+    paths, unknown = inventory(root)
+    for name in sorted(paths):
         path = root / name
         entries[name] = digest(path) if path.is_file() and not path.is_symlink() else None
-    return {'version': 1, 'metadata': metadata(root), 'artifacts': entries}
+    return {'version': 1, 'metadata': metadata(root), 'unknown_artifact_runs': unknown, 'artifacts': entries}
 
 
 def verify(root, manifest, mode):
     if not isinstance(manifest, dict) or manifest.get('version') != 1 or not isinstance(manifest.get('artifacts'), dict):
         raise ValueError('invalid inventory')
-    expected = inventory(root)
+    expected, unknown = inventory(root)
+    if unknown or manifest.get('unknown_artifact_runs') != unknown:
+        raise ValueError('incomplete run inventory')
+    cells = md.load(root)
     if manifest.get('metadata') != metadata(root):
         raise ValueError('inventory metadata differs')
     entries = manifest['artifacts']
@@ -81,12 +94,28 @@ def verify(root, manifest, mode):
                 (raw and path.parent.is_symlink()) or not path.is_file() or digest(path) != recorded):
             raise ValueError('missing or changed evidence')
     if mode == 'full':
-        md.load_artifacts(root, md.load(root))
+        for key, runs in cells.items():
+            for _, run in runs:
+                points = md.checkpoints(run)
+                if not points:
+                    raise ValueError('no diagnostic checkpoints')
+                if key[0] in md.PHASES:
+                    before, afters = md.PHASES[key[0]]
+                    required = {before, next(point for point in afters if point.endswith('AfterGc'))}
+                    if not required <= points:
+                        raise ValueError('missing phase checkpoints')
+        if md.load_artifacts(root, cells) is None:
+            raise ValueError('raw artifacts unavailable')
     return 'FULL: all planned artifacts match the inventory' if mode == 'full' else 'JSON-ONLY: raw artifacts not verified'
 
 
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.exit(2, 'Invalid arguments. Use --help for usage.\n')
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = SafeArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=('create', 'verify'))
     parser.add_argument('directory', type=pathlib.Path)
     parser.add_argument('manifest', type=pathlib.Path)

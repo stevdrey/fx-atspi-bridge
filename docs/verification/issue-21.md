@@ -34,3 +34,5 @@ On 2026-10-27, Linux x86_64 with Zulu OpenJDK 27 (`27+35`) and Gradle wrapper 9.
 - Historical inventory: JSON-only verification passed for the current retained bytes; full verification failed as expected with 513 missing raw entries. Inventory created locally is not original provenance and is not committed.
 
 No original raw-table reproduction, desktop qualification, fresh benchmark or archive access test was performed.
+
+Review follow-up on the same date: `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_memory*.py'` passed 37 tests; the full `test_*.py` suite passed 303 tests with one skipped (host socket access). Regression cases cover absent run JSON, incomplete checkpoints, JSON-only fallback, and argument error sanitization. The Gradle check above predates this Python-only follow-up.

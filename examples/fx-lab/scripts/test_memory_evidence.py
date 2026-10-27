@@ -28,8 +28,39 @@ class EvidenceTest(unittest.TestCase):
             evidence.verify(self.root, manifest, 'full')
         self.assertIn('JSON-ONLY', evidence.verify(self.root, manifest, 'json-only'))
         (self.root / 'structural-n100-on-plain-r1.json').unlink()
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(ValueError):
             evidence.verify(self.root, manifest, 'json-only')
+
+    def test_missing_planned_run_is_recorded_with_unknown_artifacts(self):
+        name = 'structural-n100-on-plain-r2'
+        test_memory_diag.SummaryTest.write_plan(self.root, reps=2)
+        manifest = evidence.create(self.root)
+        self.assertIsNone(manifest['artifacts'][name + '.json'])
+        self.assertEqual(manifest['unknown_artifact_runs'], [name])
+        for mode in ('full', 'json-only'):
+            with self.assertRaises(ValueError):
+                evidence.verify(self.root, manifest, mode)
+
+    def test_full_rejects_missing_checkpoints_without_raw_directories(self):
+        for path in self.root.glob('*/*.txt'):
+            path.unlink()
+        next(path for path in self.root.iterdir() if path.is_dir()).rmdir()
+        (self.root / 'structural-n100-on-plain-r1.json').write_text('{}')
+        manifest = evidence.create(self.root)
+        self.assertIn('JSON-ONLY', evidence.verify(self.root, manifest, 'json-only'))
+        with self.assertRaises(ValueError):
+            evidence.verify(self.root, manifest, 'full')
+
+    def test_full_rejects_missing_phase_checkpoint(self):
+        path = self.root / 'structural-n100-on-plain-r1.json'
+        run = json.loads(path.read_text())
+        for key in list(run):
+            if key.startswith('structuralAfterGcSmaps'):
+                del run[key]
+        path.write_text(json.dumps(run))
+        manifest = evidence.create(self.root)
+        with self.assertRaises(ValueError):
+            evidence.verify(self.root, manifest, 'full')
 
     def test_missing_raw_is_explicit_and_full_fails(self):
         raw = next(self.root.glob('*/*.txt'))
@@ -72,6 +103,18 @@ class EvidenceTest(unittest.TestCase):
         path.symlink_to(target)
         with self.assertRaises(ValueError):
             evidence.verify(self.root, manifest, 'full')
+
+    def test_invalid_arguments_do_not_echo_values(self):
+        secret = 'PRIVATE_TOKEN_7788'
+        for args in (['verify', '/private/path', '/private/inventory', '--mode', secret],
+                     ['verify', '/private/path', '/private/inventory', secret]):
+            output = io.StringIO()
+            with contextlib.redirect_stderr(output), mock.patch('sys.argv', ['memory_evidence', *args]):
+                with self.assertRaises(SystemExit) as error:
+                    evidence.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertNotIn(secret, output.getvalue())
+            self.assertNotIn('/private', output.getvalue())
 
 
 if __name__ == '__main__':
