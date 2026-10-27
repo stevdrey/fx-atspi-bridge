@@ -2,12 +2,14 @@ import contextlib
 import io
 import json
 import pathlib
+import stat
 import tempfile
 import unittest
 from unittest import mock
 
 import memory_evidence as evidence
 import test_memory_diag
+import test_scaling_diag
 
 
 class EvidenceTest(unittest.TestCase):
@@ -62,28 +64,99 @@ class EvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             evidence.verify(self.root, manifest, 'full')
 
+    def scaling(self, name='scaling'):
+        root = self.root / name
+        test_scaling_diag.collection(root, profile='scaling-smoke')
+        return root
+
+    def test_scaling_support_files_are_verified(self):
+        root = self.scaling()
+        manifest = evidence.create(root)
+        self.assertIn('FULL', evidence.verify(root, manifest, 'full'))
+        for name in ('pairs/scaling-n100-plain-r1.json', 'audit/n100.json', 'backend/scaling-n100-on-plain-r1.json',
+                     'harness.txt', 'backend-contract.txt'):
+            self.assertIn(name, manifest['artifacts'])
+            path = root / name
+            original = path.read_bytes()
+            path.write_bytes(original + b' ')
+            for mode in ('full', 'json-only'):
+                with self.assertRaises(ValueError):
+                    evidence.verify(root, manifest, mode)
+            path.write_bytes(original)
+        provenance = root / 'chronology-provenance.txt'
+        provenance.write_text('added later')
+        with self.assertRaises(ValueError):
+            evidence.verify(root, manifest, 'json-only')
+        manifest = evidence.create(root)
+        provenance.unlink()
+        with self.assertRaises(ValueError):
+            evidence.verify(root, manifest, 'json-only')
+
+    def test_compact_scaling_collection_and_export_verify_fully(self):
+        root = self.scaling()
+        manifest = evidence.create(root)
+        self.assertNotIn(None, manifest['artifacts'].values())
+        self.assertIn('FULL', evidence.verify(root, manifest, 'full'))
+        export = self.root / 'export'
+        evidence.sd.export(root, export)
+        self.assertIn('FULL', evidence.verify(export, evidence.create(export), 'full'))
+
     def test_full_requires_scaling_idle_checkpoint(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            name = 'scaling-n100-on-plain-r1'
-            (root / 'environment.txt').write_text('plan=scaling:100:1:on:plain:0:0\n')
-            cell = root / name
-            cell.mkdir()
-            run = {'afterWarmupGcSmapsRssKb': 100}
+        root = self.scaling()
+        name = 'scaling-n100-on-plain-r1'
+        path = root / (name + '.json')
+        run = {key: value for key, value in json.loads(path.read_text()).items() if not key.startswith('afterIdleGc')}
+        path.write_text(json.dumps(run))
+        # Rebind the backend proof and pair receipt so only the missing checkpoint differs.
+        test_scaling_diag.backend_fixture(root, name)
+        receipt_path = root / 'pairs' / 'scaling-n100-plain-r1.json'
+        receipt = json.loads(receipt_path.read_text())
+        for cell in receipt['cells']:
+            cell['sha256'] = evidence.sb.digest(root / (cell['name'] + '.json'))
+        receipt_path.write_text(json.dumps(receipt))
+        manifest = evidence.create(root)
+        self.assertIn('JSON-ONLY', evidence.verify(root, manifest, 'json-only'))
+        with self.assertRaises(ValueError):
+            evidence.verify(root, manifest, 'full')
 
-            def write_collection():
-                (root / (name + '.json')).write_text(json.dumps(run))
-                for checkpoint, kind in evidence.md.expected_artifacts(run, 'plain'):
-                    (cell / f'{checkpoint}.{kind}.txt').write_text(test_memory_diag.ARTIFACTS[kind])
-                return evidence.create(root)
+    def test_symlinked_cell_directory_is_recorded_missing(self):
+        name = 'structural-n100-on-plain-r1'
+        moved = self.root / 'elsewhere'
+        (self.root / name).rename(moved)
+        (self.root / name).symlink_to(moved, target_is_directory=True)
+        manifest = evidence.create(self.root)
+        raw = [entry for path, entry in manifest['artifacts'].items() if path.startswith(name + '/')]
+        self.assertTrue(raw)
+        self.assertTrue(all(entry is None for entry in raw))
+        with self.assertRaises(ValueError):
+            evidence.verify(self.root, manifest, 'full')
 
-            manifest = write_collection()
-            self.assertIn('JSON-ONLY', evidence.verify(root, manifest, 'json-only'))
-            with self.assertRaises(ValueError):
-                evidence.verify(root, manifest, 'full')
-            run['afterIdleGcSmapsRssKb'] = 100
-            manifest = write_collection()
-            self.assertIn('FULL', evidence.verify(root, manifest, 'full'))
+    def test_create_is_exclusive_and_owner_only(self):
+        manifest_path = self.root.parent / (self.root.name + '-manifest')
+        self.addCleanup(lambda: manifest_path.unlink(missing_ok=True))
+        argv = ['memory_evidence', 'create', str(self.root), str(manifest_path)]
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch('sys.argv', argv):
+            self.assertEqual(evidence.main(), 0)
+        self.assertEqual(stat.S_IMODE(manifest_path.stat().st_mode), 0o600)
+        manifest_path.write_text('trusted')
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch('sys.argv', argv):
+            self.assertEqual(evidence.main(), 1)
+        self.assertEqual(manifest_path.read_text(), 'trusted')
+
+    def test_unexpected_parse_errors_use_the_fixed_message(self):
+        (self.root / 'structural-n100-on-plain-r1.json').write_text('[1]')
+        output = io.StringIO()
+        argv = ['memory_evidence', 'create', str(self.root), str(self.root / 'manifest')]
+        with contextlib.redirect_stderr(output), mock.patch('sys.argv', argv):
+            self.assertEqual(evidence.main(), 1)
+        self.assertEqual(output.getvalue(), 'Evidence validation failed; inspect the private collection locally.\n')
+
+    def test_jar_metadata_is_not_tied_to_current_versions(self):
+        with (self.root / 'environment.txt').open('a') as stream:
+            stream.write('a' * 64 + '  fx-atspi-bridge-0.2.0.jar\n' + 'b' * 64 + '  javafx-base-28-linux.jar\n'
+                         + 'c' * 64 + '  other.jar\n')
+        jars = evidence.create(self.root)['metadata']['jar_sha256']
+        self.assertEqual(jars, {'fx-atspi-bridge-0.2.0.jar': 'a' * 64, 'javafx-base-28-linux.jar': 'b' * 64})
 
     def test_missing_raw_is_explicit_and_full_fails(self):
         raw = next(self.root.glob('*/*.txt'))

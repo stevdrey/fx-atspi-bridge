@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and verify a private integrity inventory for memory_diag collections.
+"""Create and verify a private integrity inventory for memory_diag and scaling_diag collections.
 
 The manifest is itself sensitive investigation material; keep it outside Git. Hashes
 establish integrity relative to the inventory, not authenticity of the original run.
@@ -13,6 +13,17 @@ import re
 import sys
 
 import memory_diag as md
+import scaling_backend as sb
+import scaling_collection as sc
+import scaling_diag as sd
+
+# Files scaling_diag.records reads besides run JSON and artifacts; the optional ones are inventoried when present.
+SCALING_SUPPORT = ('harness.txt', 'backend-contract.txt')
+SCALING_OPTIONAL = ('retries.txt', 'pair-restarts.txt', 'chronology-provenance.txt', 'full-environment-recheck.txt')
+# Written by scaling_diag.export: only the afterIdleGc artifacts it analyses are retained.
+COMPACT = 'scaling_artifacts=afterIdleGc-only'
+JAR = re.compile(r'^([0-9a-f]{64})  (fx-atspi-bridge-[0-9][0-9A-Za-z.+-]*\.jar|fx-lab\.jar|'
+                 r'javafx-(?:base|controls|graphics)-[0-9][0-9A-Za-z.+-]*-linux\.jar)$', re.M)
 
 
 def digest(path):
@@ -25,89 +36,130 @@ def digest(path):
     return {'sha256': h.hexdigest(), 'size': size}
 
 
-def inventory(root):
-    with (root / 'environment.txt').open(newline='\n') as stream:
-        planned = md.planned_runs(stream.read())
-    if not planned:
+def regular(root, name):
+    """A regular file reached without a symlink in any component below root."""
+    path = root
+    for part in pathlib.PurePosixPath(name).parts:
+        path = path / part
+        if path.is_symlink():
+            return False
+    return path.is_file()
+
+
+def environment(root):
+    if not regular(root, 'environment.txt'):
+        raise ValueError('missing environment')
+    with (root / 'environment.txt').open(newline='\n') as stream:  # same record boundaries as md.planned_runs
+        return stream.read()
+
+
+def planned(text):
+    names = md.planned_runs(text)
+    if not names:
         raise ValueError('missing plan')
-    paths = {'environment.txt'}
+    if not all(md.CELL.fullmatch(name) for name in names):
+        raise ValueError('invalid run name')
+    return names
+
+
+def analyzed(call, *args):
+    """Run an analyzer check; memory_diag exits with a message that may name private paths."""
+    try:
+        return call(*args)
+    except SystemExit:
+        raise ValueError('collection rejected by analyzer') from None
+
+
+def is_scaling(names):
+    return all(md.cell_key(name)[0][0] == 'scaling' for name in names)
+
+
+def inventory(root, text, runs):
+    """{path: raw} for every file the collection's analyzer reads, and the runs whose artifacts are unknown.
+    runs maps each planned name to its parsed JSON, or None when the result is unavailable."""
+    paths = {'environment.txt': False}
     unknown = []
-    for name in sorted(planned):
-        if not md.CELL.fullmatch(name):
-            raise ValueError('invalid run name')
-        paths.add(name + '.json')
-        run_path = root / (name + '.json')
-        if not run_path.is_file() or run_path.is_symlink():
+    scaling = is_scaling(runs)
+    compact = scaling and COMPACT in text.split('\n')
+    for name in sorted(runs):
+        key, rep = md.cell_key(name)
+        paths[name + '.json'] = False
+        if scaling:
+            pair = f'scaling-n{key[1]}-{key[3]}-r{rep}'
+            if name not in sc.names(pair):
+                raise ValueError('invalid scaling pair')
+            paths.update({f'backend/{name}.json': False, f'pairs/{pair}.json': False, f'audit/n{key[1]}.json': False})
+        run = runs[name]
+        if run is None:
             unknown.append(name)
             continue
-        run = json.loads(run_path.read_text())
-        key, _ = md.cell_key(name)
-        for checkpoint, kind in md.expected_artifacts(run, key[3]):
+        if compact:
+            artifacts = {(sd.CP, kind) for kind in ('malloc', 'smaps_rollup', *(('nmt',) if key[3] == 'nmt' else ()))}
+            # sb.validate_cell checks retained pmap proofs when present.
+            artifacts |= {(checkpoint, 'pmap') for checkpoint in sb.CHECKPOINTS
+                          if os.path.lexists(root / name / f'{checkpoint}.pmap.txt')}
+        else:
+            artifacts = md.expected_artifacts(run, key[3])
+        for checkpoint, kind in artifacts:
             if checkpoint not in md.CHECKPOINT_ORDER:
                 raise ValueError('unknown checkpoint')
-            paths.add(f'{name}/{checkpoint}.{kind}.txt')
+            paths[f'{name}/{checkpoint}.{kind}.txt'] = True
+    if scaling:
+        paths.update(dict.fromkeys(SCALING_SUPPORT, False))
+        paths.update(dict.fromkeys((name for name in SCALING_OPTIONAL if os.path.lexists(root / name)), False))
     return paths, unknown
 
 
-def metadata(root):
+def metadata(text):
     # Only fixed, validated fields are copied. Never copy options, paths, logs or
     # arbitrary environment lines; the full environment is separately hashed.
-    text = (root / 'environment.txt').read_text()
     commit = re.search(r'^git=([0-9a-f]{40})$', text, re.M)
-    jars = {}
-    for match in re.finditer(r'^([0-9a-f]{64})  (fx-atspi-bridge-0\.1\.0-SNAPSHOT\.jar|fx-lab\.jar|javafx-(?:base|controls|graphics)-27-linux\.jar)$', text, re.M):
-        jars[match.group(2)] = match.group(1)
+    jars = {match.group(2): match.group(1) for match in JAR.finditer(text)}
     return {'collection_commit': commit.group(1) if commit else None,
             'jar_sha256': jars, 'jvm_flags': 'see private environment and run variant',
             'tool_versions': 'see private environment; unrecorded versions are unknown'}
 
 
 def create(root):
-    entries = {}
-    paths, unknown = inventory(root)
-    for name in sorted(paths):
-        path = root / name
-        entries[name] = digest(path) if path.is_file() and not path.is_symlink() else None
-    return {'version': 1, 'metadata': metadata(root), 'unknown_artifact_runs': unknown, 'artifacts': entries}
+    text = environment(root)
+    runs = {name: json.loads((root / (name + '.json')).read_text()) if regular(root, name + '.json') else None
+            for name in planned(text)}
+    paths, unknown = inventory(root, text, runs)
+    entries = {name: digest(root / name) if regular(root, name) else None for name in sorted(paths)}
+    return {'version': 1, 'metadata': metadata(text), 'unknown_artifact_runs': unknown, 'artifacts': entries}
 
 
 def verify(root, manifest, mode):
     if not isinstance(manifest, dict) or manifest.get('version') != 1 or not isinstance(manifest.get('artifacts'), dict):
         raise ValueError('invalid inventory')
-    expected, unknown = inventory(root)
-    if unknown or manifest.get('unknown_artifact_runs') != unknown:
+    text = environment(root)
+    planned(text)
+    cells = analyzed(md.load, root)  # exact plan, no unexpected JSON; each result parsed once
+    runs = {name: run for group in cells.values() for name, run in group}
+    expected, unknown = inventory(root, text, runs)
+    if unknown or manifest.get('unknown_artifact_runs') != []:
         raise ValueError('incomplete run inventory')
-    cells = md.load(root)
-    if manifest.get('metadata') != metadata(root):
+    # The environment hash below covers these bytes; this also rejects an edited manifest metadata field.
+    if manifest.get('metadata') != metadata(text):
         raise ValueError('inventory metadata differs')
     entries = manifest['artifacts']
-    if set(entries) != expected:
+    if set(entries) != set(expected):
         raise ValueError('inventory does not match the collection plan')
-    for name in sorted(expected):
-        raw = '/' in name
+    for name, raw in sorted(expected.items()):
         if raw and mode == 'json-only':
             continue
         recorded = entries[name]
-        path = root / name
-        # Refuse symlinked parents as well as symlinked files.
-        if (not isinstance(recorded, dict) or path.is_symlink() or
-                (raw and path.parent.is_symlink()) or not path.is_file() or digest(path) != recorded):
+        if not isinstance(recorded, dict) or not regular(root, name) or digest(root / name) != recorded:
             raise ValueError('missing or changed evidence')
     if mode == 'full':
-        for key, runs in cells.items():
-            for _, run in runs:
-                points = md.checkpoints(run)
-                if not points:
-                    raise ValueError('no diagnostic checkpoints')
-                if key[0] == 'scaling' and 'afterIdleGc' not in points:
-                    raise ValueError('missing scaling checkpoint')
-                if key[0] in md.PHASES:
-                    before, afters = md.PHASES[key[0]]
-                    required = {before, next(point for point in afters if point.endswith('AfterGc'))}
-                    if not required <= points:
-                        raise ValueError('missing phase checkpoints')
-        if md.load_artifacts(root, cells) is None:
-            raise ValueError('raw artifacts unavailable')
+        # The analyzers own completeness: phase endpoints, the scaling checkpoint, receipts and parser checks.
+        if is_scaling(runs):
+            analyzed(sd.records, root)
+        else:
+            if any(not md.checkpoints(run) for run in runs.values()):
+                raise ValueError('no diagnostic checkpoints')
+            if analyzed(md.load_artifacts, root, cells) is None:
+                raise ValueError('raw artifacts unavailable')
     return 'FULL: all planned artifacts match the inventory' if mode == 'full' else 'JSON-ONLY: raw artifacts not verified'
 
 
@@ -134,8 +186,8 @@ def main():
         else:
             manifest = json.loads(args.manifest.read_text())
             print(verify(args.directory, manifest, args.mode))
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, SystemExit):
-        # Never echo paths, data, parser diagnostics, command lines or log content.
+    except (Exception, SystemExit):
+        # Never echo paths, data, parser diagnostics, command lines, log content or tracebacks.
         print('Evidence validation failed; inspect the private collection locally.', file=sys.stderr)
         return 1
     return 0

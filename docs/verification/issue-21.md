@@ -20,6 +20,8 @@ python3 examples/fx-lab/scripts/memory_evidence.py verify <collection> <private-
 python3 examples/fx-lab/scripts/memory_diag.py <collection> > <private-summary>
 ```
 
+For a scaling collection, analyze with `scaling_diag.py <collection>` instead; its full verification already runs the same record validation.
+
 Stop if verification fails. Full mode checks all planned bytes and the existing parser validations; it is not proof of origin. For a collection without raw captures, `--mode json-only` checks only the environment and JSON and explicitly reports that raw evidence was not verified. Protect the files against modification between verification and analysis. Analyzer diagnostics and output can themselves include sensitive material; keep them private and inspect before sharing.
 
 If originals are unavailable, a new collection can exercise the same methodology but cannot recreate the original samples. Use the prerequisites and `diag` command in [Issue 17](issue-17.md), on the intended revision and a clean tree, with an output directory outside Git. Differences in harness revisions, environment, instrumentation and backend must be recorded; do not label new results as the original collection. See [Issue 15](issue-15.md) for the distinct baseline contract.
@@ -38,3 +40,5 @@ No original raw-table reproduction, desktop qualification, fresh benchmark or ar
 Review follow-up on the same date: `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_memory*.py'` passed 37 tests; the full `test_*.py` suite passed 303 tests with one skipped (host socket access). Regression cases cover absent run JSON, incomplete checkpoints, JSON-only fallback, and argument error sanitization. The Gradle check above predates this Python-only follow-up.
 
 Scaling review follow-up: the focused `test_memory*.py` suite passed 38 tests; the full `test_*.py` suite passed 304 tests with one skipped (host socket access). A synthetic scaling run with only `afterWarmupGc` reproduced the reported false FULL result before the fix; verification now rejects it and accepts the same collection when valid `afterIdleGc` artifacts are added. No new benchmark was run.
+
+Second review follow-up: scaling collections now inventory the pair receipts, audits, backend proofs, harness, backend contract and present restart/provenance records, and full mode delegates to `scaling_diag` record validation; compact exports verify fully. Symlinked parent directories are recorded as null at creation, unexpected parser failures use the fixed message, and JAR metadata no longer depends on current versions. The focused `test_memory*.py` suite passed 44 tests, `test_scaling*.py` 59, and the full `test_*.py` suite 310 with one skipped. Python-only change; no Gradle check or benchmark was run.
