@@ -62,6 +62,29 @@ class EvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             evidence.verify(self.root, manifest, 'full')
 
+    def test_full_requires_scaling_idle_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            name = 'scaling-n100-on-plain-r1'
+            (root / 'environment.txt').write_text('plan=scaling:100:1:on:plain:0:0\n')
+            cell = root / name
+            cell.mkdir()
+            run = {'afterWarmupGcSmapsRssKb': 100}
+
+            def write_collection():
+                (root / (name + '.json')).write_text(json.dumps(run))
+                for checkpoint, kind in evidence.md.expected_artifacts(run, 'plain'):
+                    (cell / f'{checkpoint}.{kind}.txt').write_text(test_memory_diag.ARTIFACTS[kind])
+                return evidence.create(root)
+
+            manifest = write_collection()
+            self.assertIn('JSON-ONLY', evidence.verify(root, manifest, 'json-only'))
+            with self.assertRaises(ValueError):
+                evidence.verify(root, manifest, 'full')
+            run['afterIdleGcSmapsRssKb'] = 100
+            manifest = write_collection()
+            self.assertIn('FULL', evidence.verify(root, manifest, 'full'))
+
     def test_missing_raw_is_explicit_and_full_fails(self):
         raw = next(self.root.glob('*/*.txt'))
         raw.unlink()

@@ -36,3 +36,5 @@ On 2026-10-27, Linux x86_64 with Zulu OpenJDK 27 (`27+35`) and Gradle wrapper 9.
 No original raw-table reproduction, desktop qualification, fresh benchmark or archive access test was performed.
 
 Review follow-up on the same date: `python3 -m unittest discover -s examples/fx-lab/scripts -p 'test_memory*.py'` passed 37 tests; the full `test_*.py` suite passed 303 tests with one skipped (host socket access). Regression cases cover absent run JSON, incomplete checkpoints, JSON-only fallback, and argument error sanitization. The Gradle check above predates this Python-only follow-up.
+
+Scaling review follow-up: the focused `test_memory*.py` suite passed 38 tests; the full `test_*.py` suite passed 304 tests with one skipped (host socket access). A synthetic scaling run with only `afterWarmupGc` reproduced the reported false FULL result before the fix; verification now rejects it and accepts the same collection when valid `afterIdleGc` artifacts are added. No new benchmark was run.

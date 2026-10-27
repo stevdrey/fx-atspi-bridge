@@ -99,6 +99,8 @@ def verify(root, manifest, mode):
                 points = md.checkpoints(run)
                 if not points:
                     raise ValueError('no diagnostic checkpoints')
+                if key[0] == 'scaling' and 'afterIdleGc' not in points:
+                    raise ValueError('missing scaling checkpoint')
                 if key[0] in md.PHASES:
                     before, afters = md.PHASES[key[0]]
                     required = {before, next(point for point in afters if point.endswith('AfterGc'))}
