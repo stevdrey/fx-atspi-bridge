@@ -309,7 +309,7 @@ public final class BenchApp extends Application {
 
     /**
      * Installs a bridge and tracks it as the current generation. The provider thread is identified (thread set before
-     * and after) only when {@code identifyThread} is set: for the initial install and the last churn cycle, so the
+     * and after) only when {@code identifyThread} is set: for the initial install, last churn cycle, and long-run checkpoints, so the
      * churn loop itself is not burdened with a stack snapshot per cycle.
      */
     private FxAtSpiBridge installBridge(boolean identifyThread) {
@@ -453,7 +453,8 @@ public final class BenchApp extends Application {
         var closeMs = new double[cycles];
         var readyMs = new double[cycles];
         for (var i = 0; i < cycles; i++) {
-            var last = i == cycles - 1;
+            var checkpoint = longRun && (i + 1) % 100 == 0;
+            var identifyThread = i == cycles - 1 || checkpoint;
             var closing = System.nanoTime();
             var closed = onFx(() -> {
                 bridge.close();
@@ -466,10 +467,10 @@ public final class BenchApp extends Application {
             }
             closeMs[i] = (System.nanoTime() - closing) / 1e6;
             var installing = System.nanoTime();
-            onFx(() -> bridge = installBridge(last));
+            onFx(() -> bridge = installBridge(identifyThread));
             requireReady(current, "provider of churn cycle " + (i + 1));
             readyMs[i] = (System.nanoTime() - installing) / 1e6;
-            if (longRun && (i + 1) % 100 == 0) longMemoryCheckpoint(json, "installCycle" + (i + 1), true);
+            if (checkpoint) longMemoryCheckpoint(json, "installCycle" + (i + 1), true);
         }
         var loopEnd = System.nanoTime();
         Thread.sleep(2_000);

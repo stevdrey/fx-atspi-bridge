@@ -366,7 +366,8 @@ def summary(data):
             heap = fmt(field_values(runs, heap_key), 1024 * 1024) if heap_key else "–"
             row = [fmt([a - b for a, b in zip(field_values(runs, f"{after}Smaps{m}Kb"), field_values(runs, f"{before}Smaps{m}Kb"))], 1024)
                    for m in SMAPS]
-            inside = [c for c in (before, *afters[:index]) if f"{c}SmapsRssKb" in runs[0][1]]
+            long_points = LONG_STRUCTURAL if phase == "structural" else LONG_INSTALL
+            inside = [c for c in (before, *long_points, *afters[:index]) if f"{c}SmapsRssKb" in runs[0][1]]
             if all(f"{c}SnapshotRssKb" in runs[0][1] for c in inside):
                 cost = fmt([sum(v) for v in zip(*(field_values(runs, f"{c}SnapshotRssKb") for c in inside))], 1024)
             else:
