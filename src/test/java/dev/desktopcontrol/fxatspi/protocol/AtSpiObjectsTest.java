@@ -50,6 +50,10 @@ class AtSpiObjectsTest {
         assertEquals(List.of(P + "Accessible"), AtSpiObjects.interfaces(node("o4", Role.ENTRY, true, Set.of())));
     }
 
+    @Test void providerIdentityIsNotPublishedAsEveryObjectsDescription() {
+        assertEquals("", AtSpiObjects.DESCRIPTION);
+    }
+
     @Test void introspectionXmlOnlyDeclaresGrantedInterfaces() {
         var password = AtSpiObjects.xml(node("o4", Role.ENTRY, true, Set.of()));
         assertFalse(password.contains(P + "Text"));
@@ -106,6 +110,15 @@ class AtSpiObjectsTest {
         var entry = new AccessibleNode("e", "", Role.ENTRY, "", false, false, false, false, true, 0, "root", List.of(), Set.of());
         assertEquals((1L << 11) | (1L << 26), AtSpiObjects.stateBits(entry));
         assertEquals(0L, AtSpiObjects.stateBits(new AccessibleNode("l", "", Role.LABEL, "", false, false, false, false, false, 0, "root", List.of(), Set.of())));
+    }
+
+    @Test void onlyShowingFocusedFramesAreActive() {
+        var active = new AccessibleNode("w", "", Role.FRAME, "", false, true, true, true, false, 0, "root", List.of(), Set.of());
+        var hidden = new AccessibleNode("w", "", Role.FRAME, "", false, true, false, true, false, 0, "root", List.of(), Set.of());
+        var button = new AccessibleNode("b", "", Role.PUSH_BUTTON, "", false, true, true, true, true, 0, "w", List.of(), Set.of());
+        assertTrue((AtSpiObjects.stateBits(active) & (1L << 1)) != 0);
+        assertFalse((AtSpiObjects.stateBits(hidden) & (1L << 1)) != 0);
+        assertFalse((AtSpiObjects.stateBits(button) & (1L << 1)) != 0);
     }
 
     @Test void textRangeUsesCodePointOffsets() {

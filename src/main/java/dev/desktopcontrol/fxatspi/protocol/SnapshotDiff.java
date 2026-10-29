@@ -93,6 +93,7 @@ public final class SnapshotDiff {
         var id = item.id();
         if (old.role() != item.role()) out.add(new RoleChanged(id,item.role().atspiValue()));
         if (old.enabled() != item.enabled()) { out.add(new State(id, "enabled", item.enabled())); out.add(new State(id, "sensitive", item.enabled())); }
+        if (AtSpiObjects.activeWindow(old) != AtSpiObjects.activeWindow(item)) out.add(new State(id, "active", AtSpiObjects.activeWindow(item)));
         if (old.focused() != item.focused()) out.add(new State(id, "focused", item.focused()));
         if (old.showing() != item.showing()) { out.add(new State(id, "showing", item.showing())); out.add(new State(id, "visible", item.showing())); }
         for (var state : SEMANTIC_STATES) {

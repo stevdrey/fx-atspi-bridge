@@ -174,6 +174,7 @@ on 2026-10-24; they do not retroactively extend the original SC-01 measurements.
 | Current QA-02: Fedora 44 / GNOME Shell 50.6 / Wayland session, actual JavaFX XWayland backend | JDK/JavaFX 27; PyGObject 3.56.3; libatspi 2.60.7 | **Passed: 10/10 scenarios**, including button actions, Unicode/code-point ranges, field add/remove, second window, scene replacement/restoration and text/state/children events. See [attributed results](issue-16.md). |
 | Current QA-02: native Wayland with the same installed JavaFX artifact | JavaFX 27 Linux GTK Glass | **Unavailable:** startup without DISPLAY exited 1 (`Unable to open DISPLAY`); no two-backend comparison or native-Wayland qualification. |
 | Current QA-02: Orca | 50.3 | **Failed:** user-assisted listening reports key echo only, without control announcements; symptom repeated from [#32](https://github.com/stevdrey/fx-atspi-bridge/issues/32). Edited-text and spoken action outcomes remain unestablished. |
+| Issue 32 follow-up: Orca | 50.3 | **Partial:** the user hears control names and reports that “Experimental JavaFX” is no longer repeated after the active-window and description corrections; other speech scenarios remain unverified. See [issue 32](issue-32.md). |
 | Current QA-02: other distributions / GNOME versions | — | **Not tested:** no additional environment available. |
 
 ## Initial budgets (provisional until #15, derived from the tables above)

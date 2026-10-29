@@ -122,6 +122,19 @@ class SnapshotDiffTest {
         assertTrue(SnapshotDiff.diff(snapshot, snapshot, List.of("p", "a", "missing")).isEmpty());
     }
 
+    @Test void frameActivationTracksFocusAndVisibility() {
+        var inactive = new AccessibleNode("w", "", Role.FRAME, "", false, true, true, false, false, 0, "root", List.of(), Set.of());
+        var active = new AccessibleNode("w", "", Role.FRAME, "", false, true, true, true, false, 0, "root", List.of(), Set.of());
+        var hidden = new AccessibleNode("w", "", Role.FRAME, "", false, true, false, true, false, 0, "root", List.of(), Set.of());
+        assertEquals(List.of(new State("w", "active", true), new State("w", "focused", true)),
+                SnapshotDiff.diff(tree(inactive), tree(active), List.of("w")));
+        assertEquals(List.of(new State("w", "active", false), new State("w", "focused", false)),
+                SnapshotDiff.diff(tree(active), tree(inactive), List.of("w")));
+        assertEquals(List.of(new State("w", "active", false), new State("w", "showing", false), new State("w", "visible", false)),
+                SnapshotDiff.diff(tree(active), tree(hidden), List.of("w")));
+        assertEquals(List.of(new Removed("w")), SnapshotDiff.diff(tree(active), tree(), List.of("w")));
+    }
+
     @Test void propertyStateTextAndCaretChangesKeepTheirEventOrder() {
         var old = new AccessibleNode("f", "old", Role.ENTRY, "ab", true, true, true, false, true, 1, "root", List.of(), Set.of());
         var now = new AccessibleNode("f", "new", Role.ENTRY, "c🧪", true, false, false, true, true, 2, "root", List.of(), Set.of());

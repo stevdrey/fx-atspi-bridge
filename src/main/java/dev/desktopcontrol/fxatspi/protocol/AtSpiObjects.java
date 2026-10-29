@@ -34,7 +34,8 @@ public final class AtSpiObjects {
     public static final String PREFIX = "org.a11y.atspi.";
     public static final String ROOT_PATH = "/org/a11y/atspi/accessible/root";
     public static final String CACHE_ID = "cache";
-    public static final String DESCRIPTION = "Experimental JavaFX AT-SPI provider";
+    // Provider identification is not a description of each accessible object.
+    public static final String DESCRIPTION = "";
     /** Distinct introspection schemas: root/non-root for every capability combination, plus Cache. */
     public static final int SCHEMA_COUNT = 2 * (1 << Capability.values().length) + 1;
     /** Schema index of {@link #cacheXml()}. */
@@ -59,6 +60,7 @@ public final class AtSpiObjects {
 
     public static long stateBits(AccessibleNode node) {
         long bits = 0;
+        if (activeWindow(node)) bits |= 1L << 1;
         if (node.enabled()) bits |= (1L << 8) | (1L << 24);
         if (node.showing()) bits |= (1L << 25) | (1L << 30);
         if (node.editable()) bits |= 1L << 7;
@@ -71,6 +73,11 @@ public final class AtSpiObjects {
             case MULTISELECTABLE -> 18; case EXPANDABLE -> 9; case EXPANDED -> 10;
         };
         return bits;
+    }
+
+    /** A showing JavaFX window is active when the window itself has focus. */
+    static boolean activeWindow(AccessibleNode node) {
+        return node.role() == Role.FRAME && node.showing() && node.focused();
     }
 
     /** Text between code-point offsets {@code start} and {@code end} ({@code -1} means the end). */
