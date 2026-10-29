@@ -169,6 +169,26 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| structural n=100 bridge on plain | structuralBefore | 0.01 (0.01–0.01) | 309 (309–309) |", text)
         self.assertNotIn("--secret-path", text)
 
+    def test_long_checkpoint_tables_follow_run_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, extra_checkpoints=memory_diag.LONG_STRUCTURAL)
+            summary = memory_diag.summary(root)
+        for heading in ("## glibc malloc", "## Retained heap by group", "## pmap:"):
+            section = summary.split(heading, 1)[1].split("\n## ", 1)[0]
+            points = ["structuralBefore", *memory_diag.LONG_STRUCTURAL, "structuralAfterGc"]
+            positions = [section.index("| " + point + " |") for point in points]
+            self.assertEqual(positions, sorted(positions), heading)
+
+    def test_install_long_points_follow_run_order_with_or_without_histograms(self):
+        points = ("afterIdleGc", "installChurnBefore", *memory_diag.LONG_INSTALL,
+                  "installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterTrim")
+        run = {point + "SmapsRssKb": 1 for point in reversed(points)}
+        runs = [("install", run)]
+        self.assertEqual(memory_diag.all_points(runs), list(points))
+        self.assertEqual(memory_diag.all_points(runs, histogram=True),
+                         [point for point in points if point in memory_diag.HISTOGRAM_CHECKPOINTS])
+
     def test_the_source_line_records_no_absolute_path(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d, "install10k-after")
@@ -240,6 +260,46 @@ class SummaryTest(unittest.TestCase):
             text = memory_diag.summary(root)
         # structuralAfterGc's interval contains only the structuralBefore snapshot: 512 KB = 0.5 MB in every run.
         self.assertIn("| 0.0 (0.0–0.0) | 0.5 (0.5–0.5) |", text)
+
+    def test_long_snapshots_contribute_to_each_phase_delta_cost(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False, extra_checkpoints=memory_diag.LONG_STRUCTURAL,
+                            snapshot_cost_kb=1024)
+            text = memory_diag.summary(root)
+        # Before plus five intermediate snapshots; the endpoint's own snapshot follows its reading.
+        self.assertIn("| 6.0 (6.0–6.0) |", text)
+
+    def test_install_long_cost_includes_previous_phase_snapshots(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "environment.txt").write_text("plan=install:100:1:on:plain:0:1000\n")
+            run = {"installChurnHeapDeltaBytesAfterGc": 0, "installChurnCloseMsP50": 1,
+                   "installChurnCloseMsMax": 1, "installChurnReadyMsP50": 1,
+                   "installChurnReadyMsMax": 1, "installChurnProviderThreadsCheckpoint": 1}
+            points = ("installChurnBefore", *memory_diag.LONG_INSTALL, "installChurnCheckpoint", "installChurnAfterGc")
+            for point in points:
+                for metric in memory_diag.SMAPS:
+                    run[point + "Smaps" + metric + "Kb"] = 1024
+                run[point + "SnapshotRssKb"] = 1024
+            (root / "install-n100-on-plain-r1.json").write_text(json.dumps(run))
+            text = memory_diag.summary(root)
+        checkpoint = next(line for line in text.splitlines() if "| installChurnCheckpoint |" in line)
+        after_gc = next(line for line in text.splitlines() if "| installChurnAfterGc |" in line)
+        self.assertTrue(checkpoint.endswith("| 12.0 |"))
+        self.assertTrue(after_gc.endswith("| 13.0 |"))
+
+    def test_json_only_missing_long_snapshot_cost_is_not_reported_as_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, artifacts=False, extra_checkpoints=("structuralCycle30",), snapshot_cost_kb=512)
+            for path in root.glob("*.json"):
+                run = json.loads(path.read_text())
+                del run["structuralCycle30SnapshotRssKb"]
+                path.write_text(json.dumps(run))
+            text = memory_diag.summary(root)
+        row = next(line for line in text.splitlines() if "| structuralAfterGc |" in line)
+        self.assertTrue(row.endswith("| – |"))
 
     def test_json_only_directory_reports_only_json_tables(self):
         with tempfile.TemporaryDirectory() as d:
