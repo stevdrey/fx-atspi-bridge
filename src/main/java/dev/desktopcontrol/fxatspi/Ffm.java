@@ -110,7 +110,7 @@ final class Ffm implements AutoCloseable {
 
     private Map<String, MemorySegment> createSignalNames() {
         var names = new HashMap<String, MemorySegment>();
-        for (var name : List.of("org.a11y.atspi.Cache", "org.a11y.atspi.Event.Object",
+        for (var name : List.of("org.a11y.atspi.Cache", "org.a11y.atspi.Event.Object", "org.a11y.atspi.Event.Window", "Activate", "Deactivate",
                 "AddAccessible", "RemoveAccessible", "PropertyChange", "StateChanged", "SelectionChanged",
                 "TextChanged", "TextCaretMoved", "BoundsChanged", "ChildrenChanged")) {
             names.put(name, arena.allocateFrom(name));

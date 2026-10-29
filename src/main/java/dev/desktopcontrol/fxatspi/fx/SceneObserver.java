@@ -1499,7 +1499,9 @@ public final class SceneObserver {
             case Window window -> {
                 var title = window instanceof Stage stage ? stage.getTitle() : "JavaFX window";
                 var shows = showing(entry); var enabled = parentEnabled(entry);
-                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, enabled, shows, window.isFocused(), false, 0,
+                // A PopupWindow mirrors its owner's focus; only the owner is the focused, active window.
+                var focused = window.isFocused() && !(window instanceof PopupWindow);
+                yield new AccessibleNode(entry.id, redact(ContentKind.WINDOW_NAME, false, title), Role.FRAME, "", false, enabled, shows, focused, false, 0,
                         Snapshot.ROOT_ID, children, COMPONENT, enabled && shows, false, shows ? geometry.project(window) : Geometry.UNAVAILABLE);
             }
             case Node node -> {

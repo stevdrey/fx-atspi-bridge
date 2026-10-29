@@ -310,8 +310,9 @@ The [Issue 16 desktop campaign](docs/verification/issue-16.md) verifies the curr
 laboratory through an independent libatspi client on Fedora 44 / GNOME 50.6:
 10/10 action, Unicode, window, scene and event scenarios passed on XWayland.
 The same JavaFX artifact could not start on native Wayland. The assisted Orca
-smoke failed with key echo only, repeating the symptom tracked in
-[#32](https://github.com/stevdrey/fx-atspi-bridge/issues/32). To repeat the mutating checks against
+smoke failed with key echo only. After the [Issue 32 correction](docs/verification/issue-32.md),
+assisted listening established that Orca names controls and no longer repeats the provider
+description; role announcements and the remaining scenarios still need verification. To repeat the mutating checks against
 your own fresh, disposable lab instance, run
 `python3 examples/fx-lab/scripts/desktop_qa.py --pid JAVA_PID --out NEW_LOCAL_DIRECTORY`.
 Keep generated results outside Git. The read-only `atspi_probe.py` remains available

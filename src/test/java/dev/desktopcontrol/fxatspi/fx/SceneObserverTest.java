@@ -56,6 +56,7 @@ import javafx.scene.shape.Rectangle;
 import javafx.scene.transform.Rotate;
 import javafx.scene.transform.Scale;
 import javafx.stage.Modality;
+import javafx.stage.Popup;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -563,6 +564,31 @@ class SceneObserverTest {
             });
             assertEquals(List.of(0, idlePublications), result, "nothing is scheduled or published while idle");
         } finally { onFx(() -> { harness.observer.close(); return null; }); }
+    }
+
+    @Test void aPopupMirroringItsOwnersFocusIsNotPublishedAsFocused() throws Exception {
+        var stage = onFx(() -> {
+            var owner = show(new VBox(new Button("OK")));
+            owner.requestFocus();
+            return owner;
+        });
+        var focusDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (!onFx(stage::isFocused) && System.nanoTime() < focusDeadline) Thread.sleep(10);
+        assertTrue(onFx(stage::isFocused), "native focus did not arrive");
+        onFx(() -> {
+            var popup = new Popup();
+            popup.getContent().add(new Label("tip"));
+            popup.show(stage);
+            assertTrue(popup.isFocused(), "JavaFX mirrors the owner's focus into the popup");
+            var harness = new Harness().start();
+            try {
+                assertTrue(harness.last.get(harness.id(stage)).focused());
+                var projected = harness.last.get(harness.id(popup));
+                assertEquals(Role.FRAME, projected.role());
+                assertFalse(projected.focused(), "only the owner window is focused and active");
+            } finally { harness.observer.close(); }
+            return null;
+        });
     }
 
     @Test void changedIdHandoffsStayImmutableAcrossLaterBatchesAndClose() throws Exception {

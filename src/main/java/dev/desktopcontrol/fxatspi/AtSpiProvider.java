@@ -67,7 +67,6 @@ import java.util.function.Supplier;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_ID;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.CACHE_SCHEMA;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.SCHEMA_COUNT;
-import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.DESCRIPTION;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.PREFIX;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.ROOT_PATH;
 import static dev.desktopcontrol.fxatspi.protocol.AtSpiObjects.cacheItems;
@@ -610,6 +609,7 @@ final class AtSpiProvider {
                 switch (change) {
                     case Added(var id) -> signal(signals, "cache",PREFIX+"Cache","AddAccessible","("+cacheRecord(after,after.get(id),busName,parent)+",)");
                     case SnapshotDiff.State(var id, var state, var value) -> stateEvent(signals, id, state, value); // qualified: State is also the lifecycle enum
+                    case SnapshotDiff.Activation(var id, var active) -> signal(signals, id, PREFIX + "Event.Window", active ? "Activate" : "Deactivate", "('', 0, 0, <''>, @a{sv} {})");
                     case SnapshotDiff.RoleChanged(var id, var role) -> event(signals, id,"PropertyChange","('accessible-role', 0, 0, <uint32 "+role+">, @a{sv} {})");
                     case SnapshotDiff.AutomationId(var id, var value) -> event(signals, id,"PropertyChange","('accessible-id', 0, 0, <"+Ffm.quote(value)+">, @a{sv} {})");
                     case SnapshotDiff.SelectionChanged(var id) -> event(signals, id,"SelectionChanged","('', 0, 0, <0>, @a{sv} {})");
@@ -672,7 +672,7 @@ final class AtSpiProvider {
             var item = snapshot.get().get(id);
             String value = switch (key) {
                 case "Name" -> Ffm.quote(item.name());
-                case "Description", "HelpText" -> Ffm.quote(DESCRIPTION);
+                case "Description", "HelpText" -> "''"; // provider identity is not a description of each object
                 case "Parent" -> id.equals(Snapshot.ROOT_ID) ? parent : reference(item.ancestor());
                 case "ChildCount" -> Integer.toString(children(id).size());
                 case "Locale" -> "'es'";
