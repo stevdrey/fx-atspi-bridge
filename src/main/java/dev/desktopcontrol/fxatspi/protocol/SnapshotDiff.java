@@ -30,7 +30,8 @@ import java.util.Objects;
 
 /**
  * The AT-SPI changes between two snapshots, in emission order: every added object first, so a client already knows
- * an object when a parent announces it as a child; then interface, property, state, text and child changes per object;
+ * an object when a parent announces it as a child; then window deactivations and activations, so a client knows the
+ * active window before any focus inside it; then interface, property, state, text and child changes per object;
  * every removed object last. Pure: no D-Bus, no JavaFX.
  */
 public final class SnapshotDiff {
@@ -44,6 +45,8 @@ public final class SnapshotDiff {
     /** An existing object whose capabilities, and therefore exported interfaces, changed. */
     public record Reshaped(String id) implements Change {}
     public record State(String id, String state, boolean value) implements Change {}
+    /** A frame became the active window, or stopped being it; always follows its {@code active} state change. */
+    public record Activation(String id, boolean active) implements Change {}
     public record RoleChanged(String id, int role) implements Change {}
     public record AutomationId(String id, String value) implements Change {}
     public record SelectionChanged(String id) implements Change {}
@@ -67,12 +70,16 @@ public final class SnapshotDiff {
      */
     public static List<Change> diff(Snapshot before, Snapshot after, Collection<String> ids) {
         var added = new ArrayList<Change>();
+        var deactivated = new ArrayList<Change>();
+        var activated = new ArrayList<Change>();
         var changed = new ArrayList<Change>();
         var removed = new ArrayList<Change>();
         for (String id : ids) {
             var old = before.get(id);
             var item = after.get(id);
             if (item == null) { if (old != null) removed.add(new Removed(id)); continue; }
+            var active = AtSpiObjects.activeWindow(item);
+            if (old == null ? active : AtSpiObjects.activeWindow(old) != active) activation(id, active, active ? activated : deactivated);
             if (old == null) added.add(new Added(id));
             else if (old.equals(item)) {
                 if (item.semantics().selection() && !selected(before,old).equals(selected(after,item))) changed.add(new SelectionChanged(id));
@@ -84,17 +91,24 @@ public final class SnapshotDiff {
             }
             children(id, old == null ? List.of() : old.children(), item.children(), old == null, changed);
         }
+        added.addAll(deactivated);
+        added.addAll(activated);
         added.addAll(changed);
         added.addAll(removed);
         return added;
+    }
+
+    private static void activation(String id, boolean active, List<Change> out) {
+        out.add(new State(id, "active", active));
+        out.add(new Activation(id, active));
     }
 
     private static void properties(AccessibleNode old, AccessibleNode item, Snapshot before, Snapshot after, List<Change> out) {
         var id = item.id();
         if (old.role() != item.role()) out.add(new RoleChanged(id,item.role().atspiValue()));
         if (old.enabled() != item.enabled()) { out.add(new State(id, "enabled", item.enabled())); out.add(new State(id, "sensitive", item.enabled())); }
-        if (AtSpiObjects.activeWindow(old) != AtSpiObjects.activeWindow(item)) out.add(new State(id, "active", AtSpiObjects.activeWindow(item)));
-        if (old.focused() != item.focused()) out.add(new State(id, "focused", item.focused()));
+        // A frame's focus is published as ACTIVE (see diff), never as FOCUSED.
+        if (old.focused() != item.focused() && item.role() != Role.FRAME) out.add(new State(id, "focused", item.focused()));
         if (old.showing() != item.showing()) { out.add(new State(id, "showing", item.showing())); out.add(new State(id, "visible", item.showing())); }
         for (var state : SEMANTIC_STATES) {
             var present = item.semantics().states().contains(state);

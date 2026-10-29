@@ -34,8 +34,6 @@ public final class AtSpiObjects {
     public static final String PREFIX = "org.a11y.atspi.";
     public static final String ROOT_PATH = "/org/a11y/atspi/accessible/root";
     public static final String CACHE_ID = "cache";
-    // Provider identification is not a description of each accessible object.
-    public static final String DESCRIPTION = "";
     /** Distinct introspection schemas: root/non-root for every capability combination, plus Cache. */
     public static final int SCHEMA_COUNT = 2 * (1 << Capability.values().length) + 1;
     /** Schema index of {@link #cacheXml()}. */
@@ -64,7 +62,7 @@ public final class AtSpiObjects {
         if (node.enabled()) bits |= (1L << 8) | (1L << 24);
         if (node.showing()) bits |= (1L << 25) | (1L << 30);
         if (node.editable()) bits |= 1L << 7;
-        if (node.focused()) bits |= 1L << 12;
+        if (node.focused() && node.role() != Role.FRAME) bits |= 1L << 12; // a focused frame is ACTIVE instead
         if (node.focusable()) bits |= 1L << 11;
         if (node.role() == Role.TEXT_AREA) bits |= 1L << 17;
         if (node.role() == Role.ENTRY) bits |= 1L << 26;
@@ -75,7 +73,7 @@ public final class AtSpiObjects {
         return bits;
     }
 
-    /** A showing JavaFX window is active when the window itself has focus. */
+    /** A showing JavaFX window is active when the window itself has focus; popups never report focus. */
     static boolean activeWindow(AccessibleNode node) {
         return node.role() == Role.FRAME && node.showing() && node.focused();
     }
@@ -96,7 +94,7 @@ public final class AtSpiObjects {
         var index = root ? -1 : snapshot.get(node.ancestor()).children().indexOf(id);
         return "(" + reference(busName, id) + ", " + reference(busName, Snapshot.ROOT_ID) + ", " + ancestor + ", " + index + ", " + node.children().size()
                 + ", [" + String.join(",", interfaces(node).stream().map(VariantText::quote).toList()) + "], " + quote(node.name())
-                + ", uint32 " + node.role().atspiValue() + ", " + quote(DESCRIPTION) + ", [uint32 " + (stateBits(node) & 0xffffffffL) + ", uint32 " + (stateBits(node) >>> 32) + "])";
+                + ", uint32 " + node.role().atspiValue() + ", " + quote("") + ", [uint32 " + (stateBits(node) & 0xffffffffL) + ", uint32 " + (stateBits(node) >>> 32) + "])";
     }
 
     public static String cacheItems(Snapshot snapshot, String busName, String applicationParent) {

@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -50,8 +51,16 @@ class AtSpiObjectsTest {
         assertEquals(List.of(P + "Accessible"), AtSpiObjects.interfaces(node("o4", Role.ENTRY, true, Set.of())));
     }
 
-    @Test void providerIdentityIsNotPublishedAsEveryObjectsDescription() {
-        assertEquals("", AtSpiObjects.DESCRIPTION);
+    @Test void cacheRecordsPublishNoProviderDescription() {
+        var frame = new AccessibleNode("w", "Lab", Role.FRAME, "", false, true, true, true, false, 0, "root", List.of("b"), Set.of());
+        var button = new AccessibleNode("b", "OK", Role.PUSH_BUTTON, "", false, true, true, false, true, 0, "w", List.of(), Set.of());
+        var root = new AccessibleNode("root", "app", Role.APPLICATION, "", false, true, true, false, false, 0, "", List.of("w"), Set.of());
+        var snapshot = new Snapshot(Map.of("root", root, "w", frame, "b", button));
+        for (var item : List.of(frame, button)) {
+            var record = AtSpiObjects.cacheRecord(snapshot, item, ":1.1", "(':1.0', objectpath '/org/a11y/atspi/null')");
+            assertTrue(record.contains(", uint32 " + item.role().atspiValue() + ", '', [uint32 "), record);
+            assertFalse(record.contains("Experimental"), record);
+        }
     }
 
     @Test void introspectionXmlOnlyDeclaresGrantedInterfaces() {
@@ -119,6 +128,8 @@ class AtSpiObjectsTest {
         assertTrue((AtSpiObjects.stateBits(active) & (1L << 1)) != 0);
         assertFalse((AtSpiObjects.stateBits(hidden) & (1L << 1)) != 0);
         assertFalse((AtSpiObjects.stateBits(button) & (1L << 1)) != 0);
+        assertFalse((AtSpiObjects.stateBits(active) & (1L << 12)) != 0, "a focused frame is ACTIVE, not FOCUSED");
+        assertTrue((AtSpiObjects.stateBits(button) & (1L << 12)) != 0);
     }
 
     @Test void textRangeUsesCodePointOffsets() {

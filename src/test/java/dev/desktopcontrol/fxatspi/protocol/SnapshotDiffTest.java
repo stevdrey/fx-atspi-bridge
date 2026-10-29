@@ -26,6 +26,7 @@ import dev.desktopcontrol.fxatspi.model.Geometry.Origin;
 import dev.desktopcontrol.fxatspi.model.Geometry.Rect;
 import dev.desktopcontrol.fxatspi.model.Role;
 import dev.desktopcontrol.fxatspi.model.Snapshot;
+import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Activation;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Added;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Caret;
 import dev.desktopcontrol.fxatspi.protocol.SnapshotDiff.Change;
@@ -126,13 +127,31 @@ class SnapshotDiffTest {
         var inactive = new AccessibleNode("w", "", Role.FRAME, "", false, true, true, false, false, 0, "root", List.of(), Set.of());
         var active = new AccessibleNode("w", "", Role.FRAME, "", false, true, true, true, false, 0, "root", List.of(), Set.of());
         var hidden = new AccessibleNode("w", "", Role.FRAME, "", false, true, false, true, false, 0, "root", List.of(), Set.of());
-        assertEquals(List.of(new State("w", "active", true), new State("w", "focused", true)),
+        assertEquals(List.of(new State("w", "active", true), new Activation("w", true)),
                 SnapshotDiff.diff(tree(inactive), tree(active), List.of("w")));
-        assertEquals(List.of(new State("w", "active", false), new State("w", "focused", false)),
+        assertEquals(List.of(new State("w", "active", false), new Activation("w", false)),
                 SnapshotDiff.diff(tree(active), tree(inactive), List.of("w")));
-        assertEquals(List.of(new State("w", "active", false), new State("w", "showing", false), new State("w", "visible", false)),
+        assertEquals(List.of(new State("w", "active", false), new Activation("w", false), new State("w", "showing", false), new State("w", "visible", false)),
                 SnapshotDiff.diff(tree(active), tree(hidden), List.of("w")));
         assertEquals(List.of(new Removed("w")), SnapshotDiff.diff(tree(active), tree(), List.of("w")));
+        assertEquals(List.of(new Added("w"), new State("w", "active", true), new Activation("w", true)),
+                SnapshotDiff.diff(tree(), tree(active), List.of("w")));
+    }
+
+    private static AccessibleNode window(String id, boolean focused) {
+        return new AccessibleNode(id, "", Role.FRAME, "", false, true, true, focused, false, 0, "root", id.equals("b") ? List.of("c") : List.of(), Set.of());
+    }
+
+    private static AccessibleNode button(boolean focused) {
+        return new AccessibleNode("c", "", Role.PUSH_BUTTON, "", false, true, true, focused, true, 0, "b", List.of(), Set.of());
+    }
+
+    @Test void windowSwitchDeactivatesThenActivatesBeforeFocusInside() {
+        var before = tree(window("a", true), window("b", false), button(false));
+        var after = tree(window("a", false), window("b", true), button(true));
+        assertEquals(List.of(new State("a", "active", false), new Activation("a", false), new State("b", "active", true),
+                        new Activation("b", true), new State("c", "focused", true)),
+                SnapshotDiff.diff(before, after, List.of("c", "b", "a")));
     }
 
     @Test void propertyStateTextAndCaretChangesKeepTheirEventOrder() {
