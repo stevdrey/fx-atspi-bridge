@@ -30,13 +30,12 @@ PHASES = {
     "install": ("installChurnBefore", ("installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterDrain",
                                        "installChurnAfterTrim")),
 }
-# Every checkpoint BenchApp can snapshot, in run order; the absolute tables list each one a cell recorded.
-CHECKPOINT_ORDER = ("afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralCheckpoint", "structuralAfterGc",
-                    "installChurnBefore", "installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterDrain",
-                    "installChurnAfterTrim")
 LONG_STRUCTURAL = tuple(f"structuralCycle{i}" for i in (0, 30, 60, 100, 150))
 LONG_INSTALL = tuple(f"installCycle{i}" for i in range(0, 1001, 100))
-CHECKPOINT_ORDER += LONG_STRUCTURAL + LONG_INSTALL
+# Every checkpoint BenchApp can snapshot, in run order; the absolute tables list each one a cell recorded.
+CHECKPOINT_ORDER = ("afterWarmupGc", "afterIdleGc", "structuralBefore", *LONG_STRUCTURAL,
+                    "structuralCheckpoint", "structuralAfterGc", "installChurnBefore", *LONG_INSTALL,
+                    "installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterDrain", "installChurnAfterTrim")
 SMAPS = ("Rss", "Anonymous", "PssFile")
 # Checkpoints where BenchApp takes a class histogram (MemoryDiagnostics.snapshot(..., histogram=true)).
 HISTOGRAM_CHECKPOINTS = frozenset({"afterWarmupGc", "afterIdleGc", "structuralBefore", "structuralAfterGc",

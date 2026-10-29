@@ -169,6 +169,26 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| structural n=100 bridge on plain | structuralBefore | 0.01 (0.01–0.01) | 309 (309–309) |", text)
         self.assertNotIn("--secret-path", text)
 
+    def test_long_checkpoint_tables_follow_run_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            self.write_reps(root, extra_checkpoints=memory_diag.LONG_STRUCTURAL)
+            summary = memory_diag.summary(root)
+        for heading in ("## glibc malloc", "## Retained heap by group", "## pmap:"):
+            section = summary.split(heading, 1)[1].split("\n## ", 1)[0]
+            points = ["structuralBefore", *memory_diag.LONG_STRUCTURAL, "structuralAfterGc"]
+            positions = [section.index("| " + point + " |") for point in points]
+            self.assertEqual(positions, sorted(positions), heading)
+
+    def test_install_long_points_follow_run_order_with_or_without_histograms(self):
+        points = ("afterIdleGc", "installChurnBefore", *memory_diag.LONG_INSTALL,
+                  "installChurnCheckpoint", "installChurnAfterGc", "installChurnAfterTrim")
+        run = {point + "SmapsRssKb": 1 for point in reversed(points)}
+        runs = [("install", run)]
+        self.assertEqual(memory_diag.all_points(runs), list(points))
+        self.assertEqual(memory_diag.all_points(runs, histogram=True),
+                         [point for point in points if point in memory_diag.HISTOGRAM_CHECKPOINTS])
+
     def test_the_source_line_records_no_absolute_path(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d, "install10k-after")
