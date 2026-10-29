@@ -10,6 +10,8 @@ The observer tracks JavaFX focus and publishes immutable snapshots; `SnapshotDif
 
 Preserve the installation API, FX-thread ownership of scene objects and provider-thread ownership of native registrations, signals and cleanup. Keep event and snapshot processing bounded, avoid polling or blocking FX, and preserve redaction, password protection and stale-reference behavior. Do not log content from unrelated applications or introduce persistent desktop configuration changes. Any change to event semantics must publish only existing sanitized projections and retain deterministic shutdown and bus-loss behavior.
 
+If an active frame disappears in a coalesced snapshot, emit its inactive state and window deactivation before activating a replacement and before removing its exported object. Removing an inactive frame produces no activation event.
+
 ## Acceptance and verification
 
 - With a disposable fx-lab on a real desktop, independently observe focus changes, source identities, roles and window events and compare against a working reference; report unavailable observations rather than inferring a cause.

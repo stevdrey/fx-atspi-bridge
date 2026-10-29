@@ -77,7 +77,13 @@ public final class SnapshotDiff {
         for (String id : ids) {
             var old = before.get(id);
             var item = after.get(id);
-            if (item == null) { if (old != null) removed.add(new Removed(id)); continue; }
+            if (item == null) {
+                if (old != null) {
+                    if (AtSpiObjects.activeWindow(old)) activation(id, false, deactivated);
+                    removed.add(new Removed(id));
+                }
+                continue;
+            }
             var active = AtSpiObjects.activeWindow(item);
             if (old == null ? active : AtSpiObjects.activeWindow(old) != active) activation(id, active, active ? activated : deactivated);
             if (old == null) added.add(new Added(id));

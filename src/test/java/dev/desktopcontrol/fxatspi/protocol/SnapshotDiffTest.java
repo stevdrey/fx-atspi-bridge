@@ -133,7 +133,9 @@ class SnapshotDiffTest {
                 SnapshotDiff.diff(tree(active), tree(inactive), List.of("w")));
         assertEquals(List.of(new State("w", "active", false), new Activation("w", false), new State("w", "showing", false), new State("w", "visible", false)),
                 SnapshotDiff.diff(tree(active), tree(hidden), List.of("w")));
-        assertEquals(List.of(new Removed("w")), SnapshotDiff.diff(tree(active), tree(), List.of("w")));
+        assertEquals(List.of(new State("w", "active", false), new Activation("w", false), new Removed("w")),
+                SnapshotDiff.diff(tree(active), tree(), List.of("w")));
+        assertEquals(List.of(new Removed("w")), SnapshotDiff.diff(tree(inactive), tree(), List.of("w")));
         assertEquals(List.of(new Added("w"), new State("w", "active", true), new Activation("w", true)),
                 SnapshotDiff.diff(tree(), tree(active), List.of("w")));
     }
@@ -151,6 +153,14 @@ class SnapshotDiffTest {
         var after = tree(window("a", false), window("b", true), button(true));
         assertEquals(List.of(new State("a", "active", false), new Activation("a", false), new State("b", "active", true),
                         new Activation("b", true), new State("c", "focused", true)),
+                SnapshotDiff.diff(before, after, List.of("c", "b", "a")));
+    }
+
+    @Test void removedActiveWindowDeactivatesBeforeReplacementActivationAndRemoval() {
+        var before = tree(window("a", true), window("b", false), button(false));
+        var after = tree(window("b", true), button(true));
+        assertEquals(List.of(new State("a", "active", false), new Activation("a", false), new State("b", "active", true),
+                        new Activation("b", true), new State("c", "focused", true), new Removed("a")),
                 SnapshotDiff.diff(before, after, List.of("c", "b", "a")));
     }
 
